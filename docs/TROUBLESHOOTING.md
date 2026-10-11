@@ -60,8 +60,4 @@ docker compose --profile wechat logs --tail=100 wx-bot
 
 请使用模板说明：当前 `main` 或 PR 分支、操作系统、Node 与 Docker 版本、预期行为、实际行为、最短复现步骤、`npm run check` 与 `npm test` 结果、脱敏日志。不要直接公开 `.env`、Docker 数据卷、聊天历史、JWT、微信 token 或任何 API 密钥。
 
-## 需要知道的边界
-
-`main` 不含 [Obsidian 检索 PR #4](https://github.com/xiaomoBoy/pi-durable-assistant/pull/4)、[文件审批 PR #5](https://github.com/xiaomoBoy/pi-durable-assistant/pull/5) 或 [持久通用通知 PR #6](https://github.com/xiaomoBoy/pi-durable-assistant/pull/6)。如果你运行的是功能分支，应参照对应 PR 文档，而非以本页断言所有能力都能在主分支启用。
-
 [快速开始](GETTING_STARTED.md) · [配置参考](CONFIGURATION.md) · [部署与备份](DEPLOYMENT.md)

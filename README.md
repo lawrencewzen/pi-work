@@ -8,7 +8,7 @@
 [![CI](https://github.com/xiaomoBoy/pi-durable-assistant/actions/workflows/v3-ci.yml/badge.svg)](https://github.com/xiaomoBoy/pi-durable-assistant/actions/workflows/v3-ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **项目状态：个人单用户项目 / 可体验的实验性实现，不是 Pi Durable 官方产品。** 当前 `main` 包含 v3 任务中心、网页附件、微信适配、需批准的跨会话记忆，以及只读笔记检索。文件审批和可靠通知增强仍在独立 PR 中，**未合并到主分支**。生产环境请自行做好 HTTPS、访问控制和 SQLite 备份。
+> **项目状态：个人单用户项目 / 可体验的实验性实现，不是 Pi Durable 官方产品。** 当前 `main` 包含 v3 任务中心、网页附件、微信适配、需批准的跨会话记忆，以及只读笔记检索。生产环境请自行做好 HTTPS、访问控制和 SQLite 备份。
 
 ![Pi Durable Assistant 网页界面：聊天、任务中心和运行状态](docs/screenshot.png)
 
@@ -35,8 +35,6 @@
 | 技能 | 已批准技能只在提示里放名称和触发条件；助手用 `read_skill` 再读全文。新技能需批准 |
 | 笔记检索 | 配置 `OBSIDIAN_ROOT` 后只读检索白名单笔记，回答带来源路径和行号。不写回 Obsidian |
 | 会话列表 | 左侧可在「当前」和「归档」之间切换。归档会收起对话，并停掉未完成的提醒、计划和后台任务。删除只从菜单拿掉，本机记录还在。微信通道正在使用的会话不能归档或删除 |
-
-**尚未在 `main` 交付：** 受控工作区及审批（[PR #5](https://github.com/xiaomoBoy/pi-durable-assistant/pull/5)）、持久通知 Outbox（[PR #6](https://github.com/xiaomoBoy/pi-durable-assistant/pull/6)）。只读笔记检索已在主分支实现，不依赖未合并的 [PR #4](https://github.com/xiaomoBoy/pi-durable-assistant/pull/4)。PR 的代码和自动化测试不能视为已经部署上线。
 
 ## 3 分钟本地体验（不需要 API Key）
 

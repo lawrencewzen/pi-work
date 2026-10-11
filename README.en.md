@@ -81,7 +81,6 @@ No server? Try [Pi Durable Edge](https://github.com/xiaomoBoy/pi-durable-edge), 
 - Fixed-minute recurring jobs are **not timezone-aware cron expressions**.
 - Browser uploads support up to 5 files: 5 MiB per image, 200 KiB per text file, 10 MiB total. WeChat media is **not actually parsed**; only text or transcribed voice text is supported there.
 - Generic Webhook / Feishu delivery in `main` is best-effort; it has no persistent retry queue. WeChat has a separate delivery queue.
-- The following features are **open PRs, not released on main**: workspace approval ([#5](https://github.com/xiaomoBoy/pi-durable-assistant/pull/5)) and generic durable Outbox ([#6](https://github.com/xiaomoBoy/pi-durable-assistant/pull/6)). Read-only note search is on `main` and does not depend on the unmerged [#4](https://github.com/xiaomoBoy/pi-durable-assistant/pull/4).
 - Simulated CI tests do not validate real LLM accounts, WeChat login, mobile browsers or production disaster recovery.
 
 ## Project layout and tests
