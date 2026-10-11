@@ -73,6 +73,8 @@ The container is published only at **127.0.0.1:3300** by default. For remote acc
 
 See [deployment and backup guidance](docs/DEPLOYMENT.md), [troubleshooting](docs/TROUBLESHOOTING.md), and the [WeChat iLink guide](docs/WECHAT.md) (Chinese).
 
+No server? Try [Pi Durable Edge](https://github.com/xiaomoBoy/pi-durable-edge), an experimental Cloudflare Workers + Durable Objects edition with a one-click deploy button. It is maintained separately and currently covers chat and scheduled reminders only.
+
 ## Important limitations
 
 - The assistant is a single-user application, not a multi-tenant service.

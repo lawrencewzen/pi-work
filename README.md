@@ -83,6 +83,8 @@ docker compose logs --tail=100 pi-durable-assistant
 
 按顺序阅读 [部署与备份注意事项](docs/DEPLOYMENT.md) 和 [故障排查](docs/TROUBLESHOOTING.md)。若需要微信扫码，参见 [微信 iLink 接入](docs/WECHAT.md)，通过 `--profile wechat` 启动第二个容器。
 
+不想自己准备服务器？可以试试 Cloudflare 版 [Pi Durable Edge](https://github.com/xiaomoBoy/pi-durable-edge)：跑在 Workers 和 Durable Objects 上，提供一键部署按钮。它是独立维护的实验版，目前只有聊天和定时提醒，功能少于本项目。
+
 ## 常用操作和能力边界
 
 **持久计划任务：** 在任务中心填写任务内容、首次延迟分钟数和重复间隔；`0` 表示单次执行，`1440` 表示每隔 24 小时。**这不是按时区/夏令时校准的每天某时 Cron**。关闭浏览器不会结束后台任务，但没有配置通知渠道就不会主动发手机消息。
