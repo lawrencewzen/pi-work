@@ -1,246 +1,196 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="white-light" data-font-size="md">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <title>Pi Durable 小助手</title>
-  <link rel="stylesheet" href="/style.css">
+  <meta name="viewport" content="width=1440, initial-scale=1.0">
+  <title>pi-work</title>
+  <link rel="stylesheet" href="/themes.css">
+  <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+  <div class="app-shell">
 
-  <!-- 断线重连顶部横条 -->
-  <div id="reconnect-banner" class="reconnect-banner">
-    <div class="reconnect-spinner"></div>
-    <span>与服务器断开，正在重连…</span>
-  </div>
-
-  <!-- 移动端抽屉遮罩 -->
-  <div id="drawer-backdrop" class="drawer-backdrop" onclick="closeSidebarDrawer()"></div>
-
-  <!-- 移动端顶部标题栏 -->
-  <header class="mobile-header">
-    <button class="mobile-menu-btn" onclick="openSidebarDrawer()" aria-label="打开会话列表">☰</button>
-    <div class="mobile-header-title" id="mobile-current-title">新对话</div>
-    <div class="mobile-actions">
-      <!-- 移动端右上角小 D 挂件 -->
-      <div class="mobile-mascot-btn" id="mobile-mascot" data-state="idle" onclick="toggleMobileMascotBubble(event)" title="小 D">
-        <svg class="mascot-svg" viewBox="0 0 100 100" id="mobile-mascot-svg">
-          <!-- 动态内联 SVG -->
-        </svg>
-        <div class="mobile-mascot-popup" id="mobile-mascot-popup">
-          <div style="font-weight:700; color:var(--primary); margin-bottom:3px;">小 D</div>
-          <div id="mobile-mascot-text">有事叫我～</div>
+    <!-- ======================================================================
+         COLUMN 1: LEFT SIDEBAR (~260px)
+         ====================================================================== -->
+    <aside class="col-left">
+      <!-- App Brand Header -->
+      <div class="left-header">
+        <div class="brand-group">
+          <div class="brand-logo">π</div>
+          <span class="brand-name">pi-work</span>
+          <span class="brand-badge" data-i18n="app_badge">workbench</span>
         </div>
       </div>
-      <button class="btn-new-conv" onclick="createNewConversation()">＋ 新建</button>
-    </div>
-  </header>
 
-  <!-- 主布局 -->
-  <div class="app-layout">
+      <!-- Scrollable Inner Sidebar Content -->
+      <div class="left-body">
+        
+        <!-- Workspaces & Conversations Section -->
+        <div class="hierarchy-section">
+          <div class="section-label">
+            <span data-i18n="workspaces_and_chats">工作区 & 对话</span>
+            <div class="section-actions">
+              <span id="ws-count-label" style="font-size: 10px; opacity: 0.6; margin-right: 4px;"></span>
+              <button class="btn-icon-xs" data-testid="workspace-new" data-action="new-workspace" data-i18n-title="new_workspace" title="新建工作区">+</button>
+              <button class="btn-icon-xs" data-testid="conversation-new" data-action="new-conversation" data-i18n-title="new_conversation" title="新建对话">💬</button>
+            </div>
+          </div>
 
-    <!-- 左栏：会话列表 -->
-    <aside class="sidebar-left" id="sidebar-left">
-      <div class="sidebar-left-header">
-        <div class="brand-wrap">
-          <div class="brand-icon" aria-hidden="true">D</div>
-          <span class="brand-title" title="Pi Durable 小助手">小助手</span>
+          <div class="tree-root" id="ws-tree-container">
+            <!-- Dynamically populated workspaces and conversations -->
+          </div>
         </div>
-        <button class="btn-new-conv" onclick="createNewConversation()">＋ 新对话</button>
-        <div class="conv-switch" role="tablist" aria-label="会话范围">
-          <button type="button" class="conv-switch-btn is-on" id="conv-tab-active" role="tab" aria-selected="true" onclick="setConversationView('active')">当前 <span class="conv-count" id="conv-count-active">0</span></button>
-          <button type="button" class="conv-switch-btn" id="conv-tab-archived" role="tab" aria-selected="false" onclick="setConversationView('archived')">归档 <span class="conv-count" id="conv-count-archived">0</span></button>
+
+        <!-- Bottom-left: 「运行中」 overview grouped by workspace -->
+        <div class="running-section">
+          <div class="section-label">
+            <span data-i18n="running_overview">运行中概览</span>
+            <span class="running-count-tag" id="running-count-tag">0</span>
+          </div>
+          <div class="running-panel" id="running-panel">
+            <!-- Dynamically populated running tasks -->
+          </div>
         </div>
+
       </div>
-      <nav class="conversation-list" id="conversation-list" aria-label="会话列表">
-        <!-- 动态渲染 -->
-      </nav>
+
+      <!-- Left Sidebar Footer -->
+      <div class="left-footer">
+        <div class="runtime-meta">
+          <span class="runtime-ping"></span>
+          <span id="runtime-footer-label" data-i18n="runtime_name">持久化运行时（SQLite 日志）</span>
+        </div>
+        
+        <button class="sidebar-icon-btn" data-action="open-settings" data-i18n-title="settings_title" title="系统设置">
+          <svg class="icon" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
     </aside>
 
-    <!-- 中栏：消息流与输入 -->
-    <main class="chat-column">
-      <header class="chat-header">
-        <h2 class="chat-header-title" id="desktop-current-title">新对话</h2>
-        <span class="chat-header-meta" id="desktop-current-meta"></span>
+    <!-- ======================================================================
+         COLUMN 2: CENTER PANE (flex: 1)
+         ====================================================================== -->
+    <main class="col-center">
+      <!-- Top Status Bar -->
+      <header class="center-top-bar" data-testid="status-bar" id="status-bar">
+        <div class="status-bar-left">
+          <span id="topbar-workspace" class="topbar-ws-name" data-testid="topbar-workspace"></span>
+          <span class="step-sep is-hidden" id="topbar-ws-sep">/</span>
+          <div class="step-indicator" data-i18n-title="status_title" title="当前执行状态">
+            <span class="step-pulse-ring"></span>
+            <span id="status-text" data-testid="status-text">就绪</span>
+          </div>
+          <span class="step-sep">/</span>
+          <div class="checkpoint-badge" data-i18n-title="checkpoint_title" title="持久化检查点">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+            <span id="checkpoint-badge-text">检查点</span>
+          </div>
+          <span class="step-sep is-hidden" id="autocontinue-sep">/</span>
+          <div class="resume-count-badge is-hidden" data-i18n-title="autocontinue_title" title="自动恢复计数" data-testid="autocontinue-count" id="autocontinue-count"></div>
+        </div>
+
+        <div class="status-bar-controls">
+          <button class="btn-ctrl" data-testid="btn-pause" id="btn-pause" data-action="pause-conversation" data-i18n-title="btn_pause_title" title="暂停执行" disabled>
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+            <span data-i18n="btn_pause">暂停</span>
+          </button>
+          <button class="btn-ctrl" data-testid="btn-resume" id="btn-resume" data-action="resume-conversation" data-i18n-title="btn_resume_title" title="继续执行" disabled>
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <span data-i18n="btn_resume">继续</span>
+          </button>
+          <button class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-title="btn_stop_title" title="终止并保存检查点" disabled>
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+            <span data-i18n="btn_stop">终止</span>
+          </button>
+        </div>
       </header>
 
-      <!-- 子 Agent 提示条 -->
-      <div id="subagent-parent-banner" class="subagent-parent-banner" style="display: none;">
-        <span>这是子 Agent 的对话</span>
-        <a id="subagent-back-link" href="#" onclick="goBackToParentConversation(event)">← 返回主对话</a>
+      <!-- Scrollable Chat Thread -->
+      <div class="center-thread" id="center-thread">
+        <!-- Messages dynamically rendered here -->
       </div>
 
-      <!-- 拖拽上传遮罩 -->
-      <div class="drop-overlay" id="drop-overlay" style="display: none;">
-        <div class="drop-overlay-box">
-          <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="17 8 12 3 7 8"></polyline>
-            <line x1="12" y1="3" x2="12" y2="15"></line>
-          </svg>
-          <div class="drop-overlay-text">拖放文件到此处上传</div>
-          <div class="drop-overlay-sub">支持图片（PNG/JPEG/WebP/GIF）与文本类文件</div>
-        </div>
-      </div>
+      <!-- Composer at Bottom -->
+      <footer class="center-composer">
+        <div class="composer-box">
+          <textarea class="composer-textarea" data-testid="chat-input" data-i18n-placeholder="composer_placeholder" placeholder="向 Agent 补充要求或发送指令... (⌘↵ 发送)"></textarea>
+          <div class="composer-bar">
+            <div class="composer-chips">
+              <div class="chip-selector" data-i18n-title="chip_agent_title" title="当前调度 Agent">
+                <span class="chip-dot"></span>
+                <span id="composer-agent-chip">Agent</span>
+                <svg class="icon" style="width:11px;height:11px;opacity:0.7;" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              <span class="chip-runtime-meta"><span data-i18n="context_tokens">上下文</span>: <span id="composer-context-value">—</span></span>
+            </div>
 
-      <!-- 消息流容器 -->
-      <section class="messages-container" id="messages-container" aria-live="polite">
-        <!-- 动态渲染 -->
-      </section>
-
-      <!-- 底部输入区 -->
-      <footer class="input-container">
-        <!-- 待发送附件预览区 -->
-        <div class="attachments-preview" id="attachments-preview" style="display: none;"></div>
-
-        <div class="input-controls">
-          <div class="controls-left">
-            <label class="steer-label" id="steer-toggle">
-              <input type="checkbox" id="steer-checkbox">
-              <span>插话（steer）</span>
-            </label>
-            <button class="btn-abort" id="btn-abort" onclick="abortCurrentTask()">⏹ 停止</button>
+            <div class="composer-actions">
+              <span class="shortcut-hint" data-i18n="shortcut_send">⌘↵ 发送</span>
+              <button class="btn-send" data-testid="chat-send" data-action="send-message" data-i18n-title="send_title" title="发送指令 (Cmd+Enter)">
+                <svg class="icon" style="width:13px;height:13px;" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              </button>
+            </div>
           </div>
-          <span class="inbox-badge" id="inbox-badge">排队中：0 条</span>
-        </div>
-
-        <div class="input-box-wrapper">
-          <input
-            type="file"
-            id="file-input"
-            class="file-input-hidden"
-            multiple
-            accept="image/png,image/jpeg,image/webp,image/gif,text/*,.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.css,.js,.mjs,.cjs,.ts,.tsx,.jsx,.py,.go,.rs,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.rb,.php,.sh,.zsh,.bash,.sql,.toml,.ini,.conf,.log,.srt,.vtt"
-          >
-          <button type="button" class="btn-attach" id="btn-attach" onclick="triggerFileInput()" title="添加附件" aria-label="添加附件">
-            <svg class="attach-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-            </svg>
-          </button>
-          <textarea
-            class="chat-textarea"
-            id="chat-textarea"
-            placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"
-            rows="1"
-          ></textarea>
-          <button class="btn-send" id="btn-send" onclick="submitMessage()">发送</button>
         </div>
       </footer>
     </main>
 
-    <!-- 右栏：小 D、记事本、定时提醒、持久任务、运行状态 -->
-    <aside class="sidebar-right" id="sidebar-right">
+    <!-- ======================================================================
+         COLUMN 3: RIGHT PANE (~520px)
+         ====================================================================== -->
+    <aside class="col-right" data-testid="right-panel" id="right-panel">
+      <!-- Tabs Header: Diff | File | Markdown -->
+      <header class="right-tabs-bar">
+        <nav class="tabs-nav">
+          <button class="tab-btn active" id="tab-btn-diff" data-action="switch-right-tab" data-tab="diff" data-i18n-title="tab_diff_title" title="Diff 对比视图">
+            <span data-i18n="tab_diff">Diff</span>
+            <span class="tab-badge" id="diff-tab-badge">0</span>
+          </button>
+          <button class="tab-btn" id="tab-btn-file" data-action="switch-right-tab" data-tab="file" data-i18n-title="tab_file_title" title="查看源码">
+            <span data-i18n="tab_file">文件</span>
+          </button>
+          <button class="tab-btn" id="tab-btn-editor" data-action="switch-right-tab" data-tab="editor" data-i18n-title="tab_markdown_title" title="Markdown 编辑器">
+            <span data-i18n="tab_markdown">Markdown</span>
+          </button>
+        </nav>
 
-      <!-- 1. 吉祥物小 D 卡片 -->
-      <section class="card mascot-card" id="mascot-card" data-state="idle">
-        <div class="mascot-bubble" id="mascot-bubble">
-          <span id="mascot-text">有事叫我～</span>
+        <div class="tabs-actions">
+          <button class="tab-action-icon" data-testid="file-open-editor" data-action="open-file-in-editor" data-i18n-title="open_editor" title="打开编辑器">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            <span data-i18n="btn_edit">编辑</span>
+          </button>
         </div>
-        <div class="mascot-stage">
-          <svg class="mascot-svg" id="mascot-svg" viewBox="0 0 100 100">
-            <!-- 动态生成机器人矢量 -->
-          </svg>
-        </div>
-        <div class="mascot-footer">
-          <span class="mascot-name">小 D 助手</span>
-          <span class="mascot-status-tag" id="mascot-status-tag">空闲中</span>
-        </div>
-      </section>
+      </header>
 
-      <!-- 2. 记事本卡片 -->
-      <section class="card" id="notes-card">
-        <div class="card-title">📝 记事本</div>
-        <div class="notes-section">
-          <div class="notes-subtitle">待办事项</div>
-          <div class="todo-list" id="todo-list">
-            <span class="empty-placeholder">暂无待办事项</span>
-          </div>
+      <!-- Changed files horizontal bar -->
+      <div class="changed-files-bar" id="changed-files-bar">
+        <!-- Changed files pills -->
+      </div>
+
+      <!-- Right Viewport Content (Diff / File / Markdown Editor) -->
+      <div id="right-viewport" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+        <div class="diff-viewport" data-testid="diff-view">
+          <div class="empty-placeholder" data-i18n="no_changes_yet">暂无变更</div>
         </div>
-        <div class="notes-section">
-          <div class="notes-subtitle">备忘录</div>
-          <div class="memo-list" id="memo-list">
-            <span class="empty-placeholder">暂无备忘录</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- 3. 定时提醒面板 -->
-      <section class="card" id="reminders-card">
-        <div class="card-title">⏰ 定时提醒</div>
-        <div class="reminder-list" id="reminder-list">
-          <span class="empty-placeholder">暂无定时提醒</span>
-        </div>
-      </section>
-
-      <!-- 4. 任务面板：持久任务（每一步都有检查点） -->
-      <section class="card" id="tasks-card">
-        <div class="card-title">⚡ 持久任务（每一步都有检查点）</div>
-        <div class="task-tree" id="task-tree">
-          <span class="empty-placeholder">空闲，没有正在运行的任务</span>
-        </div>
-      </section>
-
-      <!-- 5. 运行状态卡片 -->
-      <section class="card" id="status-card">
-        <div class="card-title">⚙️ 运行状态</div>
-        <div class="stat-list">
-          <div class="stat-row">
-            <span class="stat-label">启动次数</span>
-            <span class="boots-badge" id="stat-boots">第 1 次启动</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">进程 PID</span>
-            <span class="stat-value" id="stat-pid">-</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">启动时间</span>
-            <span class="stat-value" id="stat-started-at" style="font-size: 11.5px;">-</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">模型</span>
-            <span class="stat-value" id="stat-model" style="font-size: 12px;">-</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">会话 Token</span>
-            <span class="stat-value" id="stat-tokens">-</span>
-          </div>
-        </div>
-
-        <!-- 模拟崩溃按钮 -->
-        <button class="btn-crash" onclick="openCrashModal()">
-          💥 模拟进程崩溃
-        </button>
-      </section>
-
-      <!-- 任务中心悬浮按钮占位空间（留出空间，彻底防止桌面与移动端遮挡状态卡片与崩溃按钮） -->
-      <div class="sidebar-v3-spacer"></div>
-
+      </div>
     </aside>
 
   </div>
 
-  <!-- 模拟崩溃二次确认弹窗 -->
-  <div class="modal-overlay" id="crash-modal" onclick="onModalBackdropClick(event)">
-    <div class="modal-card">
-      <div class="modal-header">
-        ⚠️ 确认模拟进程崩溃？
-      </div>
-      <div class="modal-body">
-        <p>将向服务器发送 <code>POST /api/crash</code> 请求，服务器将在 200ms 后强制退出进程（<code>process.exit(1)</code>）。</p>
-        <br>
-        <p>随后由后台守护脚本自动重启进程。网页将显示断线重连横条，并在恢复后显示启动次数 +1，同时自动恢复未完成的任务。</p>
-      </div>
-      <div class="modal-actions">
-        <button class="btn-modal-cancel" onclick="closeCrashModal()">取消</button>
-        <button class="btn-modal-confirm" id="btn-modal-confirm" onclick="confirmCrash()">确认崩溃</button>
-      </div>
-    </div>
-  </div>
+  <!-- Settings Modal Container -->
+  <div id="settings-overlay" class="sm-ov" style="display:none"></div>
 
-  <!-- 全局轻提示 Toast 容器 -->
-  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  <!-- Dialog Overlay Container -->
+  <div id="dialog-overlay" class="modal-overlay" style="display:none"></div>
 
-  <script defer src="/app.js"></script>
-  <script defer src="/v3.js"></script>
+  <!-- Fullscreen 401 Unauthorized Notice Container -->
+  <div id="auth-overlay" class="auth-overlay" style="display:none"></div>
+
+  <!-- Main Application Script -->
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

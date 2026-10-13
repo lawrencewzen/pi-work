@@ -1,10 +1,10 @@
 # pi-work
 
-基于 [Pi Durable](https://github.com/earendil-works/pi) 的网页版多 Agent 编码工作台：断点恢复、自动续跑、多角色并行、流水线编排。
+网页版多 Agent 编码工作台：断点恢复、自动续跑、多角色并行、流水线编排。
+
+当前 `src/` 运行时使用**自定义 SQLite 日志**（`src/store/sqlite.mjs` + `src/core/orchestrator.mjs`），**不是** `@earendil-works/pi-durable`。`pi-durable` 仍作为依赖保留，仅由 `legacy/` 与 `lib/` 使用。耐久性设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，安全修复见 [SECURITY.md](SECURITY.md)。
 
 > 本项目 fork 自 [xiaomoBoy/pi-durable-assistant](https://github.com/xiaomoBoy/pi-durable-assistant)（MIT），感谢原作者。原 README 见 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)。
-
-**状态：设计阶段**，功能开发尚未开始。
 
 - 方案：[docs/PLAN.md](docs/PLAN.md)
 - 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

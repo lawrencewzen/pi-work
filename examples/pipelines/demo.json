@@ -1,0 +1,9 @@
+{
+  "id": "demo",
+  "name": "Demo (coder → tester → auditor)",
+  "steps": [
+    { "role": "coder", "input": "user" },
+    { "role": "tester", "input": "previous" },
+    { "role": "auditor", "input": "previous" }
+  ]
+}
