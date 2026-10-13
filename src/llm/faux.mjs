@@ -78,6 +78,7 @@ export function createFauxLLM(script = { turns: [] }) {
       }
 
       writeCursor(conversationId, i + 1);
+      if (turn.end) return { type: 'end', consumed: true };
       if (turn.tool) return { type: 'tool', name: turn.tool, args: turn.args || {} };
       if (turn.text != null) return { type: 'text', text: String(turn.text) };
       return { type: 'end' };

@@ -1,6 +1,17 @@
 import { EventEmitter } from 'node:events';
 import { createRetryPolicy, decideAutoContinue } from './retry.mjs';
 import { executeTool } from '../tools/workspace.mjs';
+import { buildAgents, agentEventData, mapConvStatusToAgent } from './agents.mjs';
+import { TOOLS as TOOL_REGISTRY } from './config.mjs';
+
+const DEFAULT_TITLE = 'New conversation';
+
+function autoTitleFromText(currentTitle, opts = {}) {
+  if (opts.title) return opts.title;
+  const cur = currentTitle == null ? '' : String(currentTitle);
+  if (cur === '' || cur === DEFAULT_TITLE) return String(opts.text ?? '').slice(0, 48);
+  return undefined;
+}
 
 function abortError() {
   const err = new Error('aborted');
@@ -53,12 +64,13 @@ export function createOrchestrator({
 
   function statusOf(id) {
     const rt = runtimes.get(id);
-    if (!rt) return { status: 'idle', autoContinues: 0, retries: 0, currentStep: 0, lastCheckpointAt: null };
+    if (!rt) return { status: 'idle', autoContinues: 0, retries: 0, currentStep: 0, pipelineStep: 0, lastCheckpointAt: null };
     return {
       status: rt.status,
       autoContinues: rt.autoContinues,
       retries: rt.retries,
       currentStep: rt.currentStep,
+      pipelineStep: rt.pipelineStep,
       lastCheckpointAt: rt.lastCheckpointAt,
     };
   }
@@ -104,6 +116,48 @@ export function createOrchestrator({
     return row;
   }
 
+  async function snapshotAgents(cid, rt) {
+    if (rt && !rt.pipeline && rt.pipelineId) {
+      rt.pipeline = await store.getPipeline(rt.pipelineId);
+    }
+    if (rt && !rt.role) {
+      const roleId = rt.roleId;
+      rt.role = (roleId && await store.getRole(roleId)) || await store.getRole('default') || {
+        id: 'default',
+        name: 'Default',
+        systemPrompt: 'You are a helpful coding assistant.',
+        tools: ['read', 'write', 'edit', 'ls', 'grep', 'bash'],
+      };
+    }
+    const conv = (await store.getConversation(cid)) || {};
+    const messages = await store.getMessages(cid);
+    const roles = await store.listRoles();
+    return buildAgents({
+      conv: {
+        ...conv,
+        id: cid,
+        status: rt?.status ?? conv.status,
+        pipelineStep: rt?.pipelineStep ?? conv.pipelineStep,
+        currentStep: rt?.currentStep ?? conv.currentStep,
+        roleId: rt?.roleId ?? conv.roleId,
+        pipelineId: rt?.pipelineId ?? conv.pipelineId,
+      },
+      pipeline: rt?.pipeline || (conv.pipelineId && await store.getPipeline(conv.pipelineId)),
+      role: rt?.role,
+      roles,
+      messages,
+    });
+  }
+
+  async function emitAgent(cid, rt, status) {
+    const agents = await snapshotAgents(cid, rt);
+    const idx = rt?.pipeline?.steps?.length ? rt.pipelineStep : 0;
+    const agent = agents[Math.min(Math.max(0, idx), Math.max(0, agents.length - 1))] || agents[0];
+    const data = agentEventData(agent, status || mapConvStatusToAgent(rt?.status));
+    if (!data) return null;
+    return emit(cid, 'agent', data);
+  }
+
   function markProgress(rt) {
     rt.lastProgressAt = Date.now();
   }
@@ -140,6 +194,7 @@ export function createOrchestrator({
     }
     rt.role = (roleId && await store.getRole(roleId)) || await store.getRole('default') || {
       id: 'default',
+      name: 'Default',
       systemPrompt: 'You are a helpful coding assistant.',
       tools: ['read', 'write', 'edit', 'ls', 'grep', 'bash'],
     };
@@ -237,6 +292,7 @@ export function createOrchestrator({
           }
           rt.status = 'failed';
           await persist(rt);
+          await emitAgent(cid, rt, 'error');
           await emit(cid, 'error', { code: err.code || 'E_LLM', message: err.message });
           await emit(cid, 'status', { status: 'failed' });
           return;
@@ -246,7 +302,15 @@ export function createOrchestrator({
         if (rt.status === 'paused' || rt.status === 'stopped') return;
 
         if (action.type === 'end') {
+          // Explicit `{end:true}` faux turns consume a step so the next pipeline
+          // agent continues the script instead of re-reading the same end turn.
+          if (action.consumed) {
+            rt.currentStep += 1;
+            rt.lastCheckpointAt = Date.now();
+            markProgress(rt);
+          }
           if (rt.pipeline?.steps && rt.pipelineStep < rt.pipeline.steps.length - 1) {
+            await emitAgent(cid, rt, 'done');
             rt.pipelineStep += 1;
             const step = rt.pipeline.steps[rt.pipelineStep];
             const role = await store.getRole(step.role);
@@ -257,8 +321,10 @@ export function createOrchestrator({
             const text = step.input === 'previous' ? (rt.lastAssistantText || '') : (rt.originalText || '');
             await store.addMessage(cid, { id: `${cid}:u:p${rt.pipelineStep}`, role: 'user', text });
             await persist(rt);
+            await emitAgent(cid, rt, 'running');
             continue;
           }
+          await emitAgent(cid, rt, 'done');
           rt.status = 'done';
           await persist(rt);
           await emit(cid, 'status', { status: 'done' });
@@ -274,41 +340,20 @@ export function createOrchestrator({
           markProgress(rt);
         } else if (action.type === 'tool') {
           const toolCallId = `${cid}:${rt.currentStep}`;
-          const allowed = rt.role?.tools;
-          if (Array.isArray(allowed) && allowed.length && !allowed.includes(action.name)) {
-            const err = new Error(`tool not allowed: ${action.name}`);
-            err.code = 'E_SANDBOX';
-            rt.status = 'failed';
-            await persist(rt);
-            await emit(cid, 'error', { code: err.code, message: err.message });
-            await emit(cid, 'status', { status: 'failed' });
-            return;
-          }
-          const existing = await store.getToolCall(toolCallId);
-          const already = existing?.status === 'completed';
-          if (!already) {
-            await emit(cid, 'tool.start', {
-              tool: { id: toolCallId, name: action.name, input: action.args, status: 'running', path: action.args?.path },
-            });
-          }
-          let result;
-          try {
-            result = await callTool(action.name, action.args || {}, {
-              store,
-              toolCallId,
-              workspacePath: rt.workspacePath,
-              conversationId: cid,
-              signal: rt.abort.signal,
-            });
-          } catch (err) {
-            if (isAbort(err) || rt.status === 'paused' || rt.status === 'stopped') return;
-            result = {
+          markProgress(rt);
+          await persist(rt);
+          const roleAllow = Array.isArray(rt.role?.tools) && rt.role.tools.length
+            ? rt.role.tools
+            : TOOL_REGISTRY;
+          if (!TOOL_REGISTRY.includes(action.name) || !roleAllow.includes(action.name)) {
+            const tool = {
+              id: toolCallId,
               name: action.name,
-              path: action.args?.path,
-              output: err.message,
               status: 'error',
-              error: err.message,
-              code: err.code,
+              input: action.args,
+              output: 'E_UNKNOWN_TOOL',
+              error: 'E_UNKNOWN_TOOL',
+              code: 'E_UNKNOWN_TOOL',
             };
             if (store) {
               await store.upsertToolCall({
@@ -317,31 +362,76 @@ export function createOrchestrator({
                 name: action.name,
                 status: 'completed',
                 input: action.args,
-                output: err.message,
-                path: action.args?.path,
+                output: 'E_UNKNOWN_TOOL',
               });
             }
-          }
-          if (!already && !result.duplicate) {
-            const tool = {
-              id: toolCallId,
-              name: action.name,
-              path: result.path ?? action.args?.path,
-              added: result.added,
-              removed: result.removed,
-              status: result.status || 'completed',
-              input: action.args,
-              output: result.output,
-            };
             await store.addMessage(cid, {
               id: `tool:${toolCallId}`,
               role: 'tool',
-              text: stringify(result.output),
+              text: 'E_UNKNOWN_TOOL',
               tool,
             });
             await emit(cid, 'tool.end', { tool });
+          } else {
+            const existing = await store.getToolCall(toolCallId);
+            const already = existing?.status === 'completed';
+            if (!already && existing?.status !== 'started') {
+              await emit(cid, 'tool.start', {
+                tool: { id: toolCallId, name: action.name, input: action.args, status: 'running', path: action.args?.path },
+              });
+            }
+            let result;
+            try {
+              result = await callTool(action.name, action.args || {}, {
+                store,
+                toolCallId,
+                workspacePath: rt.workspacePath,
+                conversationId: cid,
+                signal: rt.abort.signal,
+              });
+            } catch (err) {
+              if (isAbort(err) || rt.status === 'paused' || rt.status === 'stopped') return;
+              result = {
+                name: action.name,
+                path: action.args?.path,
+                output: err.message,
+                status: 'error',
+                error: err.message,
+                code: err.code,
+              };
+              if (store) {
+                await store.upsertToolCall({
+                  id: toolCallId,
+                  conversationId: cid,
+                  name: action.name,
+                  status: 'completed',
+                  input: action.args,
+                  output: err.message,
+                  path: action.args?.path,
+                });
+              }
+            }
+            if (!already && !result.duplicate) {
+              const tool = {
+                id: toolCallId,
+                name: action.name,
+                path: result.path ?? action.args?.path,
+                added: result.added,
+                removed: result.removed,
+                status: result.status || 'completed',
+                input: action.args,
+                output: result.output,
+              };
+              await store.addMessage(cid, {
+                id: `tool:${toolCallId}`,
+                role: 'tool',
+                text: stringify(result.output),
+                tool,
+              });
+              await emit(cid, 'tool.end', { tool });
+            }
+            markProgress(rt);
           }
-          markProgress(rt);
         }
 
         if (rt.status === 'paused' || rt.status === 'stopped') return;
@@ -392,6 +482,7 @@ export function createOrchestrator({
         rt.status = 'failed';
         rt.abortReason = 'stop';
         persist(rt).catch(() => {});
+        emitAgent(rt.id, rt, 'error').catch(() => {});
         emit(rt.id, 'error', { code: 'E_STALL', message: 'stalled' }).catch(() => {});
         emit(rt.id, 'status', { status: 'failed' }).catch(() => {});
         try { rt.abort.abort(); } catch { /* ignore */ }
@@ -408,18 +499,24 @@ export function createOrchestrator({
       if (rt.status === 'stopped') return { status: 'stopped' };
       rt.status = 'running';
       markProgress(rt);
-      await persist(rt, {
+      const firstPatch = {
         workspacePath: opts.workspacePath ?? rt.workspacePath,
         roleId: opts.roleId ?? rt.roleId,
         pipelineId: opts.pipelineId ?? rt.pipelineId,
-        title: opts.title,
-      });
+      };
+      if (opts.title) firstPatch.title = opts.title;
+      await persist(rt, firstPatch);
       if (opts.text) {
         if (!rt.originalText) rt.originalText = opts.text;
         await store.addMessage(cid, { id: `${cid}:u:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`, role: 'user', text: opts.text });
-        await persist(rt, { originalText: rt.originalText, title: opts.title || String(opts.text).slice(0, 48) });
+        const conv = await store.getConversation(cid);
+        const title = autoTitleFromText(conv?.title, opts);
+        const extra = { originalText: rt.originalText };
+        if (title !== undefined) extra.title = title;
+        await persist(rt, extra);
       }
       await loadRolePipeline(rt);
+      await emitAgent(cid, rt, 'running');
       await emit(cid, 'status', { status: 'running' });
       kick(cid);
       return { status: 'running' };
@@ -456,6 +553,7 @@ export function createOrchestrator({
       rt.abortReason = 'stop';
       try { rt.abort.abort(); } catch { /* ignore */ }
       await persist(rt);
+      await emitAgent(id, rt, 'stopped');
       await emit(id, 'status', { status: 'stopped' });
       return { status: 'stopped' };
     },
@@ -478,8 +576,13 @@ export function createOrchestrator({
         rt.lastCheckpointAt = conv.lastCheckpointAt;
         rt.originalText = conv.originalText;
         rt.workspacePath = conv.workspacePath;
+        const msgs = await store.getMessages(conv.id);
+        const lastA = [...msgs].reverse().find((m) => m.role === 'assistant');
+        if (lastA?.text) rt.lastAssistantText = lastA.text;
         markProgress(rt);
         await persist(rt);
+        await loadRolePipeline(rt);
+        await emitAgent(conv.id, rt, 'running');
         await emit(conv.id, 'status', { status: 'recovering' });
         kick(conv.id);
       }

@@ -1,0 +1,27 @@
+{
+  "perConversation": true,
+  "turns": [
+    { "delayMs": 800 },
+    { "text": "Coder: I'll add a tiny hello module." },
+    { "delayMs": 700 },
+    { "tool": "write", "args": { "path": "hello.js", "content": "export function hello() {\n  return 'hello';\n}\n" } },
+    { "delayMs": 500 },
+    { "text": "Coder done: wrote hello.js" },
+    { "end": true },
+
+    { "delayMs": 800 },
+    { "text": "Tester: I'll add a smoke test for hello()." },
+    { "delayMs": 700 },
+    { "tool": "write", "args": { "path": "hello.test.js", "content": "import { hello } from './hello.js';\nconsole.assert(hello() === 'hello');\n" } },
+    { "delayMs": 500 },
+    { "text": "Tester done: wrote hello.test.js" },
+    { "end": true },
+
+    { "delayMs": 800 },
+    { "text": "Auditor: Reviewing hello.js and the test for obvious issues." },
+    { "delayMs": 700 },
+    { "tool": "write", "args": { "path": "AUDIT.md", "content": "# Audit\n\n- hello.js is tiny and has no I/O or secrets.\n- Test covers the return value.\n- No blocking issues.\n" } },
+    { "delayMs": 500 },
+    { "text": "Auditor done: no blocking issues." }
+  ]
+}
