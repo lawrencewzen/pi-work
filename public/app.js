@@ -1,4 +1,4 @@
-import { t, getLocale, setLocale } from './i18n.js';
+import { t, tPlural, getLocale, setLocale, applyI18n } from './i18n.js';
 
 // Application State
 const state = {
@@ -12,8 +12,10 @@ const state = {
   activeFilePath: null,
   activeDiff: null,
   activeFileContent: null,
+  userPickedFile: false,
   settings: {},
   roles: [],
+  pipelines: [],
   plugins: [],
   skills: [],
   about: {},
@@ -30,6 +32,7 @@ const state = {
 };
 
 let runningPollInterval = null;
+let convMetaRefreshTimer = null;
 
 // ============================================================================
 // Utilities
@@ -219,7 +222,7 @@ export function renderMarkdown(src = '') {
 
 // Unified Diff renderer
 export function renderDiffHtml(diffText) {
-  if (!diffText) return '<div class="empty-placeholder">No diff available</div>';
+  if (!diffText) return `<div class="empty-placeholder">${escapeHtml(t('no_diff_available'))}</div>`;
   const lines = diffText.split(/\r?\n/);
   const rows = [];
   let oldLn = 0;
@@ -298,16 +301,18 @@ export function showToast(message) {
 // Auth & API client
 // ============================================================================
 export function handleUnauthorized() {
-  if (state.unauthorized) return;
+  const first = !state.unauthorized;
   state.unauthorized = true;
 
-  if (state.eventSource) {
-    state.eventSource.close();
-    state.eventSource = null;
-  }
-  if (runningPollInterval) {
-    clearInterval(runningPollInterval);
-    runningPollInterval = null;
+  if (first) {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+    if (runningPollInterval) {
+      clearInterval(runningPollInterval);
+      runningPollInterval = null;
+    }
   }
 
   let ov = document.getElementById('auth-overlay');
@@ -321,8 +326,7 @@ export function handleUnauthorized() {
   ov.innerHTML = `
     <div class="auth-notice-card">
       <div style="font-size:32px;margin-bottom:12px;">🔒</div>
-      <div class="auth-notice-title">未授权：请打开服务器启动时打印的登录链接</div>
-      <div class="auth-notice-sub">Unauthorized: Please open the login URL printed when the server started</div>
+      <div class="auth-notice-title">${escapeHtml(t('unauthorized_notice'))}</div>
     </div>
   `;
 }
@@ -410,8 +414,10 @@ export async function loadInitialData() {
   } catch { /* ignore */ }
 
   applyTheme(state.theme, state.appearance);
+  applyI18n();
 
   try { state.roles = await api('/api/roles'); } catch { state.roles = []; }
+  try { state.pipelines = await api('/api/pipelines'); } catch { state.pipelines = []; }
   try { state.plugins = await api('/api/plugins'); } catch { state.plugins = []; }
   try { state.skills = await api('/api/skills'); } catch { state.skills = []; }
   try { state.about = await api('/api/about'); } catch { state.about = {}; }
@@ -441,9 +447,15 @@ export async function loadWorkspaces() {
   if (state.activeWorkspaceId) {
     await loadConversations(state.activeWorkspaceId);
   } else {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+    state.activeConversationId = null;
+    state.activeConversationData = null;
+    resetRightPanelAndStatus();
     renderConversations();
     renderChatThread();
-    renderRightPanel();
   }
 }
 
@@ -471,27 +483,53 @@ export async function loadConversations(wid) {
   if (state.activeConversationId) {
     await selectConversation(state.activeConversationId);
   } else {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
     state.activeConversationData = null;
+    resetRightPanelAndStatus();
     renderChatThread();
-    renderRightPanel();
   }
+}
+
+function resetRightPanelAndStatus() {
+  state.changes = [];
+  state.activeFilePath = null;
+  state.activeDiff = null;
+  state.activeFileContent = null;
+  state.userPickedFile = false;
+  renderStatusBar();
+  renderRightPanel();
 }
 
 export async function selectWorkspace(wid) {
   if (state.activeWorkspaceId === wid) return;
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+  state.activeConversationId = null;
+  state.activeConversationData = null;
+  resetRightPanelAndStatus();
+  renderChatThread();
   state.activeWorkspaceId = wid;
   localStorage.setItem('piwork_active_ws', wid);
   await loadConversations(wid);
 }
 
 export async function selectConversation(cid) {
-  state.activeConversationId = cid;
-  localStorage.setItem('piwork_active_conv', cid);
-
   if (state.eventSource) {
     state.eventSource.close();
     state.eventSource = null;
   }
+
+  state.activeConversationId = cid;
+  localStorage.setItem('piwork_active_conv', cid);
+  state.activeConversationData = null;
+  resetRightPanelAndStatus();
+  renderChatThread();
+  renderConversations();
 
   try {
     state.activeConversationData = await api(`/api/conversations/${encodeURIComponent(cid)}`);
@@ -514,16 +552,12 @@ export async function selectConversation(cid) {
     state.changes = [];
   }
 
-  const savedFile = localStorage.getItem('piwork_active_file');
   const savedTab = localStorage.getItem('piwork_active_right_tab') || 'diff';
   state.activeRightTab = savedTab;
+  state.userPickedFile = false;
 
-  if (savedFile && state.changes.some((c) => c.path === savedFile)) {
-    state.activeFilePath = savedFile;
-  } else if (state.changes.length > 0) {
-    state.activeFilePath = state.changes[0].path;
-  } else if (savedFile) {
-    state.activeFilePath = savedFile;
+  if (state.changes.length > 0) {
+    state.activeFilePath = state.changes[state.changes.length - 1].path;
   } else {
     state.activeFilePath = null;
   }
@@ -538,6 +572,112 @@ export async function selectConversation(cid) {
   if (state.activeFilePath) {
     await loadFileOrDiff(state.activeFilePath);
   }
+}
+
+function applyStreamDelta(msgs, data) {
+  const incoming = data.text || '';
+  let m = msgs.find((msg) => msg.id === data.messageId);
+  if (!m) {
+    m = {
+      id: data.messageId,
+      role: data.role || 'assistant',
+      text: incoming,
+      streaming: true,
+      agentId: data.agentId,
+      roleId: data.roleId,
+      kind: data.kind,
+      fromAgent: data.fromAgent,
+      toAgent: data.toAgent,
+    };
+    msgs.push(m);
+    return m;
+  }
+  if (data.agentId) m.agentId = data.agentId;
+  if (data.roleId) m.roleId = data.roleId;
+  if (data.kind) m.kind = data.kind;
+  if (data.fromAgent) m.fromAgent = data.fromAgent;
+  if (data.toAgent) m.toAgent = data.toAgent;
+  if (m.done || m.streaming === false || m.streaming !== true) {
+    return m;
+  }
+  const cur = m.text || '';
+  if (!incoming) return m;
+  if (!cur) {
+    m.text = incoming;
+  } else if (incoming.startsWith(cur)) {
+    m.text = incoming;
+  } else if (cur === incoming || cur.endsWith(incoming) || cur.includes(incoming)) {
+    /* already have this chunk */
+  } else {
+    m.text = cur + incoming;
+  }
+  m.streaming = true;
+  return m;
+}
+
+function scheduleConversationRefresh(cid) {
+  if (!cid) return;
+  if (convMetaRefreshTimer) clearTimeout(convMetaRefreshTimer);
+  convMetaRefreshTimer = setTimeout(() => {
+    refreshConversationMeta(cid);
+  }, 120);
+}
+
+export async function refreshConversationMeta(cid) {
+  if (!cid) return;
+  const wid = state.activeWorkspaceId;
+  try {
+    if (wid) {
+      const list = await api(`/api/workspaces/${encodeURIComponent(wid)}/conversations`);
+      state.conversations = list;
+      state.allConversations[wid] = list;
+      const item = list.find((c) => c.id === cid);
+      if (item) {
+        if (state.activeConversationData && state.activeConversationData.id === cid) {
+          if (item.title) state.activeConversationData.title = item.title;
+          if (item.autoContinues != null) state.activeConversationData.autoContinues = item.autoContinues;
+          if (item.status) state.activeConversationData.status = item.status;
+          if (item.lastCheckpointAt) state.activeConversationData.lastCheckpointAt = item.lastCheckpointAt;
+        }
+      }
+      renderConversations();
+      renderStatusBar();
+    }
+    if (state.activeConversationId !== cid) return;
+    const conv = await api(`/api/conversations/${encodeURIComponent(cid)}`);
+    if (state.activeConversationId !== cid || !state.activeConversationData) return;
+    if (conv.title) {
+      state.activeConversationData.title = conv.title;
+      const item = state.conversations.find((c) => c.id === cid);
+      if (item) item.title = conv.title;
+    }
+    if (conv.autoContinues != null) state.activeConversationData.autoContinues = conv.autoContinues;
+    if (conv.status) state.activeConversationData.status = conv.status;
+    if (conv.lastCheckpointAt) state.activeConversationData.lastCheckpointAt = conv.lastCheckpointAt;
+    if (conv.agents) state.activeConversationData.agents = conv.agents;
+    if (Array.isArray(conv.messages)) {
+      const local = state.activeConversationData.messages || [];
+      const streaming = new Map(local.filter((m) => m.streaming).map((m) => [m.id, m]));
+      const merged = [];
+      const seen = new Set();
+      for (const m of conv.messages) {
+        seen.add(m.id);
+        const live = streaming.get(m.id);
+        merged.push(live || m);
+      }
+      for (const m of local) {
+        if (seen.has(m.id)) continue;
+        if (m.streaming || String(m.id).startsWith('usr-')) {
+          const dup = merged.some((x) => x.role === m.role && x.kind !== 'handoff' && x.text === m.text);
+          if (!dup) merged.push(m);
+        }
+      }
+      state.activeConversationData.messages = dedupeMessages(merged);
+    }
+    renderConversations();
+    renderStatusBar();
+    renderChatThread();
+  } catch { /* ignore */ }
 }
 
 // ============================================================================
@@ -558,9 +698,17 @@ export function connectSSE(cid) {
       const data = JSON.parse(ev.data);
       if (state.activeConversationData && state.activeConversationId === cid) {
         state.activeConversationData.status = data.status;
+        if (data.autoContinues != null) state.activeConversationData.autoContinues = data.autoContinues;
+        if (data.title) {
+          state.activeConversationData.title = data.title;
+          const item = state.conversations.find((c) => c.id === cid);
+          if (item) item.title = data.title;
+        }
         renderStatusBar();
+        renderConversations();
       }
       updateConversationStatus(cid, data.status);
+      scheduleConversationRefresh(cid);
     } catch { /* ignore */ }
   });
 
@@ -577,6 +725,7 @@ export function connectSSE(cid) {
       }
       renderConversations();
       renderChatThread();
+      scheduleConversationRefresh(cid);
     } catch { /* ignore */ }
   });
 
@@ -584,16 +733,9 @@ export function connectSSE(cid) {
     try {
       const data = JSON.parse(ev.data);
       if (!state.activeConversationData || state.activeConversationId !== cid) return;
+      if (!data.messageId) return;
       state.activeConversationData.messages = state.activeConversationData.messages || [];
-      const msgs = state.activeConversationData.messages;
-      let m = msgs.find((msg) => msg.id === data.messageId);
-      if (!m) {
-        m = { id: data.messageId, role: 'assistant', text: data.text || '', streaming: true };
-        msgs.push(m);
-      } else {
-        m.text = (m.text || '') + (data.text || '');
-        m.streaming = true;
-      }
+      applyStreamDelta(state.activeConversationData.messages, data);
       renderChatThread();
     } catch { /* ignore */ }
   });
@@ -609,11 +751,14 @@ export function connectSSE(cid) {
             if (data.text != null && data.text !== '') {
               m.text = data.text;
             }
+            if (data.agentId) m.agentId = data.agentId;
+            if (data.roleId) m.roleId = data.roleId;
             m.streaming = false;
             m.done = true;
           }
         }
         renderChatThread();
+        scheduleConversationRefresh(cid);
       }
     } catch {
       if (state.activeConversationId === cid) {
@@ -654,11 +799,27 @@ export function connectSSE(cid) {
 
       api(`/api/conversations/${encodeURIComponent(cid)}/changes`)
         .then((changes) => {
-          state.changes = changes;
-          renderRightPanel();
-          if (state.activeFilePath) {
-            loadFileOrDiff(state.activeFilePath);
+          state.changes = Array.isArray(changes) ? changes : [];
+          const newest = state.changes.length ? state.changes[state.changes.length - 1].path : null;
+          const toolPath = tool?.path || tool?.input?.path || null;
+          const stillExists = state.activeFilePath && state.changes.some((c) => c.path === state.activeFilePath);
+          if (!state.userPickedFile) {
+            const pick = (toolPath && state.changes.some((c) => c.path === toolPath)) ? toolPath : newest;
+            if (pick) {
+              loadFileOrDiff(pick);
+              return;
+            }
+          } else if (!stillExists) {
+            state.userPickedFile = false;
+            if (newest) {
+              loadFileOrDiff(newest);
+              return;
+            }
+            state.activeFilePath = null;
+            state.activeDiff = null;
           }
+          renderRightPanel();
+          if (state.activeFilePath) loadFileOrDiff(state.activeFilePath);
         })
         .catch(() => {});
     } catch { /* ignore */ }
@@ -679,7 +840,11 @@ export function connectSSE(cid) {
     try {
       const data = JSON.parse(ev.data);
       if (state.activeConversationData && state.activeConversationId === cid) {
-        state.activeConversationData.autoContinues = data.attempt || (state.activeConversationData.autoContinues + 1);
+        if (data.autoContinues != null) {
+          state.activeConversationData.autoContinues = data.autoContinues;
+        } else {
+          state.activeConversationData.autoContinues = data.attempt || ((state.activeConversationData.autoContinues || 0) + 1);
+        }
         renderStatusBar();
       }
     } catch { /* ignore */ }
@@ -781,8 +946,9 @@ export async function sendMessage(text) {
 
   try {
     await api(`/api/conversations/${encodeURIComponent(cid)}/messages`, 'POST', { text });
+    scheduleConversationRefresh(cid);
   } catch (err) {
-    showToast(err.message || 'Send failed');
+    showToast(err.message || t('err_send'));
     updateConversationStatus(cid, 'failed');
   }
 }
@@ -797,7 +963,7 @@ export async function pauseConversation() {
       renderStatusBar();
     }
   } catch (err) {
-    showToast(err.message || 'Pause failed');
+    showToast(err.message || t('err_pause'));
   }
 }
 
@@ -811,7 +977,7 @@ export async function resumeConversation() {
       renderStatusBar();
     }
   } catch (err) {
-    showToast(err.message || 'Resume failed');
+    showToast(err.message || t('err_resume'));
   }
 }
 
@@ -825,7 +991,7 @@ export async function stopConversation() {
       renderStatusBar();
     }
   } catch (err) {
-    showToast(err.message || 'Stop failed');
+    showToast(err.message || t('err_stop'));
   }
 }
 
@@ -840,32 +1006,38 @@ export async function createNewWorkspace(data) {
   return ws;
 }
 
-export async function createNewConversation() {
+export async function createNewConversation(opts = {}) {
   if (!state.activeWorkspaceId) {
-    showToast('Please select or create a workspace first');
+    showToast(t('err_select_workspace'));
     return;
   }
+  const body = { title: opts.title || '' };
+  if (opts.roleId) body.roleId = opts.roleId;
+  if (opts.pipelineId) body.pipelineId = opts.pipelineId;
   try {
-    const conv = await api(`/api/workspaces/${encodeURIComponent(state.activeWorkspaceId)}/conversations`, 'POST', {});
+    const conv = await api(`/api/workspaces/${encodeURIComponent(state.activeWorkspaceId)}/conversations`, 'POST', body);
     await loadConversations(state.activeWorkspaceId);
     if (conv.id) await selectConversation(conv.id);
+    return conv;
   } catch (err) {
-    showToast(err.message || 'Create conversation failed');
+    showToast(err.message || t('err_create_conversation'));
   }
 }
 
 export async function loadFileOrDiff(filePath) {
   state.activeFilePath = filePath;
   localStorage.setItem('piwork_active_file', filePath);
+  const tab = state.activeRightTab;
 
-  if (state.activeRightTab === 'editor') {
+  if (tab === 'editor' || tab === 'markdown' || tab === 'file') {
     try {
       const fileData = await api(`/api/workspaces/${encodeURIComponent(state.activeWorkspaceId)}/files?path=${encodeURIComponent(filePath)}`);
       state.activeFileContent = fileData.content ?? '';
     } catch {
       state.activeFileContent = '';
     }
-  } else {
+  }
+  if (tab === 'diff' || !tab) {
     try {
       state.activeDiff = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/diff?path=${encodeURIComponent(filePath)}`);
     } catch {
@@ -887,7 +1059,7 @@ export async function saveEditorFile() {
     showToast(t('btn_saved'));
     state.activeFileContent = content;
   } catch (err) {
-    showToast(err.message || 'Save failed');
+    showToast(err.message || t('err_save'));
   }
 }
 
@@ -899,7 +1071,7 @@ export function renderSidebarWorkspaces() {
   if (!container) return;
 
   const countLabel = document.getElementById('ws-count-label');
-  if (countLabel) countLabel.textContent = t('workspace_count', { n: state.workspaces.length });
+  if (countLabel) countLabel.textContent = tPlural('workspace_count', state.workspaces.length);
 
   container.innerHTML = state.workspaces
     .map((ws) => {
@@ -1040,7 +1212,7 @@ export function renderStatusBar() {
   const autoContinues = conv?.autoContinues || 0;
   const statusTextStr = t(`status_${status}`) || status;
 
-  const displayStatus = getLocale() === 'en' ? status : `${statusTextStr} (${status})`;
+  const displayStatus = getLocale() === 'en' ? statusTextStr : `${statusTextStr} (${status})`;
 
   const statusTextEl = document.getElementById('status-text');
   if (statusTextEl) statusTextEl.textContent = displayStatus;
@@ -1099,7 +1271,7 @@ export function renderSubagentCardHtml(sa) {
         </div>
       `;
     } else if (typeof sa.toolCalls === 'number' && sa.toolCalls > 0) {
-      toolCallsHtml = `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Tool calls: ${sa.toolCalls}</div>`;
+      toolCallsHtml = `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${escapeHtml(t('tool_calls_count', { n: sa.toolCalls }))}</div>`;
     }
 
     let lastTextHtml = '';
@@ -1114,7 +1286,7 @@ export function renderSubagentCardHtml(sa) {
     body = `
       <div class="subagent-card-body">
         <div style="font-size:11.5px;display:flex;gap:12px;color:var(--text-secondary);">
-          <span><strong>${escapeHtml(t('status_idle') ? '状态' : 'Status')}:</strong> ${escapeHtml(statusText)}</span>
+          <span><strong>${escapeHtml(t('tool_status_label'))}:</strong> ${escapeHtml(statusText)}</span>
           <span><strong>${escapeHtml(t('step_label'))}:</strong> ${escapeHtml(progressStr)}</span>
         </div>
         ${lastTextHtml}
@@ -1161,7 +1333,7 @@ export function renderChatThread() {
     thread.innerHTML = `
       <div class="empty-placeholder">
         <div>
-          <h3 style="margin-bottom:8px;font-weight:600;">pi-work · Durable Agent</h3>
+          <h3 style="margin-bottom:8px;font-weight:600;">${escapeHtml(t('empty_chat_title'))}</h3>
           <p style="font-size:12px;color:var(--text-muted);">${escapeHtml(t('composer_placeholder'))}</p>
         </div>
       </div>
@@ -1177,6 +1349,14 @@ export function renderChatThread() {
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
+    if (m.kind === 'handoff') {
+      rendered.push(
+        `<div class="handoff-note" data-testid="message" data-role="system" data-kind="handoff">` +
+        `<span>${escapeHtml(t('handoff_note', { from: m.fromAgent || '', to: m.toAgent || '' }))}</span>` +
+        `</div>`
+      );
+      continue;
+    }
     if (m.role === 'user') {
       rendered.push(
         `<div class="msg-group" data-testid="message" data-role="user">` +
@@ -1199,12 +1379,14 @@ export function renderChatThread() {
       rendered.push(renderToolRowHtml(m.tool));
     } else {
       const bodyHtml = renderMarkdown(m.text || '');
+      const sender = assistantLabel(m);
+      const chip = assistantChip(m);
       rendered.push(
         `<div class="msg-group" data-testid="message" data-role="assistant">` +
         `<div class="msg-header">` +
         `<div class="msg-avatar avatar-assistant">π</div>` +
-        `<span class="msg-sender">${escapeHtml(t('agent_name'))}</span>` +
-        `<span class="msg-chip">grok-4.6</span>` +
+        `<span class="msg-sender">${escapeHtml(sender)}</span>` +
+        (chip ? `<span class="msg-chip">${escapeHtml(chip)}</span>` : '') +
         `</div>` +
         `<div class="msg-body" data-testid="message-body">${bodyHtml}</div>` +
         `</div>`
@@ -1251,13 +1433,39 @@ export function renderToolRowHtml(tool) {
     `</div>` +
     `<div class="tool-meta"><span>${escapeHtml(tool.status || '')}</span></div>` +
     `<div class="tool-detail-card" data-testid="tool-row-detail" style="display:${isExpanded ? 'block' : 'none'}">` +
-    `<div><strong>Path:</strong> ${escapeHtml(rawPath)}</div>` +
+    `<div><strong>${escapeHtml(t('tool_path_label'))}:</strong> ${escapeHtml(rawPath)}</div>` +
     (tool.input ? `<div style="margin-top:4px;"><strong>${escapeHtml(t('tool_input'))}:</strong>\n${escapeHtml(JSON.stringify(tool.input, null, 2))}</div>` : '') +
     (tool.output ? `<div style="margin-top:4px;"><strong>${escapeHtml(t('tool_output'))}:</strong>\n${escapeHtml(typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2))}</div>` : '') +
     `</div>` +
     `</div>` +
     `</div>`
   );
+}
+
+function assistantLabel(m) {
+  const rid = m?.roleId || m?.agentId;
+  if (rid) {
+    const role = (state.roles || []).find((r) => r.id === rid);
+    if (role?.name) return role.name;
+    return rid;
+  }
+  return t('agent_name');
+}
+
+function assistantChip(m) {
+  const rid = m?.roleId;
+  const models = state.settings?.models || {};
+  if (rid && models[rid]) return models[rid];
+  if (rid && rid !== 'default') return rid;
+  return '';
+}
+
+function pluginSourceLabel(src) {
+  const s = String(src || '').toLowerCase();
+  if (s === 'builtin' || s === 'built-in' || s === '内置') return t('plugin_source_builtin');
+  if (s === 'community' || s === '社区') return t('plugin_source_community');
+  if (s === 'local' || s === 'imported' || s === '本地导入' || s === '本地') return t('plugin_source_local');
+  return src || t('plugin_source_local');
 }
 
 export function toggleToolDetail(id) {
@@ -1486,35 +1694,28 @@ function renderSettingsTabContent(tab) {
     const s = state.settings || {};
     const prov = s.provider || 'openai';
     const models = s.models || {};
-    const savedKey = s.apiKey || '';
-    const maskedKey = maskApiKey(savedKey);
+    const maskedKey = s.apiKey || '';
 
-    const rolesList = state.roles.length > 0 ? state.roles : [
-      { id: 'default', name: 'Default Agent' },
-      { id: 'tester', name: 'tester' },
-      { id: 'coder', name: 'coder' },
-      { id: 'auditor', name: 'auditor' },
-    ];
+    const rolesList = state.roles || [];
 
     return `
       <h2>${escapeHtml(t('settings_tab_models'))}</h2>
       <div class="prov">
         <span class="${prov === 'xai' ? 'on' : ''}" data-action="set-model-provider" data-provider="xai">xAI</span>
         <span class="${prov === 'deepseek' ? 'on' : ''}" data-action="set-model-provider" data-provider="deepseek">DeepSeek</span>
-        <span class="${prov === 'openai' ? 'on' : ''}" data-action="set-model-provider" data-provider="openai">OpenAI 兼容</span>
-        <span class="${prov === 'ollama' ? 'on' : ''}" data-action="set-model-provider" data-provider="ollama">本地 Ollama</span>
+        <span class="${prov === 'openai' ? 'on' : ''}" data-action="set-model-provider" data-provider="openai">${escapeHtml(t('provider_openai'))}</span>
+        <span class="${prov === 'ollama' ? 'on' : ''}" data-action="set-model-provider" data-provider="ollama">${escapeHtml(t('provider_ollama'))}</span>
       </div>
       <div class="row">
         <div class="l"><b>${escapeHtml(t('models_base_url_label'))}</b><span>${escapeHtml(t('models_base_url_desc'))}</span></div>
-        <input class="in" id="cfg-base-url" type="text" data-original-val="${escapeHtml(s.baseUrl || '')}" value="${escapeHtml(s.baseUrl || '')}" placeholder="https://api.openai.com/v1" />
+        <input class="in" id="cfg-base-url" type="text" data-original-val="${escapeHtml(s.baseUrl || '')}" value="${escapeHtml(s.baseUrl || '')}" placeholder="${escapeHtml(t('models_base_url_placeholder'))}" />
       </div>
       <div class="row">
         <div class="l"><b>${escapeHtml(t('models_api_key_label'))}</b><span>${escapeHtml(t('models_api_key_desc'))}</span></div>
-        <input class="in" id="cfg-api-key" type="text" data-original-masked="${escapeHtml(maskedKey)}" value="${escapeHtml(maskedKey)}" placeholder="sk-..." autocomplete="off" />
+        <input class="in" id="cfg-api-key" type="text" data-original-masked="${escapeHtml(maskedKey)}" value="${escapeHtml(maskedKey)}" placeholder="${escapeHtml(t('models_api_key_placeholder'))}" autocomplete="off" />
       </div>
       <div id="cfg-key-warning" class="cfg-warn-box" style="display:none;">
-        ⚠️ 更改服务商或 Base URL 时若未输入新密钥，已保存的 API Key 将被清空以确保安全。<br>
-        <span style="font-size:11px;opacity:0.85;">Warning: Changing provider or Base URL without entering a new key will clear the saved API key for safety.</span>
+        ${escapeHtml(t('models_key_safety_warn'))}
       </div>
       ${rolesList
         .map(
@@ -1584,16 +1785,24 @@ function renderSettingsTabContent(tab) {
   return '';
 }
 
-function renderPluginsListHtml(list) {
+function renderCatalogEmpty(kind, searching) {
+  const titleKey = searching
+    ? (kind === 'plugins' ? 'empty_search_plugins' : 'empty_search_skills')
+    : (kind === 'plugins' ? 'empty_plugins' : 'empty_skills');
+  const hintKey = kind === 'plugins' ? 'empty_plugins_hint' : 'empty_skills_hint';
+  const icon = kind === 'plugins' ? '🔌' : '✦';
+  return (
+    `<div class="catalog-empty">` +
+    `<div class="catalog-empty-icon">${icon}</div>` +
+    `<div class="catalog-empty-title">${escapeHtml(t(titleKey))}</div>` +
+    (searching ? '' : `<div class="catalog-empty-hint">${escapeHtml(t(hintKey))}</div>`) +
+    `</div>`
+  );
+}
+
+function renderPluginsListHtml(list, searching = false) {
   if (!list || list.length === 0) {
-    list = [
-      { id: 'git-tools', name: 'git-tools', description: '提交、分支与 diff 预览', version: '1.4.0', source: '内置', enabled: true },
-      { id: 'shell-sandbox', name: 'shell-sandbox', description: '受限命令执行，危险命令需确认', version: '1.2.1', source: '内置', enabled: true },
-      { id: 'browser', name: 'browser', description: '网页抓取、截图与表单读取', version: '0.9.3', source: '内置', enabled: true },
-      { id: 'mcp-bridge', name: 'mcp-bridge', description: '连接外部 MCP 服务器', version: '0.6.0', source: '社区', enabled: false },
-      { id: 'lark-docs', name: 'lark-docs', description: '飞书文档读写与评论', version: '0.3.2', source: '本地导入', enabled: false },
-      { id: 'notifier', name: 'notifier', description: '任务完成后推送通知', version: '1.0.0', source: '社区', enabled: true },
-    ];
+    return renderCatalogEmpty('plugins', searching && (state.plugins || []).length > 0);
   }
 
   return list
@@ -1608,23 +1817,16 @@ function renderPluginsListHtml(list) {
         `<div class="tg ${isOn ? 'on' : ''}" data-action="toggle-plugin" data-plugin-id="${escapeHtml(pl.id)}" data-enabled="${!isOn}"></div>` +
         `</div>` +
         `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5;min-height:36px">${escapeHtml(pl.description || '')}</div>` +
-        `<div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px"><span>${escapeHtml(pl.source || '内置')}</span><span>·</span><span>${escapeHtml(pl.version || '1.0.0')}</span></div>` +
+        `<div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px"><span>${escapeHtml(pluginSourceLabel(pl.source))}</span>${pl.version ? `<span>·</span><span>${escapeHtml(pl.version)}</span>` : ''}</div>` +
         `</div>`
       );
     })
     .join('');
 }
 
-function renderSkillsListHtml(list) {
+function renderSkillsListHtml(list, searching = false) {
   if (!list || list.length === 0) {
-    list = [
-      { id: 'code-review', name: 'code-review', description: '按清单审查改动并标出风险', version: 'v3', source: '内置' },
-      { id: 'write-tests', name: 'write-tests', description: '生成单元测试与边界用例', version: 'v2', source: '内置' },
-      { id: 'refactor', name: 'refactor', description: '保持行为不变的结构重构', version: 'v1', source: '内置' },
-      { id: 'security-audit', name: 'security-audit', description: '检查命令注入、路径穿越与密钥泄露', version: 'v2', source: '内置' },
-      { id: 'commit-message', name: 'commit-message', description: '根据 diff 生成提交说明', version: 'v1', source: '自定义' },
-      { id: 'doc-writer', name: 'doc-writer', description: '生成 README 与接口文档', version: 'v1', source: '自定义' },
-    ];
+    return renderCatalogEmpty('skills', searching && (state.skills || []).length > 0);
   }
 
   return list
@@ -1635,10 +1837,9 @@ function renderSkillsListHtml(list) {
         `<div style="display:flex;align-items:center;gap:10px">` +
         `<div style="width:30px;height:30px;border-radius:8px;background:var(--bg-surface-subtle);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary)">${escapeHtml(letter)}</div>` +
         `<b style="font-size:13px;font-weight:500;flex:1">${escapeHtml(sk.name || sk.id)}</b>` +
-        `<div class="tg on"></div>` +
         `</div>` +
         `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5;min-height:36px">${escapeHtml(sk.description || '')}</div>` +
-        `<div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px"><span>${escapeHtml(sk.source || '内置')}</span><span>·</span><span>${escapeHtml(sk.version || 'v1')}</span></div>` +
+        `<div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px"><span>${escapeHtml(pluginSourceLabel(sk.source))}</span>${sk.version ? `<span>·</span><span>${escapeHtml(sk.version)}</span>` : ''}</div>` +
         `</div>`
       );
     })
@@ -1652,21 +1853,32 @@ export function setSettingsTab(tab) {
 
 function applyChromeLabels() {
   document.title = 'pi-work';
-  document.querySelectorAll('[data-i18n]').forEach((el) => {
-    const key = el.getAttribute('data-i18n');
-    if (key) el.textContent = t(key);
-  });
+  applyI18n();
+}
+
+export function rerenderI18nSurfaces() {
+  applyI18n();
+  renderSidebarWorkspaces();
+  renderConversations();
+  renderRunningOverview();
+  renderStatusBar();
+  renderChatThread();
+  renderRightPanel();
+  const settingsOv = document.getElementById('settings-overlay');
+  if (settingsOv && settingsOv.style.display !== 'none') {
+    renderSettingsModal();
+  }
+  const authOv = document.getElementById('auth-overlay');
+  if (authOv && authOv.style.display !== 'none' && state.unauthorized) {
+    handleUnauthorized();
+  }
 }
 
 export async function switchLanguage(lang) {
   setLocale(lang);
   applyChromeLabels();
   try { await api('/api/settings', 'PUT', { language: lang }); } catch { /* ignore */ }
-  renderSidebarWorkspaces();
-  renderConversations();
-  renderStatusBar();
-  renderRightPanel();
-  renderSettingsModal();
+  rerenderI18nSurfaces();
 }
 
 export async function switchAppearance(mode) {
@@ -1703,7 +1915,7 @@ export function checkModelKeyWarning() {
   if (!baseUrlEl || !apiKeyEl) return;
 
   const s = state.settings || {};
-  const hasSavedKey = Boolean(s.apiKey);
+  const hasSavedKey = Boolean(s.hasApiKey || s.apiKey);
   const origProvider = s.provider || 'openai';
   const curProvider = state.settings.provider || 'openai';
   const origBaseUrl = s.baseUrl || '';
@@ -1727,7 +1939,7 @@ export async function saveModelsSettings() {
   const roleInputs = document.querySelectorAll('[data-role-id]');
 
   const s = state.settings || {};
-  const hasSavedKey = Boolean(s.apiKey);
+  const hasSavedKey = Boolean(s.hasApiKey || s.apiKey);
   const origProvider = s.provider || 'openai';
   const curProvider = state.settings.provider || 'openai';
   const origBaseUrl = s.baseUrl || '';
@@ -1753,9 +1965,7 @@ export async function saveModelsSettings() {
   };
 
   if (hasSavedKey && providerOrUrlChanged && !isNewKeyEntered) {
-    const warnMsg =
-      '更改服务商或 Base URL 时若未输入新密钥，已保存的 API Key 将被清空以确保安全。是否继续？\n\n' +
-      'Warning: Changing provider or Base URL without entering a new key will clear the saved API key for safety. Continue?';
+    const warnMsg = t('models_key_safety_confirm');
     if (!window.confirm(warnMsg)) {
       return;
     }
@@ -1769,7 +1979,7 @@ export async function saveModelsSettings() {
     showToast(t('msg_settings_saved'));
     renderSettingsModal();
   } catch (err) {
-    showToast(err.message || 'Save failed');
+    showToast(err.message || t('err_save'));
   }
 }
 
@@ -1780,7 +1990,7 @@ export async function togglePlugin(id, enabled) {
     if (p) p.enabled = enabled;
     renderSettingsModal();
   } catch (err) {
-    showToast(err.message || 'Update plugin failed');
+    showToast(err.message || t('err_plugin_update'));
   }
 }
 
@@ -1791,7 +2001,7 @@ export function filterPlugins(q) {
     (p.name || p.id).toLowerCase().includes(q.toLowerCase()) ||
     (p.description || '').toLowerCase().includes(q.toLowerCase())
   );
-  grid.innerHTML = renderPluginsListHtml(filtered);
+  grid.innerHTML = renderPluginsListHtml(filtered, Boolean(q && q.trim()));
 }
 
 export function filterSkills(q) {
@@ -1801,7 +2011,7 @@ export function filterSkills(q) {
     (s.name || s.id).toLowerCase().includes(q.toLowerCase()) ||
     (s.description || '').toLowerCase().includes(q.toLowerCase())
   );
-  grid.innerHTML = renderSkillsListHtml(filtered);
+  grid.innerHTML = renderSkillsListHtml(filtered, Boolean(q && q.trim()));
 }
 
 // Modal dialog helpers
@@ -1872,6 +2082,60 @@ function setWorkspaceSubmitBusy(busy) {
     btn.removeAttribute('aria-busy');
     btn.textContent = btn.dataset.idleLabel || t('btn_create');
   }
+}
+
+export async function openNewConversationModal() {
+  if (!state.activeWorkspaceId) {
+    showToast(t('err_select_workspace'));
+    return;
+  }
+  try { state.roles = await api('/api/roles'); } catch { /* keep existing */ }
+  try { state.pipelines = await api('/api/pipelines'); } catch { /* keep existing */ }
+
+  const roleOpts = (state.roles || [])
+    .map((r) => `<option value="role:${escapeHtml(r.id)}">${escapeHtml(r.name || r.id)}</option>`)
+    .join('');
+  const pipeOpts = (state.pipelines || [])
+    .map((p) => `<option value="pipeline:${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`)
+    .join('');
+
+  openModal(`
+    <div class="modal-dialog">
+      <h3>${escapeHtml(t('new_conversation'))} <span style="cursor:pointer;color:var(--text-muted)" data-action="close-modal">×</span></h3>
+      <div class="form-group">
+        <label>${escapeHtml(t('conv_title_label'))}</label>
+        <input id="conv-title-input" data-testid="conversation-title-input" placeholder="${escapeHtml(t('conv_title_placeholder'))}" />
+      </div>
+      <div class="form-group">
+        <label>${escapeHtml(t('conv_role_pipeline_label'))}</label>
+        <select id="conv-role-pipeline">
+          <option value="">${escapeHtml(t('conv_default_agent'))}</option>
+          ${roleOpts ? `<optgroup label="${escapeHtml(t('conv_roles_group'))}">${roleOpts}</optgroup>` : ''}
+          ${pipeOpts ? `<optgroup label="${escapeHtml(t('conv_pipelines_group'))}">${pipeOpts}</optgroup>` : ''}
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
+        <button class="btn p" data-testid="conversation-create-submit" data-action="submit-conversation">${escapeHtml(t('btn_create'))}</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('conv-title-input')?.focus();
+}
+
+export async function submitNewConversation() {
+  if (!state.activeWorkspaceId) {
+    showToast(t('err_select_workspace'));
+    return;
+  }
+  const title = document.getElementById('conv-title-input')?.value.trim() || '';
+  const picked = document.getElementById('conv-role-pipeline')?.value || '';
+  const opts = {};
+  if (title) opts.title = title;
+  if (picked.startsWith('role:')) opts.roleId = picked.slice(5);
+  else if (picked.startsWith('pipeline:')) opts.pipelineId = picked.slice(9);
+  const conv = await createNewConversation(opts);
+  if (conv) closeModal();
 }
 
 export function openNewWorkspaceModal() {
@@ -2050,6 +2314,8 @@ window.__app = {
   togglePlugin,
   filterPlugins,
   filterSkills,
+  openNewConversationModal,
+  submitNewConversation,
   openNewWorkspaceModal,
   toggleWsModalTab,
   submitWorkspaceModal,
@@ -2084,7 +2350,10 @@ document.addEventListener('click', (e) => {
       openNewWorkspaceModal();
       break;
     case 'new-conversation':
-      createNewConversation();
+      openNewConversationModal();
+      break;
+    case 'submit-conversation':
+      submitNewConversation();
       break;
     case 'open-settings':
       openSettings();
@@ -2136,6 +2405,7 @@ document.addEventListener('click', (e) => {
       }
       break;
     case 'load-file':
+      state.userPickedFile = true;
       loadFileOrDiff(actionEl.getAttribute('data-path'));
       break;
     case 'save-editor-file':
@@ -2236,6 +2506,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  applyI18n();
   await loadInitialData();
   applyChromeLabels();
 });
