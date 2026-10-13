@@ -43,6 +43,12 @@ function stringify(v) {
   try { return JSON.stringify(v); } catch { return String(v); }
 }
 
+function agentRef(cid, rt) {
+  const roleId = rt?.role?.id || rt?.roleId || 'default';
+  const idx = rt?.pipeline?.steps?.length ? (rt.pipelineStep || 0) : 0;
+  return { roleId, agentId: `${cid}:agent:${idx}` };
+}
+
 export function createOrchestrator({
   llm,
   store,
@@ -244,6 +250,29 @@ export function createOrchestrator({
       while (rt.epoch === epoch && (rt.status === 'running' || rt.status === 'recovering')) {
         if (rt.abort.signal.aborted && rt.abortReason !== 'stall') break;
 
+        const assistantId = `${cid}:a:${rt.currentStep}`;
+        const toolCallId = `${cid}:${rt.currentStep}`;
+        const stored = await store.getMessages(cid);
+        const existingAssistant = stored.find((m) => m.id === assistantId);
+        if (existingAssistant) {
+          if (existingAssistant.text) rt.lastAssistantText = existingAssistant.text;
+          rt.currentStep += 1;
+          rt.lastCheckpointAt = Date.now();
+          markProgress(rt);
+          await persist(rt);
+          await emit(cid, 'checkpoint', { at: rt.lastCheckpointAt, step: rt.currentStep });
+          continue;
+        }
+        const existingTool = await store.getToolCall(toolCallId);
+        if (existingTool?.status === 'completed') {
+          rt.currentStep += 1;
+          rt.lastCheckpointAt = Date.now();
+          markProgress(rt);
+          await persist(rt);
+          await emit(cid, 'checkpoint', { at: rt.lastCheckpointAt, step: rt.currentStep });
+          continue;
+        }
+
         const messages = await buildMessages(cid, rt);
         let action;
         try {
@@ -311,6 +340,7 @@ export function createOrchestrator({
           }
           if (rt.pipeline?.steps && rt.pipelineStep < rt.pipeline.steps.length - 1) {
             await emitAgent(cid, rt, 'done');
+            const fromAgent = rt.role?.id || rt.roleId;
             rt.pipelineStep += 1;
             const step = rt.pipeline.steps[rt.pipelineStep];
             const role = await store.getRole(step.role);
@@ -318,8 +348,16 @@ export function createOrchestrator({
               rt.role = role;
               rt.roleId = role.id;
             }
+            const toAgent = role?.id || step.role;
             const text = step.input === 'previous' ? (rt.lastAssistantText || '') : (rt.originalText || '');
-            await store.addMessage(cid, { id: `${cid}:u:p${rt.pipelineStep}`, role: 'user', text });
+            await store.addMessage(cid, {
+              id: `${cid}:u:p${rt.pipelineStep}`,
+              role: 'user',
+              text,
+              kind: 'handoff',
+              fromAgent,
+              toAgent,
+            });
             await persist(rt);
             await emitAgent(cid, rt, 'running');
             continue;
@@ -333,10 +371,19 @@ export function createOrchestrator({
 
         if (action.type === 'text') {
           const mid = `${cid}:a:${rt.currentStep}`;
-          await store.addMessage(cid, { id: mid, role: 'assistant', text: action.text });
-          await emit(cid, 'message.delta', { messageId: mid, text: action.text });
-          await emit(cid, 'message.done', { messageId: mid });
-          rt.lastAssistantText = action.text;
+          const { agentId, roleId } = agentRef(cid, rt);
+          const saved = await store.addMessage(cid, {
+            id: mid,
+            role: 'assistant',
+            text: action.text,
+            agentId,
+            roleId,
+          });
+          const messageId = saved?.id || mid;
+          const finalText = saved?.text != null ? saved.text : action.text;
+          await emit(cid, 'message.delta', { messageId, text: action.text, agentId, roleId });
+          await emit(cid, 'message.done', { messageId, text: finalText, agentId, roleId });
+          rt.lastAssistantText = finalText;
           markProgress(rt);
         } else if (action.type === 'tool') {
           const toolCallId = `${cid}:${rt.currentStep}`;
@@ -571,7 +618,7 @@ export function createOrchestrator({
         rt.status = 'recovering';
         rt.currentStep = conv.currentStep || 0;
         rt.pipelineStep = conv.pipelineStep || 0;
-        rt.autoContinues = conv.autoContinues || 0;
+        rt.autoContinues = (conv.autoContinues || 0) + 1;
         rt.retries = conv.retries || 0;
         rt.lastCheckpointAt = conv.lastCheckpointAt;
         rt.originalText = conv.originalText;
@@ -583,7 +630,7 @@ export function createOrchestrator({
         await persist(rt);
         await loadRolePipeline(rt);
         await emitAgent(conv.id, rt, 'running');
-        await emit(conv.id, 'status', { status: 'recovering' });
+        await emit(conv.id, 'status', { status: 'recovering', autoContinues: rt.autoContinues });
         kick(conv.id);
       }
     },

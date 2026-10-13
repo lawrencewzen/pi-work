@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
+const MESSAGE_META_KEYS = ['kind', 'fromAgent', 'toAgent', 'agentId', 'roleId'];
 
 function chmodSecret(p) {
   try { chmodSync(p, 0o600); } catch { /* wal/shm may not exist yet */ }
@@ -23,6 +24,25 @@ function j(v) {
 function p(v) {
   if (v == null || v === '') return null;
   try { return JSON.parse(v); } catch { return v; }
+}
+
+function metaFromMsg(msg = {}, prev = null) {
+  const meta = prev && typeof prev === 'object' ? { ...prev } : {};
+  for (const k of MESSAGE_META_KEYS) {
+    if (msg[k] !== undefined) {
+      if (msg[k] == null || msg[k] === '') delete meta[k];
+      else meta[k] = msg[k];
+    }
+  }
+  return Object.keys(meta).length ? meta : null;
+}
+
+function applyMeta(out, meta) {
+  if (!meta || typeof meta !== 'object') return out;
+  for (const k of MESSAGE_META_KEYS) {
+    if (meta[k] != null && meta[k] !== '') out[k] = meta[k];
+  }
+  return out;
 }
 
 function convFromRow(row) {
@@ -96,7 +116,8 @@ export function createSqliteStore(dir) {
       role TEXT,
       text TEXT,
       tool_json TEXT,
-      seq INTEGER
+      seq INTEGER,
+      meta_json TEXT
     );
     CREATE TABLE IF NOT EXISTS tool_calls (
       id TEXT PRIMARY KEY,
@@ -162,6 +183,11 @@ export function createSqliteStore(dir) {
   }
 
   {
+    const msgCols = new Set(db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name));
+    if (!msgCols.has('meta_json')) db.exec('ALTER TABLE messages ADD COLUMN meta_json TEXT');
+  }
+
+  {
     const row = db.prepare('SELECT version FROM schema_version LIMIT 1').get();
     if (!row) db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
     else if (row.version < SCHEMA_VERSION) db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
@@ -187,11 +213,11 @@ export function createSqliteStore(dir) {
       current_step=?, pipeline_step=?, updated_at=?, role_id=?, pipeline_id=?,
       workspace_path=?, last_progress_at=?, original_text=?
       WHERE id=?`),
-    insMsg: db.prepare('INSERT INTO messages (id, conversation_id, role, text, tool_json, seq) VALUES (?,?,?,?,?,?)'),
+    insMsg: db.prepare('INSERT INTO messages (id, conversation_id, role, text, tool_json, seq, meta_json) VALUES (?,?,?,?,?,?,?)'),
     getMsg: db.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq ASC, rowid ASC'),
     getMsgById: db.prepare('SELECT * FROM messages WHERE id = ?'),
     maxMsgSeq: db.prepare('SELECT COALESCE(MAX(seq),0) AS m FROM messages WHERE conversation_id = ?'),
-    updMsg: db.prepare('UPDATE messages SET role=?, text=?, tool_json=? WHERE id=?'),
+    updMsg: db.prepare('UPDATE messages SET role=?, text=?, tool_json=?, meta_json=? WHERE id=?'),
     getTool: db.prepare('SELECT * FROM tool_calls WHERE id = ?'),
     insTool: db.prepare(`INSERT INTO tool_calls (id, conversation_id, name, status, input_json, output_json, path, added, removed, before_hash, after_hash)
       VALUES (?,?,?,?,?,?,?,?,?,?,?)
@@ -232,6 +258,7 @@ export function createSqliteStore(dir) {
     const out = { id: row.id, role: row.role, text: row.text ?? undefined };
     const tool = p(row.tool_json);
     if (tool) out.tool = tool;
+    applyMeta(out, p(row.meta_json));
     return out;
   }
 
@@ -378,12 +405,19 @@ export function createSqliteStore(dir) {
     },
 
     async addMessage(cid, msg) {
-      const existing = q.getMsgById.get(msg.id);
+      const existing = msg.id ? q.getMsgById.get(msg.id) : undefined;
       if (existing) return msgFromRow(existing);
       const seq = (q.maxMsgSeq.get(cid)?.m || 0) + 1;
       const row = { id: msg.id || randomUUID(), role: msg.role, text: msg.text ?? null, tool: msg.tool ?? null };
-      q.insMsg.run(row.id, cid, row.role, row.text, row.tool ? j(row.tool) : null, seq);
-      return msgFromRow({ id: row.id, role: row.role, text: row.text, tool_json: row.tool ? j(row.tool) : null });
+      const meta = metaFromMsg(msg);
+      q.insMsg.run(row.id, cid, row.role, row.text, row.tool ? j(row.tool) : null, seq, meta ? j(meta) : null);
+      return msgFromRow({
+        id: row.id,
+        role: row.role,
+        text: row.text,
+        tool_json: row.tool ? j(row.tool) : null,
+        meta_json: meta ? j(meta) : null,
+      });
     },
     async getMessages(cid) {
       return q.getMsg.all(cid).map(msgFromRow);
@@ -395,8 +429,11 @@ export function createSqliteStore(dir) {
       const tool = patch.tool ? { ...(cur.tool || {}), ...patch.tool } : cur.tool;
       const role = patch.role ?? cur.role;
       const text = patch.text !== undefined ? patch.text : cur.text;
-      q.updMsg.run(role, text ?? null, tool ? j(tool) : null, mid);
-      return { id: mid, role, text, ...(tool ? { tool } : {}) };
+      const meta = metaFromMsg(patch, p(row.meta_json));
+      q.updMsg.run(role, text ?? null, tool ? j(tool) : null, meta ? j(meta) : null, mid);
+      const out = { id: mid, role, text, ...(tool ? { tool } : {}) };
+      applyMeta(out, meta);
+      return out;
     },
 
     async getToolCall(toolCallId) {
