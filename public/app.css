@@ -527,13 +527,13 @@ a:hover {
 .rp-status { color: var(--status-running); font-weight: 600; margin-left: 2px; }
 
 .left-footer {
-  padding: 0 12px;
+  padding: 8px 12px;
   border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   background-color: var(--bg-sidebar);
-  height: 44px;
   min-height: 44px;
   flex-shrink: 0;
 }
@@ -542,8 +542,14 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  flex: 1;
   font-size: 11px;
+  line-height: 1.35;
   color: var(--text-secondary);
+}
+.runtime-meta span {
+  min-width: 0;
 }
 
 .runtime-ping {
@@ -1356,8 +1362,10 @@ a:hover {
   border-collapse: collapse;
   table-layout: fixed;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.5;
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
 }
 
 .diff-table col.col-ln {
@@ -1370,8 +1378,12 @@ a:hover {
 .diff-row-hunk td {
   background-color: var(--diff-hunk-bg);
   color: var(--diff-hunk-text);
-  font-size: 10px;
-  padding: 3px 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  padding: 8px 12px;
   border-top: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -1430,6 +1442,15 @@ a:hover {
   user-select: none;
 }
 
+/* Unchanged diff lines follow the active theme (dark themes were painting a light cell). */
+.diff-row td.code-cell:not(.add-line):not(.del-line):not(.empty-cell) {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+}
+.diff-row td.ln:not(.add-line):not(.del-line):not(.empty-cell) {
+  background-color: var(--bg-surface);
+}
+
 /* Editor & File Views */
 .md-editor-container, .file-view-container {
   flex: 1;
@@ -1473,6 +1494,11 @@ a:hover {
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-primary);
+  background-color: var(--bg-surface);
+}
+.file-view-content code {
+  background-color: transparent;
+  color: inherit;
 }
 
 .empty-placeholder {
@@ -1602,6 +1628,12 @@ a:hover {
   cursor: pointer;
   user-select: none;
   transition: all 0.12s;
+}
+/* Workspace modal: 本地目录 / Git 导入 are equal halves. */
+.seg.seg-split > span {
+  flex: 1 1 0;
+  text-align: center;
+  min-width: 0;
 }
 .seg span:hover {
   background: var(--bg-hover);
@@ -1804,6 +1836,26 @@ a:hover {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 6px;
+}
+
+.modal-inline-error {
+  display: none;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--status-failed);
+  background: var(--diff-del-bg);
+  border: 1px solid var(--diff-del-num);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+}
+.modal-inline-error.is-visible {
+  display: block;
+}
+
+.modal-dialog .btn:disabled,
+.modal-dialog .btn.is-busy {
+  opacity: 0.55;
+  cursor: progress;
 }
 
 /* Notification Toast */

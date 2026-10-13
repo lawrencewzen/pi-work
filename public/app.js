@@ -77,6 +77,29 @@ export function maskApiKey(key) {
   return '••••' + s.slice(-4);
 }
 
+/** Relative label such as "10秒前". `ts` is a millisecond timestamp. */
+export function formatRelativeTime(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const diffSec = Math.max(1, Math.round((Date.now() - n) / 1000));
+  if (diffSec < 60) return t('sec_ago', { n: diffSec });
+  return t('min_ago', { n: Math.max(1, Math.round(diffSec / 60)) });
+}
+
+/** Refresh every element stamped with data-rel-time / data-ts. */
+export function refreshRelativeTimes() {
+  document.querySelectorAll('[data-rel-time]').forEach((el) => {
+    const text = formatRelativeTime(el.getAttribute('data-ts'));
+    if (text) el.textContent = text;
+  });
+}
+
+let relativeTimeTimer = null;
+function startRelativeTimeTicker() {
+  if (relativeTimeTimer) return;
+  relativeTimeTimer = setInterval(refreshRelativeTimes, 15000);
+}
+
 export function dedupeMessages(messages) {
   if (!Array.isArray(messages)) return [];
   const seen = new Set();
@@ -807,15 +830,14 @@ export async function stopConversation() {
 }
 
 export async function createNewWorkspace(data) {
+  const ws = await api('/api/workspaces', 'POST', data);
+  showToast(t('ws_created', { name: ws.name || data?.name || '' }));
+  closeModal();
   try {
-    const ws = await api('/api/workspaces', 'POST', data);
-    showToast(`Workspace ${ws.name} created`);
-    closeModal();
     await loadWorkspaces();
     if (ws.id) await selectWorkspace(ws.id);
-  } catch (err) {
-    showToast(err.message || 'Create workspace failed');
-  }
+  } catch { /* created; sidebar refresh is best-effort */ }
+  return ws;
 }
 
 export async function createNewConversation() {
@@ -1031,9 +1053,12 @@ export function renderStatusBar() {
   const cpBadge = document.getElementById('checkpoint-badge-text');
   if (cpBadge) {
     if (conv?.lastCheckpointAt) {
-      const diffSec = Math.max(1, Math.round((Date.now() - conv.lastCheckpointAt) / 1000));
-      cpBadge.textContent = diffSec < 60 ? t('sec_ago', { n: diffSec }) : t('min_ago', { n: Math.round(diffSec / 60) });
+      cpBadge.setAttribute('data-rel-time', '');
+      cpBadge.setAttribute('data-ts', String(conv.lastCheckpointAt));
+      cpBadge.textContent = formatRelativeTime(conv.lastCheckpointAt);
     } else {
+      cpBadge.removeAttribute('data-rel-time');
+      cpBadge.removeAttribute('data-ts');
       cpBadge.textContent = t('checkpoint_badge');
     }
   }
@@ -1241,7 +1266,17 @@ export function toggleToolDetail(id) {
   renderChatThread();
 }
 
+function syncRightTabActive() {
+  const tab = state.activeRightTab || 'diff';
+  const nav = document.querySelector('#right-panel .tabs-nav');
+  if (!nav) return;
+  nav.querySelectorAll('.tab-btn[data-tab]').forEach((btn) => {
+    btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+  });
+}
+
 export function renderRightPanel() {
+  syncRightTabActive();
   const panel = document.getElementById('right-panel');
   if (!panel) return;
 
@@ -1334,12 +1369,14 @@ export function openFileInEditor() {
   const isMd = state.activeFilePath.endsWith('.md');
   state.activeRightTab = isMd ? 'editor' : 'file';
   localStorage.setItem('piwork_active_right_tab', state.activeRightTab);
+  syncRightTabActive();
   loadFileOrDiff(state.activeFilePath);
 }
 
 export function switchRightTab(tab) {
   state.activeRightTab = tab;
   localStorage.setItem('piwork_active_right_tab', tab);
+  syncRightTabActive();
   if (state.activeFilePath) {
     loadFileOrDiff(state.activeFilePath);
   } else {
@@ -1613,8 +1650,17 @@ export function setSettingsTab(tab) {
   renderSettingsModal();
 }
 
+function applyChromeLabels() {
+  document.title = 'pi-work';
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const key = el.getAttribute('data-i18n');
+    if (key) el.textContent = t(key);
+  });
+}
+
 export async function switchLanguage(lang) {
   setLocale(lang);
+  applyChromeLabels();
   try { await api('/api/settings', 'PUT', { language: lang }); } catch { /* ignore */ }
   renderSidebarWorkspaces();
   renderConversations();
@@ -1776,11 +1822,64 @@ export function closeModal() {
   if (ov) ov.style.display = 'none';
 }
 
+function isSupportedGitUrl(url) {
+  const s = String(url || '').trim();
+  if (/^https:\/\//i.test(s)) return true;
+  if (/^ssh:\/\//i.test(s)) return true;
+  if (/^git@[^\s:]+:\S+$/.test(s)) return true;
+  return false;
+}
+
+function friendlyWorkspaceError(err) {
+  const raw = String(err?.message || '');
+  if (/invalid gitUrl/i.test(raw)) return t('ws_err_git_url');
+  if (/invalid branch/i.test(raw)) return t('ws_err_branch');
+  if (/clone failed/i.test(raw)) return t('ws_err_clone');
+  if (/name required/i.test(raw)) return t('ws_name_required');
+  if (/^path\b/i.test(raw) || /path is /i.test(raw)) return t('ws_err_path');
+  return t('ws_err_generic');
+}
+
+function showWorkspaceModalError(message) {
+  const el = document.getElementById('ws-modal-error');
+  if (!el) {
+    showToast(message);
+    return;
+  }
+  el.textContent = message;
+  el.classList.add('is-visible');
+}
+
+function clearWorkspaceModalError() {
+  const el = document.getElementById('ws-modal-error');
+  if (!el) return;
+  el.textContent = '';
+  el.classList.remove('is-visible');
+}
+
+function setWorkspaceSubmitBusy(busy) {
+  const btn = document.querySelector('[data-testid="workspace-create-submit"]');
+  if (!btn) return;
+  if (busy) {
+    if (!btn.dataset.idleLabel) btn.dataset.idleLabel = (btn.textContent || '').trim();
+    btn.disabled = true;
+    btn.classList.add('is-busy');
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = wsModalMode === 'git' ? t('ws_cloning') : t('ws_creating');
+  } else {
+    btn.disabled = false;
+    btn.classList.remove('is-busy');
+    btn.removeAttribute('aria-busy');
+    btn.textContent = btn.dataset.idleLabel || t('btn_create');
+  }
+}
+
 export function openNewWorkspaceModal() {
+  if (!wsCreating) wsModalMode = 'local';
   openModal(`
     <div class="modal-dialog">
       <h3>${escapeHtml(t('new_workspace'))} <span style="cursor:pointer;color:var(--text-muted)" data-action="close-modal">×</span></h3>
-      <div class="seg" style="margin-bottom:8px">
+      <div class="seg seg-split" style="margin-bottom:8px">
         <span id="ws-modal-tab-local" class="on" data-action="toggle-ws-modal-tab" data-tab="local">${escapeHtml(t('ws_local_tab'))}</span>
         <span id="ws-modal-tab-git" data-action="toggle-ws-modal-tab" data-tab="git">${escapeHtml(t('ws_git_tab'))}</span>
       </div>
@@ -1798,17 +1897,22 @@ export function openNewWorkspaceModal() {
         <label style="margin-top:6px;">${escapeHtml(t('ws_branch_label'))}</label>
         <input id="ws-branch-input" placeholder="${escapeHtml(t('ws_branch_placeholder'))}" />
       </div>
+      <div id="ws-modal-error" class="modal-inline-error" role="alert"></div>
       <div class="modal-actions">
         <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
         <button class="btn p" data-testid="workspace-create-submit" data-action="submit-workspace">${escapeHtml(t('btn_create'))}</button>
       </div>
     </div>
   `);
+  if (wsCreating) setWorkspaceSubmitBusy(true);
 }
 
 let wsModalMode = 'local';
+let wsCreating = false;
 export function toggleWsModalTab(mode) {
+  if (wsCreating) return;
   wsModalMode = mode;
+  clearWorkspaceModalError();
   const tabLoc = document.getElementById('ws-modal-tab-local');
   const tabGit = document.getElementById('ws-modal-tab-git');
   const locFields = document.getElementById('ws-local-fields');
@@ -1827,27 +1931,46 @@ export function toggleWsModalTab(mode) {
   }
 }
 
-export function submitWorkspaceModal() {
+export async function submitWorkspaceModal() {
+  if (wsCreating) return;
+  clearWorkspaceModalError();
   const name = document.getElementById('ws-name-input')?.value.trim();
   if (!name) {
-    showToast('Name is required');
+    showWorkspaceModalError(t('ws_name_required'));
     return;
   }
+
+  let payload;
   if (wsModalMode === 'git') {
     const gitUrl = document.getElementById('ws-git-url-input')?.value.trim();
     const branch = document.getElementById('ws-branch-input')?.value.trim();
     if (!gitUrl) {
-      showToast('Git URL is required');
+      showWorkspaceModalError(t('ws_git_required'));
       return;
     }
-    createNewWorkspace({ name, gitUrl, branch });
+    if (!isSupportedGitUrl(gitUrl)) {
+      showWorkspaceModalError(t('ws_err_git_url'));
+      return;
+    }
+    payload = { name, gitUrl, branch };
   } else {
     const path = document.getElementById('ws-path-input')?.value.trim();
     if (!path) {
-      showToast('Path is required');
+      showWorkspaceModalError(t('ws_path_required'));
       return;
     }
-    createNewWorkspace({ name, path });
+    payload = { name, path };
+  }
+
+  wsCreating = true;
+  setWorkspaceSubmitBusy(true);
+  try {
+    await createNewWorkspace(payload);
+  } catch (err) {
+    showWorkspaceModalError(friendlyWorkspaceError(err));
+  } finally {
+    wsCreating = false;
+    setWorkspaceSubmitBusy(false);
   }
 }
 
@@ -2076,6 +2199,8 @@ document.addEventListener('input', (e) => {
 // Initialization
 // ============================================================================
 window.addEventListener('DOMContentLoaded', async () => {
+  applyChromeLabels();
+  startRelativeTimeTicker();
   const composer = document.querySelector('[data-testid="chat-input"]');
   const sendBtn = document.querySelector('[data-testid="chat-send"]');
 
@@ -2112,4 +2237,5 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   await loadInitialData();
+  applyChromeLabels();
 });
