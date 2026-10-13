@@ -29,6 +29,11 @@ const state = {
   activeSettingsTab: 'general',
   expandedTools: new Set(),
   expandedSubagents: new Set(),
+  workspaceTree: [],
+  workspaceTreeFor: null,
+  treeLoadingFor: null,
+  treeGen: 0,
+  allowedWorkspaceRoot: '',
 };
 
 let runningPollInterval = null;
@@ -220,16 +225,50 @@ export function renderMarkdown(src = '') {
   return out.join('');
 }
 
+const ROLE_LABEL_KEYS = {
+  coder: 'role_coder',
+  tester: 'role_tester',
+  auditor: 'role_auditor',
+  default: 'role_default',
+  agent: 'agent_name',
+};
+
+export function localizeRoleLabel(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return t('agent_name');
+  const key = ROLE_LABEL_KEYS[raw.toLowerCase()];
+  return key ? t(key) : raw;
+}
+
+const PROVIDER_PRESETS = {
+  xai: { baseUrl: 'https://api.x.ai/v1', modelHint: 'grok-4' },
+  deepseek: { baseUrl: 'https://api.deepseek.com/v1', modelHint: 'deepseek-chat' },
+  openai: { baseUrl: 'https://api.openai.com/v1', modelHint: 'gpt-4o' },
+  ollama: { baseUrl: 'http://127.0.0.1:11434/v1', modelHint: 'llama3.2' },
+};
+
+function providerPreset(prov) {
+  return PROVIDER_PRESETS[prov] || PROVIDER_PRESETS.openai;
+}
+
+/** New-file hunks have an empty old side (`@@ -0,0`). */
+export function isAddedFileDiff(diffText) {
+  if (!diffText) return false;
+  const hunks = [...String(diffText).matchAll(/^@@\s+-\d+,(\d+)/gm)];
+  return hunks.length > 0 && hunks.every((m) => m[1] === '0');
+}
+
 // Unified Diff renderer
 export function renderDiffHtml(diffText) {
   if (!diffText) return `<div class="empty-placeholder">${escapeHtml(t('no_diff_available'))}</div>`;
+  const single = isAddedFileDiff(diffText);
   const lines = diffText.split(/\r?\n/);
   const rows = [];
   let oldLn = 0;
   let newLn = 0;
 
   for (const line of lines) {
-    if (line.startsWith('---') || line.startsWith('+++')) {
+    if (line === '' || line.startsWith('---') || line.startsWith('+++')) {
       continue;
     }
     if (line.startsWith('@@')) {
@@ -238,7 +277,20 @@ export function renderDiffHtml(diffText) {
         oldLn = parseInt(m[1], 10);
         newLn = parseInt(m[2], 10);
       }
-      rows.push(`<tr class="diff-row-hunk"><td colspan="4">${escapeHtml(line)}</td></tr>`);
+      rows.push(`<tr class="diff-row-hunk"><td colspan="${single ? 2 : 4}">${escapeHtml(line)}</td></tr>`);
+      continue;
+    }
+    if (single) {
+      const added = line.startsWith('+');
+      const code = escapeHtml(line.startsWith('+') || line.startsWith(' ') || line.startsWith('-') ? line.slice(1) : line);
+      const cls = added || line.startsWith('+') ? 'add-line' : '';
+      rows.push(
+        `<tr class="diff-row">` +
+        `<td class="ln ${cls}">${newLn || ''}</td>` +
+        `<td class="code-cell ${cls}">${code}</td>` +
+        `</tr>`
+      );
+      if (newLn) newLn++;
       continue;
     }
     if (line.startsWith('-')) {
@@ -278,9 +330,12 @@ export function renderDiffHtml(diffText) {
     }
   }
 
+  const cols = single
+    ? `<colgroup><col class="col-ln"><col class="col-code"></colgroup>`
+    : `<colgroup><col class="col-ln"><col class="col-code"><col class="col-ln"><col class="col-code"></colgroup>`;
   return (
-    `<table class="diff-table">` +
-    `<colgroup><col class="col-ln"><col class="col-code"><col class="col-ln"><col class="col-code"></colgroup>` +
+    `<table class="diff-table${single ? ' diff-single' : ''}">` +
+    cols +
     `<tbody>${rows.join('')}</tbody>` +
     `</table>`
   );
@@ -408,10 +463,16 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 export async function loadInitialData() {
   try {
     state.settings = await api('/api/settings');
+    rememberSavedSettings(state.settings);
     if (state.settings.theme) state.theme = state.settings.theme;
     if (state.settings.appearance) state.appearance = state.settings.appearance;
     if (state.settings.language) setLocale(state.settings.language);
   } catch { /* ignore */ }
+
+  try {
+    const rootInfo = await api('/api/workspace-root');
+    state.allowedWorkspaceRoot = rootInfo?.root || '';
+  } catch { /* hint falls back to the create-error payload */ }
 
   applyTheme(state.theme, state.appearance);
   applyI18n();
@@ -511,11 +572,49 @@ export async function selectWorkspace(wid) {
   }
   state.activeConversationId = null;
   state.activeConversationData = null;
+  state.activeWorkspaceId = wid;
+  state.workspaceTree = [];
+  state.workspaceTreeFor = null;
+  state.treeLoadingFor = null;
+  state.treeGen += 1;
+  localStorage.setItem('piwork_active_ws', wid);
   resetRightPanelAndStatus();
   renderChatThread();
-  state.activeWorkspaceId = wid;
-  localStorage.setItem('piwork_active_ws', wid);
   await loadConversations(wid);
+}
+
+export async function loadWorkspaceTree() {
+  const wid = state.activeWorkspaceId;
+  if (!wid) {
+    state.workspaceTree = [];
+    state.workspaceTreeFor = null;
+    return;
+  }
+  const gen = ++state.treeGen;
+  state.treeLoadingFor = wid;
+  try {
+    const data = await api(`/api/workspaces/${encodeURIComponent(wid)}/tree`);
+    if (gen !== state.treeGen || state.activeWorkspaceId !== wid) return;
+    state.workspaceTree = Array.isArray(data?.entries) ? data.entries : [];
+    state.workspaceTreeFor = wid;
+  } catch {
+    if (gen !== state.treeGen || state.activeWorkspaceId !== wid) return;
+    state.workspaceTree = [];
+    state.workspaceTreeFor = wid;
+  } finally {
+    if (state.treeLoadingFor === wid) state.treeLoadingFor = null;
+  }
+}
+
+function ensureWorkspaceTree() {
+  const wid = state.activeWorkspaceId;
+  if (!wid) return;
+  if (state.workspaceTreeFor === wid || state.treeLoadingFor === wid) return;
+  loadWorkspaceTree().then(() => {
+    if (state.activeRightTab === 'file' && state.workspaceTreeFor === state.activeWorkspaceId) {
+      renderRightPanel();
+    }
+  });
 }
 
 export async function selectConversation(cid) {
@@ -1104,7 +1203,7 @@ export function renderSidebarAgents(conv) {
       `<div class="main-agent-node">` +
       `<div class="main-agent-header">` +
       `<span class="status-dot ${statusClass}" data-testid="status-dot" data-status="${escapeHtml(status)}"></span>` +
-      `<span class="main-agent-name">Agent</span>` +
+      `<span class="main-agent-name">${escapeHtml(t('agent_name'))}</span>` +
       `<span class="main-agent-state">${escapeHtml(statusTextStr)}</span>` +
       `</div>` +
       `</div>` +
@@ -1117,7 +1216,7 @@ export function renderSidebarAgents(conv) {
     agents
       .map((ag, index) => {
         const isDefault = index === 0;
-        const name = isDefault ? 'Agent' : (ag.name || ag.roleId || 'Agent');
+        const name = localizeRoleLabel(ag.roleId || ag.name || '');
         const st = ag.status || (isDefault ? conv.status || 'idle' : 'waiting');
         const statusClass = `dot-${st}`;
         const statusText = t(`status_${st}`) || st;
@@ -1194,7 +1293,7 @@ export function renderRunningOverview() {
         `<span class="rp-div">›</span>` +
         `<span class="rp-conv">${escapeHtml(c.title || '')}</span>` +
         `<span class="rp-div">›</span>` +
-        `<span class="rp-agent">${escapeHtml(c.roleId || 'Agent')}</span>` +
+        `<span class="rp-agent">${escapeHtml(localizeRoleLabel(c.roleId || ''))}</span>` +
         `<span class="rp-status">· ${escapeHtml(statusTextStr)}</span>` +
         `</div>` +
         `</div>`
@@ -1212,15 +1311,23 @@ export function renderStatusBar() {
   const autoContinues = conv?.autoContinues || 0;
   const statusTextStr = t(`status_${status}`) || status;
 
-  const displayStatus = getLocale() === 'en' ? statusTextStr : `${statusTextStr} (${status})`;
-
   const statusTextEl = document.getElementById('status-text');
-  if (statusTextEl) statusTextEl.textContent = displayStatus;
+  if (statusTextEl) statusTextEl.textContent = statusTextStr;
+
+  const ws = (state.workspaces || []).find((w) => w.id === state.activeWorkspaceId);
+  const wsEl = document.getElementById('topbar-workspace');
+  const wsSep = document.getElementById('topbar-ws-sep');
+  if (wsEl) wsEl.textContent = ws?.name || '';
+  if (wsSep) wsSep.classList.toggle('is-hidden', !ws?.name);
 
   const acBadge = document.getElementById('autocontinue-count');
+  const acSep = document.getElementById('autocontinue-sep');
+  const showAc = autoContinues > 0;
   if (acBadge) {
-    acBadge.textContent = autoContinues ? `↻ ${autoContinues}` : '0';
+    acBadge.classList.toggle('is-hidden', !showAc);
+    acBadge.textContent = showAc ? `↻ ${autoContinues}` : '';
   }
+  if (acSep) acSep.classList.toggle('is-hidden', !showAc);
 
   const cpBadge = document.getElementById('checkpoint-badge-text');
   if (cpBadge) {
@@ -1240,7 +1347,7 @@ export function renderStatusBar() {
   const btnStop = document.getElementById('btn-stop');
   if (btnPause) btnPause.disabled = status !== 'running';
   if (btnResume) btnResume.disabled = status !== 'paused';
-  if (btnStop) btnStop.disabled = status === 'stopped' || status === 'done';
+  if (btnStop) btnStop.disabled = status !== 'running' && status !== 'paused' && status !== 'recovering';
 }
 
 export function renderSubagentCardHtml(sa) {
@@ -1251,7 +1358,7 @@ export function renderSubagentCardHtml(sa) {
   const progressStr = (sa.totalSteps != null && sa.totalSteps > 0)
     ? `${sa.step || 0}/${sa.totalSteps}`
     : `${sa.step || 0} ${t('step_unit')}`;
-  const name = sa.name || sa.roleId || 'Agent';
+  const name = localizeRoleLabel(sa.roleId || sa.name || '');
 
   let body = '';
   if (isExpanded) {
@@ -1301,7 +1408,7 @@ export function renderSubagentCardHtml(sa) {
     `<div class="subagent-card-title">` +
     `<span class="subagent-role-pill">${escapeHtml(t('subagent_dispatched'))}</span>` +
     `<span class="status-dot dot-${escapeHtml(status)}"></span>` +
-    `<span style="font-weight:600;">${escapeHtml(name)}</span>` +
+    `<span class="subagent-card-name">${escapeHtml(name)}</span>` +
     `<span class="subagent-progress-badge">${escapeHtml(progressStr)}</span>` +
     `</div>` +
     `<div class="subagent-card-right">` +
@@ -1352,7 +1459,7 @@ export function renderChatThread() {
     if (m.kind === 'handoff') {
       rendered.push(
         `<div class="handoff-note" data-testid="message" data-role="system" data-kind="handoff">` +
-        `<span>${escapeHtml(t('handoff_note', { from: m.fromAgent || '', to: m.toAgent || '' }))}</span>` +
+        `<span>${escapeHtml(t('handoff_note', { from: localizeRoleLabel(m.fromAgent || ''), to: localizeRoleLabel(m.toAgent || '') }))}</span>` +
         `</div>`
       );
       continue;
@@ -1446,8 +1553,7 @@ function assistantLabel(m) {
   const rid = m?.roleId || m?.agentId;
   if (rid) {
     const role = (state.roles || []).find((r) => r.id === rid);
-    if (role?.name) return role.name;
-    return rid;
+    return localizeRoleLabel(role?.id || role?.name || rid);
   }
   return t('agent_name');
 }
@@ -1456,7 +1562,7 @@ function assistantChip(m) {
   const rid = m?.roleId;
   const models = state.settings?.models || {};
   if (rid && models[rid]) return models[rid];
-  if (rid && rid !== 'default') return rid;
+  if (rid && rid !== 'default') return localizeRoleLabel(rid);
   return '';
 }
 
@@ -1528,24 +1634,20 @@ export function renderRightPanel() {
         <div class="md-editor-content" contenteditable="true" spellcheck="false">${escapeHtml(state.activeFileContent ?? '')}</div>
       </div>
     `;
-  } else if (state.activeRightTab === 'file' && state.activeFilePath) {
-    viewport.innerHTML = `
-      <div class="file-view-container" data-testid="file-view">
-        <div class="md-editor-toolbar">
-          <span style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(state.activeFilePath)}</span>
-        </div>
-        <pre class="file-view-content"><code>${escapeHtml(state.activeFileContent ?? '')}</code></pre>
-      </div>
-    `;
+  } else if (state.activeRightTab === 'file') {
+    ensureWorkspaceTree();
+    viewport.innerHTML = renderFileBrowserHtml();
   } else {
     if (!state.activeDiff) {
+      const emptyKey = state.changes.length === 0 ? 'no_changes_yet' : 'select_file_for_diff';
       viewport.innerHTML = `
         <div class="diff-viewport" data-testid="diff-view">
-          <div class="empty-placeholder">${escapeHtml(t('select_file_for_diff'))}</div>
+          <div class="empty-placeholder">${escapeHtml(t(emptyKey))}</div>
         </div>
       `;
     } else {
       const d = state.activeDiff;
+      const single = isAddedFileDiff(d.unified || '');
       viewport.innerHTML = `
         <div class="diff-viewport" data-testid="diff-view">
           <div class="diff-file-header">
@@ -1558,8 +1660,8 @@ export function renderRightPanel() {
               <span class="stat-del">−${escapeHtml(d.removed ?? 0)}</span>
             </div>
           </div>
-          <div class="diff-col-legend">
-            <div class="legend-side"><span>${escapeHtml(t('baseline'))}</span></div>
+          <div class="diff-col-legend${single ? ' is-single' : ''}">
+            ${single ? '' : `<div class="legend-side"><span>${escapeHtml(t('baseline'))}</span></div>`}
             <div class="legend-side"><span>${escapeHtml(t('working_copy'))}</span></div>
           </div>
           ${renderDiffHtml(d.unified || '')}
@@ -1567,6 +1669,59 @@ export function renderRightPanel() {
       `;
     }
   }
+}
+
+function renderFileBrowserHtml() {
+  const wid = state.activeWorkspaceId;
+  const ready = state.workspaceTreeFor === wid;
+  let treeHtml;
+  if (!wid) {
+    treeHtml = `<div class="file-tree-empty">${escapeHtml(t('file_tree_empty'))}</div>`;
+  } else if (!ready) {
+    treeHtml = `<div class="file-tree-empty">${escapeHtml(t('file_tree_loading'))}</div>`;
+  } else if (!state.workspaceTree.length) {
+    treeHtml = `<div class="file-tree-empty">${escapeHtml(t('file_tree_empty'))}</div>`;
+  } else {
+    treeHtml = state.workspaceTree.map((ent) => {
+      const depth = String(ent.path || '').split('/').length - 1;
+      const name = String(ent.path || '').split('/').pop();
+      const pad = 8 + depth * 12;
+      if (ent.type === 'dir') {
+        return `<div class="file-tree-row is-dir" style="padding-left:${pad}px">${escapeHtml(name)}/</div>`;
+      }
+      const active = ent.path === state.activeFilePath ? ' active' : '';
+      return `<button type="button" class="file-tree-row${active}" style="padding-left:${pad}px" data-testid="workspace-file" data-action="load-workspace-file" data-path="${escapeHtml(ent.path)}">${escapeHtml(name)}</button>`;
+    }).join('');
+  }
+
+  let preview;
+  if (state.activeFilePath && state.activeFileContent != null && !looksBinary(state.activeFileContent)) {
+    const shown = state.activeFileContent.length > 200000
+      ? `${state.activeFileContent.slice(0, 200000)}\n…`
+      : state.activeFileContent;
+    preview = `
+      <div class="md-editor-toolbar">
+        <span style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(state.activeFilePath)}</span>
+      </div>
+      <pre class="file-view-content"><code>${escapeHtml(shown)}</code></pre>
+    `;
+  } else if (state.activeFilePath && looksBinary(state.activeFileContent)) {
+    preview = `<div class="file-preview-empty">${escapeHtml(state.activeFilePath)} — ${escapeHtml(t('file_binary'))}</div>`;
+  } else {
+    preview = `<div class="file-preview-empty">${escapeHtml(t('select_file_to_preview'))}</div>`;
+  }
+
+  return `
+    <div class="file-browser" data-testid="file-tree">
+      <div class="file-tree">${treeHtml}</div>
+      <div class="file-preview" data-testid="file-view">${preview}</div>
+    </div>
+  `;
+}
+
+function looksBinary(text) {
+  if (text == null || text === '') return false;
+  return text.slice(0, 1000).includes('\u0000');
 }
 
 export function openFileInEditor() {
@@ -1585,6 +1740,12 @@ export function switchRightTab(tab) {
   state.activeRightTab = tab;
   localStorage.setItem('piwork_active_right_tab', tab);
   syncRightTabActive();
+  if (tab === 'file') {
+    ensureWorkspaceTree();
+    if (state.activeFilePath) loadFileOrDiff(state.activeFilePath);
+    else renderRightPanel();
+    return;
+  }
   if (state.activeFilePath) {
     loadFileOrDiff(state.activeFilePath);
   } else {
@@ -1693,6 +1854,7 @@ function renderSettingsTabContent(tab) {
   if (tab === 'models') {
     const s = state.settings || {};
     const prov = s.provider || 'openai';
+    const preset = providerPreset(prov);
     const models = s.models || {};
     const maskedKey = s.apiKey || '';
 
@@ -1708,7 +1870,7 @@ function renderSettingsTabContent(tab) {
       </div>
       <div class="row">
         <div class="l"><b>${escapeHtml(t('models_base_url_label'))}</b><span>${escapeHtml(t('models_base_url_desc'))}</span></div>
-        <input class="in" id="cfg-base-url" type="text" data-original-val="${escapeHtml(s.baseUrl || '')}" value="${escapeHtml(s.baseUrl || '')}" placeholder="${escapeHtml(t('models_base_url_placeholder'))}" />
+        <input class="in" id="cfg-base-url" type="text" data-original-val="${escapeHtml(s.baseUrl || '')}" value="${escapeHtml(s.baseUrl || '')}" placeholder="${escapeHtml(preset.baseUrl)}" />
       </div>
       <div class="row">
         <div class="l"><b>${escapeHtml(t('models_api_key_label'))}</b><span>${escapeHtml(t('models_api_key_desc'))}</span></div>
@@ -1721,8 +1883,8 @@ function renderSettingsTabContent(tab) {
         .map(
           (r) =>
             `<div class="row">` +
-            `<div class="l"><b>${escapeHtml(r.name || r.id)}</b><span>${escapeHtml(r.id)}</span></div>` +
-            `<input class="in" style="min-width:180px" data-role-id="${escapeHtml(r.id)}" value="${escapeHtml(models[r.id] || '')}" placeholder="grok-4.6 / gpt-4o" />` +
+            `<div class="l"><b>${escapeHtml(localizeRoleLabel(r.id || r.name))}</b><span>${escapeHtml(r.id)}</span></div>` +
+            `<input class="in" style="min-width:180px" data-role-id="${escapeHtml(r.id)}" value="${escapeHtml(models[r.id] || '')}" placeholder="${escapeHtml(t('model_placeholder_eg', { model: preset.modelHint }))}" />` +
             `</div>`
         )
         .join('')}
@@ -1771,7 +1933,7 @@ function renderSettingsTabContent(tab) {
         <div style="width:44px;height:44px;border-radius:10px;background:var(--text-primary);color:var(--text-inverse);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700">π</div>
         <div>
           <b style="font-size:15px">${escapeHtml(pkg.name || 'pi-work')}</b>
-          <div style="color:var(--text-muted);font-size:12px">${escapeHtml(pkg.description || t('about_desc'))}</div>
+          <div style="color:var(--text-muted);font-size:12px">${escapeHtml(t('about_desc'))}</div>
         </div>
       </div>
       <div class="row"><div class="l"><b>${escapeHtml(t('about_version'))}</b></div><span>${escapeHtml(pkg.version || '0.2.0')}</span></div>
@@ -1900,11 +2062,42 @@ export function switchFontSize(sz) {
   renderSettingsModal();
 }
 
+function rememberSavedSettings(s) {
+  const src = s || {};
+  state._savedSettings = {
+    provider: src.provider || 'openai',
+    baseUrl: src.baseUrl || '',
+    apiKey: src.apiKey || '',
+    hasApiKey: Boolean(src.hasApiKey || src.apiKey),
+  };
+}
+
 export function setModelProvider(prov) {
   if (!state.settings) state.settings = {};
+  const roleInputs = document.querySelectorAll('[data-role-id]');
+  if (!state.settings.models || typeof state.settings.models !== 'object') state.settings.models = {};
+  roleInputs.forEach((inp) => {
+    const rid = inp.getAttribute('data-role-id');
+    if (rid) state.settings.models[rid] = inp.value.trim();
+  });
   state.settings.provider = prov;
+  state.settings.baseUrl = providerPreset(prov).baseUrl;
   renderSettingsModal();
   checkModelKeyWarning();
+  const hasSavedKey = Boolean(state._savedSettings?.hasApiKey);
+  if (!hasSavedKey) {
+    api('/api/settings', 'PUT', { provider: prov, baseUrl: state.settings.baseUrl })
+      .then((savedResp) => {
+        if ((state.settings.provider || '') !== prov) return;
+        state.settings.provider = savedResp.provider || prov;
+        state.settings.baseUrl = savedResp.baseUrl || state.settings.baseUrl;
+        state.settings.apiKey = savedResp.apiKey || '';
+        state.settings.hasApiKey = Boolean(savedResp.hasApiKey);
+        rememberSavedSettings(state.settings);
+        checkModelKeyWarning();
+      })
+      .catch(() => { /* draft stays; Save still persists it */ });
+  }
 }
 
 export function checkModelKeyWarning() {
@@ -1914,11 +2107,11 @@ export function checkModelKeyWarning() {
   const apiKeyEl = document.getElementById('cfg-api-key');
   if (!baseUrlEl || !apiKeyEl) return;
 
-  const s = state.settings || {};
-  const hasSavedKey = Boolean(s.hasApiKey || s.apiKey);
-  const origProvider = s.provider || 'openai';
+  const saved = state._savedSettings || {};
+  const hasSavedKey = Boolean(saved.hasApiKey || saved.apiKey);
+  const origProvider = saved.provider || 'openai';
   const curProvider = state.settings.provider || 'openai';
-  const origBaseUrl = s.baseUrl || '';
+  const origBaseUrl = saved.baseUrl || '';
   const curBaseUrl = baseUrlEl.value.trim();
 
   const enteredKey = apiKeyEl.value.trim();
@@ -1938,11 +2131,11 @@ export async function saveModelsSettings() {
   const apiKeyEl = document.getElementById('cfg-api-key');
   const roleInputs = document.querySelectorAll('[data-role-id]');
 
-  const s = state.settings || {};
-  const hasSavedKey = Boolean(s.hasApiKey || s.apiKey);
-  const origProvider = s.provider || 'openai';
+  const saved = state._savedSettings || {};
+  const hasSavedKey = Boolean(saved.hasApiKey || saved.apiKey);
+  const origProvider = saved.provider || 'openai';
   const curProvider = state.settings.provider || 'openai';
-  const origBaseUrl = s.baseUrl || '';
+  const origBaseUrl = saved.baseUrl || '';
   const curBaseUrl = baseUrlEl?.value.trim() || '';
 
   const enteredKey = apiKeyEl?.value.trim() || '';
@@ -1976,6 +2169,7 @@ export async function saveModelsSettings() {
 
   try {
     state.settings = await api('/api/settings', 'PUT', payload);
+    rememberSavedSettings(state.settings);
     showToast(t('msg_settings_saved'));
     renderSettingsModal();
   } catch (err) {
@@ -2046,6 +2240,10 @@ function friendlyWorkspaceError(err) {
   if (/invalid branch/i.test(raw)) return t('ws_err_branch');
   if (/clone failed/i.test(raw)) return t('ws_err_clone');
   if (/name required/i.test(raw)) return t('ws_name_required');
+  const root = err?.body?.allowedRoot || state.allowedWorkspaceRoot || '';
+  if (/not under an allowed workspace root|path is not allowed|path is forbidden/i.test(raw)) {
+    return root ? t('ws_err_path_root', { root }) : t('ws_err_path');
+  }
   if (/^path\b/i.test(raw) || /path is /i.test(raw)) return t('ws_err_path');
   return t('ws_err_generic');
 }
@@ -2093,7 +2291,7 @@ export async function openNewConversationModal() {
   try { state.pipelines = await api('/api/pipelines'); } catch { /* keep existing */ }
 
   const roleOpts = (state.roles || [])
-    .map((r) => `<option value="role:${escapeHtml(r.id)}">${escapeHtml(r.name || r.id)}</option>`)
+    .map((r) => `<option value="role:${escapeHtml(r.id)}">${escapeHtml(localizeRoleLabel(r.id || r.name))}</option>`)
     .join('');
   const pipeOpts = (state.pipelines || [])
     .map((p) => `<option value="pipeline:${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`)
@@ -2154,6 +2352,7 @@ export function openNewWorkspaceModal() {
       <div id="ws-local-fields" class="form-group">
         <label>${escapeHtml(t('ws_path_label'))}</label>
         <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${escapeHtml(t('ws_path_placeholder'))}" />
+        <div id="ws-path-hint" class="form-hint">${state.allowedWorkspaceRoot ? escapeHtml(t('ws_path_hint', { root: state.allowedWorkspaceRoot })) : ''}</div>
       </div>
       <div id="ws-git-fields" class="form-group" style="display:none">
         <label>${escapeHtml(t('ws_git_url_label'))}</label>
@@ -2169,6 +2368,15 @@ export function openNewWorkspaceModal() {
     </div>
   `);
   if (wsCreating) setWorkspaceSubmitBusy(true);
+  if (!state.allowedWorkspaceRoot) {
+    api('/api/workspace-root').then((info) => {
+      state.allowedWorkspaceRoot = info?.root || '';
+      const hint = document.getElementById('ws-path-hint');
+      if (hint && state.allowedWorkspaceRoot) {
+        hint.textContent = t('ws_path_hint', { root: state.allowedWorkspaceRoot });
+      }
+    }).catch(() => {});
+  }
 }
 
 let wsModalMode = 'local';
@@ -2406,6 +2614,11 @@ document.addEventListener('click', (e) => {
       break;
     case 'load-file':
       state.userPickedFile = true;
+      loadFileOrDiff(actionEl.getAttribute('data-path'));
+      break;
+    case 'load-workspace-file':
+      state.userPickedFile = true;
+      state.activeRightTab = 'file';
       loadFileOrDiff(actionEl.getAttribute('data-path'));
       break;
     case 'save-editor-file':

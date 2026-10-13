@@ -78,6 +78,8 @@
       <!-- Top Status Bar -->
       <header class="center-top-bar" data-testid="status-bar" id="status-bar">
         <div class="status-bar-left">
+          <span id="topbar-workspace" class="topbar-ws-name" data-testid="topbar-workspace"></span>
+          <span class="step-sep is-hidden" id="topbar-ws-sep">/</span>
           <div class="step-indicator" data-i18n-title="status_title" title="当前执行状态">
             <span class="step-pulse-ring"></span>
             <span id="status-text" data-testid="status-text">就绪</span>
@@ -87,22 +89,20 @@
             <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
             <span id="checkpoint-badge-text">检查点</span>
           </div>
-          <span class="step-sep">/</span>
-          <div class="resume-count-badge" data-i18n-title="autocontinue_title" title="自动恢复计数" data-testid="autocontinue-count" id="autocontinue-count">
-            0
-          </div>
+          <span class="step-sep is-hidden" id="autocontinue-sep">/</span>
+          <div class="resume-count-badge is-hidden" data-i18n-title="autocontinue_title" title="自动恢复计数" data-testid="autocontinue-count" id="autocontinue-count"></div>
         </div>
 
         <div class="status-bar-controls">
-          <button class="btn-ctrl" data-testid="btn-pause" id="btn-pause" data-action="pause-conversation" data-i18n-title="btn_pause_title" title="暂停执行">
+          <button class="btn-ctrl" data-testid="btn-pause" id="btn-pause" data-action="pause-conversation" data-i18n-title="btn_pause_title" title="暂停执行" disabled>
             <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
             <span data-i18n="btn_pause">暂停</span>
           </button>
-          <button class="btn-ctrl" data-testid="btn-resume" id="btn-resume" data-action="resume-conversation" data-i18n-title="btn_resume_title" title="继续执行">
+          <button class="btn-ctrl" data-testid="btn-resume" id="btn-resume" data-action="resume-conversation" data-i18n-title="btn_resume_title" title="继续执行" disabled>
             <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
             <span data-i18n="btn_resume">继续</span>
           </button>
-          <button class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-title="btn_stop_title" title="终止并保存检查点">
+          <button class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-title="btn_stop_title" title="终止并保存检查点" disabled>
             <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
             <span data-i18n="btn_stop">终止</span>
           </button>
@@ -174,7 +174,7 @@
       <!-- Right Viewport Content (Diff / File / Markdown Editor) -->
       <div id="right-viewport" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
         <div class="diff-viewport" data-testid="diff-view">
-          <div class="empty-placeholder" data-i18n="select_file_for_diff">请从上方选择变更文件查看 Diff</div>
+          <div class="empty-placeholder" data-i18n="no_changes_yet">暂无变更</div>
         </div>
       </div>
     </aside>

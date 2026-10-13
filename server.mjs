@@ -8,6 +8,7 @@ import { createRetryPolicy } from './src/core/retry.mjs';
 import { formatSSE } from './src/core/sse.mjs';
 import { validateRole, validatePipeline } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
+import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
 import { diffStats, unifiedDiff } from './src/core/diff.mjs';
 import { publicSettings } from './src/core/settings.mjs';
 import { cloneGitRepo, stripGitUrlCredentials } from './src/core/git-import.mjs';
@@ -31,7 +32,7 @@ import {
   consumeSseTicket,
   tokensMatch,
 } from './src/core/auth.mjs';
-import { resolveAllowedWorkspacePath } from './src/core/workspace-guard.mjs';
+import { resolveAllowedWorkspacePath, defaultWorkspaceRoot } from './src/core/workspace-guard.mjs';
 import { acquireDataDirLock } from './src/core/lock.mjs';
 import fs from 'node:fs/promises';
 
@@ -290,6 +291,11 @@ async function routeApi(req, res, url) {
     return;
   }
 
+  if (m === 'GET' && p === '/api/workspace-root') {
+    sendJson(res, 200, { root: defaultWorkspaceRoot() });
+    return;
+  }
+
   if (m === 'POST' && p === '/api/sse-ticket') {
     sendJson(res, 200, issueSseTicket(60_000));
     return;
@@ -343,7 +349,10 @@ async function routeApi(req, res, url) {
     try {
       resolved = await resolveAllowedWorkspacePath(body.path, { dataDir: DATA_DIR });
     } catch (err) {
-      sendJson(res, err.status || 400, { error: err.message || 'path is not allowed' });
+      sendJson(res, err.status || 400, {
+        error: err.message || 'path is not allowed',
+        allowedRoot: defaultWorkspaceRoot(),
+      });
       return;
     }
     const ws = await store.createWorkspace({ name: body.name, path: resolved, source: 'local', rootPath: resolved, worktrees: [] });
@@ -387,6 +396,22 @@ async function routeApi(req, res, url) {
     const q = url.searchParams.get('q') || undefined;
     const list = await store.listConversations(wid, { q });
     sendJson(res, 200, list.map((c) => liveStatus(orch, c)));
+    return;
+  }
+
+  match = p.match(/^\/api\/workspaces\/([^/]+)\/tree$/);
+  if (match && m === 'GET') {
+    const wid = decodeURIComponent(match[1]);
+    const ws = await store.getWorkspace(wid);
+    if (!ws) { sendJson(res, 404, { error: 'workspace not found' }); return; }
+    try {
+      const abs = await resolveInWorkspace(ws.path, '.');
+      const entries = await listWorkspaceTree(abs);
+      sendJson(res, 200, { entries });
+    } catch (err) {
+      if (err.code === 'E_SANDBOX') { sendJson(res, 403, { error: 'E_SANDBOX' }); return; }
+      throw err;
+    }
     return;
   }
 
