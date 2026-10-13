@@ -1,0 +1,2127 @@
+<!--
+  Palette: slate (muted blue-gray - light)
+  - bg: #f4f6f8 (app), #f8fafc (sidebar)
+  - surface: #ffffff (base), #f1f4f6 (subtle)
+  - border: #e1e5ea (subtle), #cbd2d9 (strong)
+  - text: #1e242b (primary), #5f6b78 (secondary)
+  - muted text: #8c97a4
+  - accent: #4b6a8a (muted slate blue)
+  - status colors:
+    - running: #4b6a8a
+    - waiting: #b07d3b
+    - resuming: #6d7987
+    - failed: #b85454
+    - done: #548074 (desaturated muted blue-green, no bright green)
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1440, initial-scale=1.0">
+  <title>pi-work · Durable Multi-Agent Workbench (Slate)</title>
+  <style>
+    /* ==========================================================================
+       DESIGN SYSTEM & CSS VARIABLES (codex-dark)
+       ========================================================================== */
+    :root {
+      /* Surface & Neutrals (Slate: Muted Blue-Gray Light Theme) */
+      --bg-app:#212121;--bg-sidebar:#171717;--bg-surface:#212121;--bg-surface-subtle:#2a2a2a;--bg-hover:#2f2f2f;--bg-active:#383838;
+--border-subtle:#303030;--border-strong:#424242;--border-focus:#7a7a7a;--text-primary:#ececec;--text-secondary:#b4b4b4;--text-muted:#7a7a7a;--text-inverse:#212121;
+--accent:#ececec;--accent-hover:#ececec;--accent-active:#ececec;--accent-subtle:rgba(236,236,236,.06);--accent-tint:rgba(236,236,236,.10);--accent-border:rgba(236,236,236,.22);--accent-text:#ececec;
+--status-running:#8f8f8f;--status-waiting:#a6987a;--status-resuming:#7a7a7a;--status-failed:#b38080;--status-done:#8a9b8e;
+--tool-bg:#2a2a2a;--tool-border:#303030;--tool-hover:#2f2f2f;--warn-bg:#2a2a2a;--warn-border:#303030;--warn-text:#b4b4b4;
+--diff-del-bg:rgba(179,128,128,.08);--diff-del-text:#b38080;--diff-del-num:#b38080;--diff-add-bg:rgba(138,155,142,.09);--diff-add-text:#8a9b8e;--diff-add-num:#8a9b8e;--diff-num-col:#7a7a7a;--diff-hunk-bg:#2a2a2a;--diff-hunk-text:#b4b4b4;
+--syn-kw:#ececec;--syn-fn:#b4b4b4;--syn-str:#7a7a7a;--syn-type:#b4b4b4;--syn-comment:#7a7a7a;--syn-num:#b4b4b4;--code-block-bg:#2a2a2a;--code-block-border:#303030;
+--radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+
+      /* Typography Stacks */
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    }
+
+    /* ==========================================================================
+       BASE & RESET (Strict 1440x900, zero page scroll)
+       ========================================================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100vh;
+      overflow: hidden; /* Page must not scroll */
+      background-color: var(--bg-app);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    button, input, textarea, select {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
+    }
+
+    /* Workbench Main Shell (1440x900 base target, fits without page scroll) */
+    .app-shell {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: var(--bg-app);
+    }
+
+    /* Subtle Slim Scrollbars for Inner Panes */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    /* SVG Utilities */
+    .icon {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      stroke-width: 2;
+      stroke: currentColor;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vertical-align: middle;
+      flex-shrink: 0;
+    }
+
+    /* ==========================================================================
+       COLUMN 1: LEFT SIDEBAR (~260px)
+       ========================================================================== */
+    .col-left {
+      width: 260px;
+      min-width: 260px;
+      max-width: 260px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      overflow: hidden;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    /* 5. Brand Header with Small Gear Settings Icon */
+    .left-header {
+      padding: 0 12px 0 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      height: 46px;
+      min-height: 46px;
+      flex-shrink: 0;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-logo {
+      width: 22px;
+      height: 22px;
+      border-radius: var(--radius-md);
+      background-color: var(--accent);
+      color: var(--text-inverse);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-name {
+      font-size: 13.5px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+    }
+
+    .brand-badge {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      font-weight: 500;
+      border: 1px solid var(--accent-border);
+    }
+
+    .sidebar-icon-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+
+    .sidebar-icon-btn:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    /* Scrollable Inner Sidebar */
+    .left-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Section Label */
+    .section-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      padding: 0 4px 4px 4px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* 1. Left sidebar hierarchy: Workspaces > Conversations > Agents */
+    .hierarchy-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .tree-root {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .ws-tree-node {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .ws-node-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+
+    .ws-node-header:hover {
+      background-color: var(--bg-hover);
+    }
+
+    .ws-node-icon {
+      width: 13px;
+      height: 13px;
+      color: var(--accent);
+      opacity: 0.85;
+    }
+
+    .ws-node-title {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .ws-node-badge {
+      font-size: 9.5px;
+      font-weight: 500;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      border: 1px solid var(--accent-border);
+    }
+
+    .ws-node-children {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-left: 9px;
+      margin-left: 6px;
+      border-left: 1px solid var(--border-subtle);
+    }
+
+    /* Conversation Tree Node */
+    .conv-tree-node {
+      display: flex;
+      flex-direction: column;
+      border-radius: var(--radius-md);
+    }
+
+    .conv-node-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 7px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+
+    .conv-node-header:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .conv-tree-node.conv-active > .conv-node-header {
+      background-color: var(--bg-active);
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .conv-node-icon {
+      width: 12px;
+      height: 12px;
+      opacity: 0.7;
+    }
+
+    .conv-node-title {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .active-indicator {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background-color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .conv-node-agents {
+      padding-left: 11px;
+      margin-left: 6px;
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-top: 2px;
+    }
+
+    /* Main Agent Node: Always shown */
+    .main-agent-node {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .main-agent-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      font-size: 11.5px;
+      color: var(--text-primary);
+      border-radius: var(--radius-sm);
+      cursor: default;
+    }
+
+    .main-agent-tag {
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 1px 4px;
+      border-radius: var(--radius-sm);
+      background-color: var(--accent);
+      color: var(--text-inverse);
+      line-height: 1.1;
+    }
+
+    .main-agent-name {
+      font-weight: 500;
+      font-size: 11.5px;
+      flex: 1;
+    }
+
+    .main-agent-state {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    /* Sub-agents: Indented under the main agent only when spawned */
+    .sub-agents-group {
+      padding-left: 10px;
+      margin-left: 5px;
+      border-left: 1px dashed var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-top: 1px;
+    }
+
+    .sub-agent-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2.5px 6px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      transition: background 0.12s;
+    }
+
+    .sub-agent-row:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .sub-agent-name {
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .sub-agent-sep {
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
+    .sub-agent-progress {
+      color: var(--text-secondary);
+    }
+
+    .sub-agent-status {
+      font-size: 10px;
+    }
+    .status-text-running {
+      color: var(--status-running);
+      font-weight: 600;
+    }
+    .status-text-done {
+      color: var(--status-done);
+    }
+    .status-text-waiting {
+      color: var(--status-waiting);
+    }
+
+    /* Status Dots */
+    .status-dot {
+      width: 6.5px;
+      height: 6.5px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .dot-running {
+      background-color: var(--status-running);
+      box-shadow: 0 0 0 2px var(--accent-subtle);
+      animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.65; transform: scale(0.85); }
+    }
+
+    .dot-waiting {
+      background-color: var(--status-waiting);
+      opacity: 0.9;
+    }
+
+    .dot-resuming {
+      background-color: var(--status-resuming);
+    }
+
+    .dot-failed {
+      background-color: var(--status-failed);
+      opacity: 0.9;
+    }
+
+    .dot-done {
+      background-color: var(--status-done);
+      opacity: 0.75;
+    }
+
+    /* 3. Bottom-left "运行中" overview grouped by workspace */
+    .running-section {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .running-count-tag {
+      font-size: 9.5px;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      border: 1px solid var(--accent-border);
+      font-weight: 600;
+    }
+
+    .running-panel {
+      background-color: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .running-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      padding: 2px 0;
+    }
+
+    .running-path {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      flex: 1;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .rp-ws {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .rp-div {
+      color: var(--text-muted);
+      margin: 0 1px;
+    }
+
+    .rp-conv {
+      color: var(--text-secondary);
+    }
+
+    .rp-agent {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .rp-status {
+      color: var(--status-running);
+      font-weight: 600;
+      margin-left: 2px;
+    }
+
+    /* Left Sidebar Footer */
+    .left-footer {
+      padding: 0 12px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: var(--bg-sidebar);
+      height: 44px;
+      min-height: 44px;
+      flex-shrink: 0;
+    }
+
+    .runtime-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .runtime-ping {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--status-done);
+    }
+
+    .theme-badge-pill {
+      font-size: 10.5px;
+      padding: 2px 7px;
+      border-radius: var(--radius-md);
+      background-color: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    /* ==========================================================================
+       COLUMN 2: CENTER PANE (flex: 1)
+       ========================================================================== */
+    .col-center {
+      flex: 1;
+      min-width: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      overflow: hidden;
+    }
+
+    /* Center Top Status Bar */
+    .center-top-bar {
+      height: 46px;
+      min-height: 46px;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      flex-shrink: 0;
+    }
+
+    .status-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .step-indicator {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 500;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .step-pulse-ring {
+      position: relative;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .step-pulse-ring::after {
+      content: "";
+      position: absolute;
+      top: -3px;
+      left: -3px;
+      right: -3px;
+      bottom: -3px;
+      border-radius: 50%;
+      border: 1.5px solid var(--accent);
+      opacity: 0.6;
+      animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.6); opacity: 0.8; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    .step-sep {
+      color: var(--border-strong);
+    }
+
+    .checkpoint-badge {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-secondary);
+      font-size: 11.5px;
+    }
+
+    .resume-count-badge {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      border: 1px solid var(--accent-border);
+      padding: 1px 6px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+
+    /* Control Button Group */
+    .status-bar-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-ctrl {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      color: var(--text-secondary);
+      transition: all 0.12s;
+    }
+
+    .btn-ctrl:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    .btn-ctrl.btn-stop:hover {
+      background-color: var(--diff-del-bg);
+      color: var(--diff-del-text);
+      border-color: var(--diff-del-num);
+    }
+
+    /* Center Chat Thread */
+    .center-thread {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .msg-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .msg-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .msg-avatar {
+      width: 20px;
+      height: 20px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .avatar-user {
+      background-color: var(--border-strong);
+      color: var(--text-primary);
+    }
+
+    .avatar-assistant {
+      background-color: var(--accent);
+      color: var(--text-inverse);
+    }
+
+    .msg-sender {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .msg-time {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    .msg-chip {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+      background-color: var(--bg-hover);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+    }
+
+    .msg-body {
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--text-primary);
+      padding-left: 28px;
+    }
+
+    .msg-body p {
+      margin-bottom: 7px;
+    }
+
+    .msg-body ul, .msg-body ol {
+      margin: 5px 0 9px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .msg-body li {
+      color: var(--text-primary);
+    }
+
+    .msg-body code:not(pre code) {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+      background-color: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+    }
+
+    /* 4. Sub-agents cards in center timeline */
+    .subagent-card {
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      background-color: var(--bg-surface-subtle);
+      margin: 8px 0;
+      overflow: hidden;
+      transition: border-color 0.15s;
+    }
+
+    .subagent-card:hover {
+      border-color: var(--border-strong);
+    }
+
+    .subagent-card-compact {
+      padding: 7px 11px;
+      cursor: pointer;
+    }
+
+    .subagent-card-compact .subagent-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .subagent-card-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .subagent-meta-chip {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .subagent-card-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .chevron-icon {
+      width: 12px;
+      height: 12px;
+      opacity: 0.7;
+    }
+
+    /* Expanded Sub-Agent Card */
+    .subagent-card-expanded {
+      border-color: var(--accent-border);
+      background-color: var(--bg-surface);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    }
+
+    .subagent-card-expanded .subagent-card-header {
+      padding: 8px 12px;
+      background-color: var(--bg-surface-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+    }
+
+    .subagent-progress-badge {
+      font-size: 10.5px;
+      padding: 1px 6px;
+      border-radius: var(--radius-sm);
+      background-color: var(--accent-subtle);
+      color: var(--accent-text);
+      border: 1px solid var(--accent-border);
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+
+    .subagent-role-pill {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      background-color: var(--bg-hover);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+    }
+
+    .subagent-card-body {
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .subagent-task-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      background-color: var(--bg-surface-subtle);
+      border-left: 2px solid var(--accent);
+    }
+
+    /* Collapsed Tool Rows (Monospace) with path and +N/−M */
+    .tools-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin: 4px 0;
+    }
+
+    .tool-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: var(--tool-bg);
+      border: 1px solid var(--tool-border);
+      border-radius: var(--radius-md);
+      padding: 4px 9px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      transition: background 0.12s, border-color 0.12s;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tool-row:hover {
+      background-color: var(--tool-hover);
+      border-color: var(--border-strong);
+    }
+
+    .tool-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow: hidden;
+      white-space: pre;
+    }
+
+    .tool-prefix {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .tool-path {
+      color: var(--text-secondary);
+    }
+
+    .tool-diff-badge {
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .tool-diff-badge .add { color: var(--diff-add-num); }
+    .tool-diff-badge .del { color: var(--diff-del-num); }
+
+    .tool-meta {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 10.5px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    /* Interrupted / Auto-resumed Warning Row */
+    .tool-row.tool-interrupted {
+      background-color: var(--warn-bg);
+      border-color: var(--warn-border);
+      color: var(--warn-text);
+    }
+
+    .tool-row.tool-interrupted .tool-prefix {
+      color: var(--warn-text);
+      font-weight: 600;
+    }
+
+    .tool-row.tool-interrupted .tool-path {
+      color: var(--warn-text);
+    }
+
+    .tool-row.tool-interrupted .tool-meta {
+      color: var(--warn-text);
+      font-weight: 500;
+    }
+
+    /* Code Block in Chat */
+    .code-block-card {
+      margin: 4px 0;
+      border: 1px solid var(--code-block-border);
+      border-radius: var(--radius-md);
+      background-color: var(--code-block-bg);
+      overflow: hidden;
+    }
+
+    .code-block-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 10px;
+      background-color: var(--bg-surface-subtle);
+      border-bottom: 1px solid var(--code-block-border);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .code-block-pre {
+      padding: 8px 11px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.48;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    /* Composer */
+    .center-composer {
+      padding: 10px 18px 12px 18px;
+      border-top: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .composer-box {
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      background-color: var(--bg-surface-subtle);
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .composer-box:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+
+    .composer-textarea {
+      width: 100%;
+      min-height: 44px;
+      max-height: 90px;
+      border: none;
+      outline: none;
+      background: transparent;
+      padding: 8px 10px;
+      color: var(--text-primary);
+      font-size: 12.5px;
+      line-height: 1.45;
+      resize: none;
+    }
+
+    .composer-textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    .composer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 8px 5px 8px;
+      border-top: 1px solid transparent;
+    }
+
+    .composer-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chip-selector {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2.5px 7px;
+      border-radius: var(--radius-md);
+      background-color: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.12s;
+    }
+
+    .chip-selector:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    .chip-dot {
+      width: 5.5px;
+      height: 5.5px;
+      border-radius: 50%;
+      background-color: var(--accent);
+    }
+
+    .chip-runtime-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 0 4px;
+    }
+
+    .composer-actions {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .shortcut-hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .btn-send {
+      width: 26px;
+      height: 26px;
+      border-radius: var(--radius-md);
+      border: none;
+      background-color: var(--accent);
+      color: var(--text-inverse);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background-color 0.15s, transform 0.05s;
+    }
+
+    .btn-send:hover {
+      background-color: var(--accent-hover);
+    }
+
+    .btn-send:active {
+      transform: scale(0.96);
+    }
+
+    /* ==========================================================================
+       COLUMN 3: RIGHT PANE (~520px)
+       ========================================================================== */
+    .col-right {
+      width: 520px;
+      min-width: 520px;
+      max-width: 520px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg-surface);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    /* Tabs Header */
+    .right-tabs-bar {
+      height: 46px;
+      min-height: 46px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .tabs-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      height: 100%;
+    }
+
+    .tab-btn {
+      position: relative;
+      height: 30px;
+      padding: 0 11px;
+      border-radius: var(--radius-md);
+      background: transparent;
+      border: none;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.12s, background-color 0.12s;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-primary);
+      background-color: var(--bg-hover);
+    }
+
+    .tab-btn.active {
+      color: var(--text-primary);
+      background-color: var(--bg-active);
+      font-weight: 600;
+    }
+
+    .tab-btn.active::after {
+      content: "";
+      position: absolute;
+      bottom: -8px;
+      left: 10px;
+      right: 10px;
+      height: 2px;
+      background-color: var(--accent);
+      border-radius: 2px;
+    }
+
+    .tab-badge {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      font-weight: 600;
+      border: 1px solid var(--accent-border);
+    }
+
+    .tabs-actions {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .tab-action-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 11px;
+      transition: all 0.12s;
+    }
+
+    .tab-action-icon:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    /* File Path Header */
+    .diff-file-header {
+      padding: 6px 14px;
+      background-color: var(--bg-surface-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .file-path-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .file-path-icon {
+      color: var(--text-secondary);
+      width: 13px;
+      height: 13px;
+    }
+
+    .file-diff-stats {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .stat-add {
+      color: var(--diff-add-num);
+      background: var(--diff-add-bg);
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+    }
+
+    .stat-del {
+      color: var(--diff-del-num);
+      background: var(--diff-del-bg);
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+    }
+
+    /* Column Legend */
+    .diff-col-legend {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--text-muted);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      flex-shrink: 0;
+    }
+
+    .legend-side {
+      padding: 4px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .legend-side:first-child {
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    /* Diff Viewport (Scrollable) */
+    .diff-viewport {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      background-color: var(--bg-surface);
+    }
+
+    /* Side-by-Side Diff Table */
+    .diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      line-height: 1.5;
+    }
+
+    /* Column Sizing: 28px line number column, remaining width for code */
+    .diff-table col.col-ln {
+      width: 28px;
+    }
+    .diff-table col.col-code {
+      width: calc(50% - 28px);
+    }
+
+    /* Hunk separator row */
+    .diff-row-hunk td {
+      background-color: var(--diff-hunk-bg);
+      color: var(--diff-hunk-text);
+      font-size: 10px;
+      padding: 3px 10px;
+      border-top: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    /* 6. Right diff pane: long code lines must wrap (white-space: pre-wrap; word-break: break-all) */
+    .diff-row td {
+      vertical-align: top;
+      padding: 0;
+    }
+
+    .ln {
+      text-align: right;
+      padding: 1px 4px !important;
+      color: var(--diff-num-col);
+      user-select: none;
+      font-size: 10px;
+      width: 28px;
+      min-width: 28px;
+      max-width: 28px;
+      border-right: 1px solid var(--border-subtle);
+      line-height: 1.5;
+    }
+
+    .code-cell {
+      padding: 1px 6px !important;
+      color: var(--text-primary);
+      white-space: pre-wrap;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
+    }
+
+    .right-border {
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    /* Removed lines */
+    .del-line {
+      background-color: var(--diff-del-bg);
+      color: var(--diff-del-text);
+    }
+    .del-line.ln {
+      color: var(--diff-del-num);
+    }
+
+    /* Added lines */
+    .add-line {
+      background-color: var(--diff-add-bg);
+      color: var(--diff-add-text);
+    }
+    .add-line.ln {
+      color: var(--diff-add-num);
+    }
+
+    /* Empty state filler */
+    .empty-cell {
+      background-color: var(--bg-surface-subtle);
+      color: transparent;
+      user-select: none;
+    }
+
+    /* Syntax Tokens */
+    .syn-kw { color: var(--syn-kw); font-weight: 500; }
+    .syn-fn { color: var(--syn-fn); }
+    .syn-str { color: var(--syn-str); }
+    .syn-type { color: var(--syn-type); }
+    .syn-cm { color: var(--syn-comment); font-style: italic; }
+    .syn-num { color: var(--syn-num); }
+
+    /* v2 fixes */
+    .code-block-pre, .code-block-pre code { white-space: pre-wrap !important; word-break: break-all; overflow-x: hidden; }
+    .running-path { font-size: 10px; letter-spacing: -0.2px; }
+    .running-row { gap: 4px; }
+  </style>
+<style>
+.sub-agents-group{padding-left:0!important;margin-left:0!important;border-left:none!important;gap:1px!important}
+.main-agent-header,.sub-agent-row{padding:3px 6px!important;gap:7px!important;font-family:var(--font-sans)!important;font-size:11.5px!important}
+.main-agent-name,.sub-agent-name{font-weight:450!important;color:var(--text-primary)!important;flex:none!important}
+.main-agent-state{margin-left:auto}
+.sub-agent-sep{display:none}.sub-agent-progress{margin-left:auto;color:var(--text-muted)!important;font-size:10.5px;font-family:var(--font-mono)}
+.sub-agent-status{font-size:10.5px!important;font-weight:400!important}
+.flat-dot{width:6px;height:6px;border-radius:50%;background:var(--status-running);flex:none}
+.sub-agent-row>span:first-child{width:6px!important;height:6px!important}
+</style></head>
+<body>
+  <div class="app-shell">
+
+    <!-- ======================================================================
+         COLUMN 1: LEFT SIDEBAR (~260px)
+         ====================================================================== -->
+    <aside class="col-left">
+      <!-- App Name & Brand Header with Small Gear Settings Icon -->
+      <div class="left-header">
+        <div class="brand-group">
+          <div class="brand-logo">π</div>
+          <span class="brand-name">pi-work</span>
+          <span class="brand-badge">workbench</span>
+        </div>
+      </div>
+
+      <!-- Scrollable Inner Sidebar Content -->
+      <div class="left-body">
+        
+        <!-- 1. Left sidebar hierarchy: Workspaces > Conversations > Agents -->
+        <div class="hierarchy-section">
+          <div class="section-label">
+            <span>工作区 & 对话</span>
+            <span style="font-size: 10px; opacity: 0.6;">2 个工作区</span>
+          </div>
+
+          <div class="tree-root">
+            <!-- Workspace 1: pi-work (Active) -->
+            <div class="ws-tree-node">
+              <div class="ws-node-header" title="当前工作区: pi-work">
+                <svg class="ws-node-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <span class="ws-node-title">pi-work</span>
+                <span class="ws-node-badge">当前</span>
+              </div>
+
+              <div class="ws-node-children">
+                <!-- Conversation 1 (Active): 加验证码 (with sub-agents spawned) -->
+                <div class="conv-tree-node conv-active">
+                  <div class="conv-node-header" title="当前对话: 加验证码">
+                    <svg class="conv-node-icon icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                    <span class="conv-node-title">加验证码</span>
+                    <span class="active-indicator"></span>
+                  </div>
+
+                  <!-- Agents under this conversation -->
+                  <div class="conv-node-agents">
+                    <!-- 主 Agent: Always shown -->
+                    <div class="main-agent-node">
+                      <div class="main-agent-header">
+                        <span class="flat-dot"></span>
+                        <span class="main-agent-name">Agent</span>
+                        <span class="main-agent-state">调度中</span>
+                      </div>
+
+                      <!-- Sub-agents: Indented under the main agent only when spawned -->
+                      <div class="sub-agents-group">
+                        <div class="sub-agent-row" title="coder 正在执行任务">
+                          <span class="status-dot dot-running"></span>
+                          <span class="sub-agent-name">coder</span>
+                          <span class="sub-agent-sep">·</span>
+                          <span class="sub-agent-progress">7/12</span>
+                          <span class="sub-agent-sep">·</span>
+                          <span class="sub-agent-status status-text-running">运行中</span>
+                        </div>
+                        <div class="sub-agent-row" title="tester 测试任务已完成">
+                          <span class="status-dot dot-done"></span>
+                          <span class="sub-agent-name">tester</span>
+                          <span class="sub-agent-sep">·</span>
+                          <span class="sub-agent-progress">3/3</span>
+                          <span class="sub-agent-sep">·</span>
+                          <span class="sub-agent-status status-text-done">完成</span>
+                        </div>
+                        <div class="sub-agent-row" title="auditor 审计任务等待调度">
+                          <span class="status-dot dot-waiting"></span>
+                          <span class="sub-agent-name">auditor</span>
+                          <span class="sub-agent-sep">·</span>
+                          <span class="sub-agent-progress">0/4</span>
+                          <span class="sub-agent-sep">·</span>
+                          <span class="sub-agent-status status-text-waiting">等待中</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Conversation 2: 优化 SQL 索引 (Show conversation with only main agent) -->
+                <div class="conv-tree-node">
+                  <div class="conv-node-header" title="对话: 优化 SQL 索引">
+                    <svg class="conv-node-icon icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                    <span class="conv-node-title">优化 SQL 索引</span>
+                  </div>
+
+                  <div class="conv-node-agents">
+                    <!-- 主 Agent: Always shown, NO sub-agents spawned -->
+                    <div class="main-agent-node">
+                      <div class="main-agent-header">
+                        <span class="flat-dot" style="background:var(--border-strong)"></span>
+                        <span class="main-agent-name">Agent</span>
+                        <span class="main-agent-state">待命</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Workspace 2: crm-migration -->
+            <div class="ws-tree-node">
+              <div class="ws-node-header" title="工作区: crm-migration">
+                <svg class="ws-node-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <span class="ws-node-title">crm-migration</span>
+              </div>
+
+              <div class="ws-node-children">
+                <div class="conv-tree-node">
+                  <div class="conv-node-header" title="对话: 组织架构同步">
+                    <svg class="conv-node-icon icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                    <span class="conv-node-title">组织架构同步</span>
+                  </div>
+
+                  <div class="conv-node-agents">
+                    <div class="main-agent-node">
+                      <div class="main-agent-header">
+                        <span class="flat-dot" style="background:var(--border-strong)"></span>
+                        <span class="main-agent-name">Agent</span>
+                        <span class="main-agent-state">就绪</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Replace bottom-left Agents box with a "运行中" overview grouped by workspace -->
+        <div class="running-section">
+          <div class="section-label">
+            <span>运行中概览</span>
+            <span class="running-count-tag">1 活跃</span>
+          </div>
+          <div class="running-panel">
+            <div class="running-row" title="pi-work › 加验证码 › coder · 运行中">
+              <span class="status-dot dot-running"></span>
+              <div class="running-path">
+                <span class="rp-ws">pi-work</span>
+                <span class="rp-div">›</span>
+                <span class="rp-conv">加验证码</span>
+                <span class="rp-div">›</span>
+                <span class="rp-agent">coder</span>
+                <span class="rp-status">· 运行中</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Left Sidebar Footer: Runtime Meta & Theme Indicator -->
+      <div class="left-footer">
+        <div class="runtime-meta">
+          <span class="runtime-ping"></span>
+          <span>Pi Durable Runtime</span>
+        </div>
+        
+        
+        <button class="sidebar-icon-btn" title="系统设置 (角色与流水线配置)">
+          <svg class="icon" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </aside>
+
+
+    <!-- ======================================================================
+         COLUMN 2: CENTER PANE (flex: 1)
+         ====================================================================== -->
+    <main class="col-center">
+      <!-- Top Status Bar -->
+      <header class="center-top-bar">
+        <div class="status-bar-left">
+          <div class="step-indicator" title="当前执行进度">
+            <span class="step-pulse-ring"></span>
+            <span>coder · 正在编写 src/auth/captcha.ts</span>
+          </div>
+          <span class="step-sep">/</span>
+          <div class="checkpoint-badge" title="最近持久化检查点时间">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+            <span>8秒前</span>
+          </div>
+          <span class="step-sep">/</span>
+          <div class="resume-count-badge" title="流中断自动恢复计数">
+            <span>↻ 1</span>
+          </div>
+        </div>
+
+        <div class="status-bar-controls">
+          <button class="btn-ctrl" title="暂停执行">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+            暂停
+          </button>
+          <button class="btn-ctrl" title="继续执行">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            继续
+          </button>
+          <button class="btn-ctrl btn-stop" title="终止流水线并保存检查点">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+            终止
+          </button>
+        </div>
+      </header>
+
+      <!-- Scrollable Chat Thread (Center timeline = chat between user and main agent) -->
+      <div class="center-thread">
+
+        <!-- User Message (Chinese text) -->
+        <div class="msg-group">
+          <div class="msg-header">
+            <div class="msg-avatar avatar-user">U</div>
+            <span class="msg-sender">你</span>
+            <span class="msg-time">10:32</span>
+          </div>
+          <div class="msg-body">
+            <p>登录接口目前缺乏防暴力破解保护，请在用户登录流程中增加图形验证码校验机制：</p>
+            <ul>
+              <li>当同一 IP 或账号密码连续错误 3 次后强制开启验证码核验；</li>
+              <li>使用 Redis 暂存验证码键值并设置 5 分钟滑动过期时间；</li>
+              <li>确保验证码具备防重放攻击与高并发下的频控安全，并由其他 Agent 补充完备测试。</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Assistant Message (Main Agent in Chinese, dispatching Sub-Agents) -->
+        <div class="msg-group">
+          <div class="msg-header">
+            <div class="msg-avatar avatar-assistant">π</div>
+            <span class="msg-sender">Agent</span>
+            <span class="msg-chip">grok-4.6</span>
+            <span class="msg-time">10:33</span>
+          </div>
+          <div class="msg-body">
+            <p>已分析需求，任务已分解为自动化执行流水线并调度对应角色：</p>
+            <ol>
+              <li><strong>测试先行 (tester)</strong>：构建登录失败计数阶梯与验证码核验的单元测试套件；</li>
+              <li><strong>核心实现 (coder)</strong>：实现基于 SVG 的图形验证码生成及 Redis 暂存，接入登录中间件；</li>
+              <li><strong>安全审计 (auditor)</strong>：待编码完成后核查并发重放击穿与长字符配置兜底逻辑。</li>
+            </ol>
+
+            <!-- 4. Sub-agent compact card: 已派出 · tester · 完成 -->
+            <div class="subagent-card subagent-card-compact" title="点击查看 tester 执行日志">
+              <div class="subagent-card-header">
+                <div class="subagent-card-title">
+                  <span class="status-dot dot-done"></span>
+                  <span>已派出 · tester · 完成</span>
+                  <span class="subagent-meta-chip">3/3 步 · 1.8s · 14 案例通过</span>
+                </div>
+                <div class="subagent-card-right">
+                  <span style="font-size:10.5px;">展开详情</span>
+                  <svg class="icon chevron-icon" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Sub-agent expanded card: 已派出 · coder · 运行中 (shown expanded with step details) -->
+            <div class="subagent-card subagent-card-expanded">
+              <div class="subagent-card-header">
+                <div class="subagent-card-title">
+                  <span class="status-dot dot-running"></span>
+                  <span>已派出 · coder · 运行中</span>
+                  <span class="subagent-progress-badge">步骤 7/12</span>
+                  <span class="subagent-role-pill">grok-4.6</span>
+                </div>
+                <div class="subagent-card-right">
+                  <span style="font-size:11px; color: var(--accent-text);">运行耗时 42s</span>
+                  <svg class="icon chevron-icon" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"></polyline></svg>
+                </div>
+              </div>
+
+              <div class="subagent-card-body">
+                <div class="subagent-task-desc">
+                  <strong>当前目标:</strong> 编写图形验证码 SVG 渲染算法与 Redis 写入，加入 HMAC 随机混淆盐值与防重放标识。
+                </div>
+
+                <!-- Collapsed tool rows with path and +N/−M -->
+                <div class="tools-feed">
+                  <div class="tool-row" title="点击查看写入详情">
+                    <div class="tool-main">
+                      <span class="tool-prefix">✎ write</span>
+                      <span class="tool-path">src/auth/captcha.ts</span>
+                      <span class="tool-diff-badge"><span class="add">+46</span> <span class="del">−8</span></span>
+                    </div>
+                    <div class="tool-meta">
+                      <span>36ms</span>
+                    </div>
+                  </div>
+
+                  <div class="tool-row" title="点击查看读取详情">
+                    <div class="tool-main">
+                      <span class="tool-prefix">📖 read</span>
+                      <span class="tool-path">src/auth/session.ts</span>
+                    </div>
+                    <div class="tool-meta">
+                      <span>12ms</span>
+                    </div>
+                  </div>
+
+                  <!-- Interrupted & Auto-resumed Row -->
+                  <div class="tool-row tool-interrupted" title="Pi Durable 检查点自动恢复机制">
+                    <div class="tool-main">
+                      <span class="tool-prefix">⚠ 模型流响应中断</span>
+                      <span class="tool-path">· 已从检查点 #6 自动恢复</span>
+                    </div>
+                    <div class="tool-meta">
+                      <span>↻ 120ms 恢复</span>
+                    </div>
+                  </div>
+
+                  <div class="tool-row" title="点击查看单元测试输出">
+                    <div class="tool-main">
+                      <span class="tool-prefix">$ bash</span>
+                      <span class="tool-path">pnpm test test/auth/captcha.test.ts</span>
+                      <span style="color: var(--status-done); font-weight: 500;">✓ 14 passed</span>
+                    </div>
+                    <div class="tool-meta">
+                      <span>1.15s</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Code block snippet in card -->
+                <div class="code-block-card">
+                  <div class="code-block-bar">
+                    <span>typescript · src/auth/captcha.ts</span>
+                    <span>检查点 #7</span>
+                  </div>
+                  <pre class="code-block-pre"><code><span class="syn-cm">// 生成带防重放签名的图形验证码并写入 Redis</span>
+<span class="syn-kw">export async function</span> <span class="syn-fn">createCaptchaChallenge</span>(
+  sessionId: <span class="syn-type">string</span>,
+  ctx: <span class="syn-type">DurableExecutionContext</span>
+): <span class="syn-type">Promise</span>&lt;<span class="syn-type">CaptchaChallengeResult</span>&gt; {
+  <span class="syn-kw">const</span> code = <span class="syn-fn">generateRandomText</span>(4);
+  <span class="syn-kw">const</span> token = crypto.<span class="syn-fn">randomBytes</span>(16).<span class="syn-fn">toString</span>(<span class="syn-str">'hex'</span>);
+  <span class="syn-kw">await</span> ctx.redis.<span class="syn-fn">setex</span>(<span class="syn-str">`captcha:${sessionId}`</span>, 300, <span class="syn-fn">hashCaptchaCode</span>(code, token));
+  <span class="syn-kw">return</span> { svg: <span class="syn-fn">renderSvgCaptcha</span>(code), challengeToken: token };
+}</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <p style="margin-top: 10px; color: var(--text-secondary); font-size: 12.5px;">
+              子 Agent <code>coder</code> 核心变更已同步至右侧检查面板。请确认长配置项的换行规则与防重放过期时间，确认后将唤醒 <code>auditor</code> 推进最终审计。
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Composer at Bottom -->
+      <footer class="center-composer">
+        <div class="composer-box">
+          <textarea class="composer-textarea" placeholder="向 Agent 补充要求或指导 coder... (例如: '增加验证码噪点干扰线并降低字体旋转角度')"></textarea>
+          <div class="composer-bar">
+            <div class="composer-chips">
+              <div class="chip-selector" title="当前调度模型">
+                <span class="chip-dot"></span>
+                <span>Agent · grok-4.6</span>
+                <svg class="icon" style="width:11px;height:11px;opacity:0.7;" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              <span class="chip-runtime-meta">上下文: 16.4k / 200k</span>
+            </div>
+
+            <div class="composer-actions">
+              <span class="shortcut-hint">⌘↵ 发送</span>
+              <button class="btn-send" title="发送指令 (Cmd+Enter)">
+                <svg class="icon" style="width:13px;height:13px;" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </main>
+
+
+    <!-- ======================================================================
+         COLUMN 3: RIGHT PANE (~520px)
+         ====================================================================== -->
+    <aside class="col-right">
+      <!-- Tabs Header: Diff | File | Markdown -->
+      <header class="right-tabs-bar">
+        <nav class="tabs-nav">
+          <button class="tab-btn active" title="双栏对比视图">
+            Diff
+            <span class="tab-badge">1</span>
+          </button>
+          <button class="tab-btn" title="查看完整源码">
+            文件
+          </button>
+          <button class="tab-btn" title="查看渲染文档">
+            Markdown
+          </button>
+        </nav>
+
+        <div class="tabs-actions">
+          <button class="tab-action-icon" title="切换分栏 / 单栏模式">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
+          </button>
+          <button class="tab-action-icon" title="复制文件路径">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- File Path Header -->
+      <div class="diff-file-header">
+        <div class="file-path-title">
+          <svg class="file-path-icon icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          <span>src/auth/captcha.ts</span>
+        </div>
+        <div class="file-diff-stats">
+          <span class="stat-add">+46</span>
+          <span class="stat-del">−8</span>
+        </div>
+      </div>
+
+      <!-- Column Legend -->
+      <div class="diff-col-legend">
+        <div class="legend-side">
+          <span>原始基线 (HEAD~1)</span>
+          <span>ln 26-44</span>
+        </div>
+        <div class="legend-side">
+          <span>工作副本 (加验证码)</span>
+          <span>ln 26-68</span>
+        </div>
+      </div>
+
+      <!-- 6. Side-by-Side Diff Table Viewport (Long code lines wrap cleanly) -->
+      <div class="diff-viewport">
+        <table class="diff-table">
+          <colgroup>
+            <col class="col-ln">
+            <col class="col-code">
+            <col class="col-ln">
+            <col class="col-code">
+          </colgroup>
+
+          <tbody>
+            <!-- Hunk Header -->
+            <tr class="diff-row-hunk">
+              <td colspan="4">@@ -26,14 +26,38 @@ export async function verifyAndConsumeCaptcha</td>
+            </tr>
+
+            <!-- Context Line (Unchanged) -->
+            <tr class="diff-row">
+              <td class="ln">26</td>
+              <td class="code-cell right-border"><span class="syn-cm">// 校验会话状态与验证码挑战</span></td>
+              <td class="ln">26</td>
+              <td class="code-cell"><span class="syn-cm">// 校验会话状态与验证码挑战</span></td>
+            </tr>
+
+            <!-- Removed vs Added Signature -->
+            <tr class="diff-row">
+              <td class="ln del-line">27</td>
+              <td class="code-cell del-line right-border"><span class="syn-kw">export async function</span> <span class="syn-fn">verifyCaptcha</span>(</td>
+              <td class="ln add-line">27</td>
+              <td class="code-cell add-line"><span class="syn-kw">export async function</span> <span class="syn-fn">verifyAndConsumeCaptcha</span>(</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">28</td>
+              <td class="code-cell del-line right-border">  sessionId: <span class="syn-type">string</span>,</td>
+              <td class="ln add-line">28</td>
+              <td class="code-cell add-line">  sessionId: <span class="syn-type">string</span>,</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">29</td>
+              <td class="code-cell del-line right-border">  inputCode: <span class="syn-type">string</span></td>
+              <td class="ln add-line">29</td>
+              <td class="code-cell add-line">  inputCode: <span class="syn-type">string</span>,</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">30</td>
+              <td class="code-cell add-line">  challengeToken: <span class="syn-type">string</span>,</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">31</td>
+              <td class="code-cell add-line">  ctx: <span class="syn-type">DurableExecutionContext</span></td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">30</td>
+              <td class="code-cell del-line right-border">): <span class="syn-type">Promise</span>&lt;<span class="syn-type">boolean</span>&gt; {</td>
+              <td class="ln add-line">32</td>
+              <td class="code-cell add-line">): <span class="syn-type">Promise</span>&lt;<span class="syn-type">CaptchaValidationResult</span>&gt; {</td>
+            </tr>
+
+            <!-- Context Line (Unchanged) -->
+            <tr class="diff-row">
+              <td class="ln">31</td>
+              <td class="code-cell right-border">  <span class="syn-kw">const</span> cacheKey = <span class="syn-str">`captcha:${sessionId}`</span>;</td>
+              <td class="ln">33</td>
+              <td class="code-cell">  <span class="syn-kw">const</span> cacheKey = <span class="syn-str">`captcha:${sessionId}`</span>;</td>
+            </tr>
+
+            <!-- 6. VERY LONG CODE LINE (Must wrap: white-space: pre-wrap; word-break: break-all) -->
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">34</td>
+              <td class="code-cell add-line"><span class="syn-kw">const</span> DEFAULT_CAPTCHA_SVG_CONFIG = { width: 160, height: 52, fontSize: 34, charPreset: <span class="syn-str">'23456789abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ'</span>, noiseDensity: 4, background: <span class="syn-str">'#ffffff'</span>, signatureSecretKey: <span class="syn-str">'pi_durable_internal_hmac_sha256_rotation_salt_key_v2_auto_refresh_token_stream'</span>, maxRetryAttempts: 3 };</td>
+            </tr>
+
+            <!-- Removed Memory lookup vs Added Redis Durable atomic check -->
+            <tr class="diff-row">
+              <td class="ln del-line">32</td>
+              <td class="code-cell del-line right-border">  <span class="syn-kw">const</span> expected = memoryStore.<span class="syn-fn">get</span>(cacheKey);</td>
+              <td class="ln add-line">35</td>
+              <td class="code-cell add-line">  <span class="syn-kw">const</span> storedHash = <span class="syn-kw">await</span> ctx.redis.<span class="syn-fn">get</span>(cacheKey);</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">33</td>
+              <td class="code-cell del-line right-border">  <span class="syn-kw">if</span> (!expected) <span class="syn-kw">return false</span>;</td>
+              <td class="ln add-line">36</td>
+              <td class="code-cell add-line">  <span class="syn-kw">if</span> (!storedHash) {</td>
+            </tr>
+            <!-- Another wrapped line in added block -->
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">37</td>
+              <td class="code-cell add-line">    <span class="syn-kw">throw new</span> <span class="syn-type">CaptchaValidationError</span>(<span class="syn-str">'CAPTCHA_CHALLENGE_EXPIRED_OR_NOT_FOUND_FOR_SESSION_SCOPE'</span>, { sessionId, retryAvailable: <span class="syn-kw">false</span> });</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">38</td>
+              <td class="code-cell add-line">  }</td>
+            </tr>
+
+            <!-- Context Line (Unchanged) -->
+            <tr class="diff-row">
+              <td class="ln">34</td>
+              <td class="code-cell right-border">  </td>
+              <td class="ln">39</td>
+              <td class="code-cell">  </td>
+            </tr>
+
+            <!-- Hash verification and replay prevention -->
+            <tr class="diff-row">
+              <td class="ln del-line">35</td>
+              <td class="code-cell del-line right-border">  <span class="syn-kw">const</span> valid = expected === inputCode;</td>
+              <td class="ln add-line">40</td>
+              <td class="code-cell add-line">  <span class="syn-kw">const</span> computed = <span class="syn-fn">hashCaptchaCode</span>(inputCode, challengeToken);</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">36</td>
+              <td class="code-cell del-line right-border">  memoryStore.<span class="syn-fn">delete</span>(cacheKey);</td>
+              <td class="ln add-line">41</td>
+              <td class="code-cell add-line">  <span class="syn-kw">if</span> (computed !== storedHash) {</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">42</td>
+              <td class="code-cell add-line">    <span class="syn-kw">await</span> ctx.redis.<span class="syn-fn">incr</span>(<span class="syn-str">`failed_attempts:${sessionId}`</span>);</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">43</td>
+              <td class="code-cell add-line">    <span class="syn-kw">return</span> { ok: <span class="syn-kw">false</span>, reason: <span class="syn-str">'MISMATCH'</span> };</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">44</td>
+              <td class="code-cell add-line">  }</td>
+            </tr>
+
+            <!-- Atomic deletion & return -->
+            <tr class="diff-row">
+              <td class="ln del-line">37</td>
+              <td class="code-cell del-line right-border">  <span class="syn-kw">return</span> valid;</td>
+              <td class="ln add-line">45</td>
+              <td class="code-cell add-line">  <span class="syn-kw">await</span> ctx.redis.<span class="syn-fn">del</span>(cacheKey);</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">46</td>
+              <td class="code-cell add-line">  <span class="syn-kw">await</span> ctx.<span class="syn-fn">checkpoint</span>({ event: <span class="syn-str">'captcha_consumed'</span>, sessionId });</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">47</td>
+              <td class="code-cell add-line">  <span class="syn-kw">return</span> { ok: <span class="syn-kw">true</span>, verifiedAt: Date.<span class="syn-fn">now</span>() };</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln">38</td>
+              <td class="code-cell right-border">}</td>
+              <td class="ln">48</td>
+              <td class="code-cell">}</td>
+            </tr>
+
+          </tbody>
+        </table>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Interactive script for tabs and tree item selection -->
+  <script>
+    (function() {
+      // Tab switcher in right pane
+      const tabs = document.querySelectorAll('.tab-btn');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+          tabs.forEach(t => t.classList.remove('active'));
+          this.classList.add('active');
+        });
+      });
+
+      // Conversation tree item selection
+      const convNodes = document.querySelectorAll('.conv-node-header');
+      convNodes.forEach(node => {
+        node.addEventListener('click', function() {
+          document.querySelectorAll('.conv-tree-node').forEach(c => {
+            c.classList.remove('conv-active');
+            const ind = c.querySelector('.active-indicator');
+            if (ind) ind.remove();
+          });
+          const parent = this.closest('.conv-tree-node');
+          if (parent) {
+            parent.classList.add('conv-active');
+            const ind = document.createElement('span');
+            ind.className = 'active-indicator';
+            this.appendChild(ind);
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
+
