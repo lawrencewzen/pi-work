@@ -1,7 +1,27 @@
-# 协作规则（给参与本仓库的所有 Agent / CLI）
+# 协作规则（pi-work）
 
-- 当前功能与运行方式以 `README.md` 为准，设计规格参照 `SPEC.md`，v3 已交付 API、限制与第二阶段计划参照 `docs/V3_PLAN.md`。`SPEC.md` 中 v1/v2 段落含历史设计记录；有冲突时先核对实际代码与固定版本 API。
-- API 以 `node_modules/@earendil-works/*/dist/**/*.d.ts` 和 `node_modules/@earendil-works/pi-durable/README.md` 为准，不凭记忆编 API。
-- 只改明确要求的文件；修改 `SPEC.md`、`AGENTS.md`、`package.json` 或引入依赖需要有用户/项目负责人明确要求，默认保持原生 ESM、无前端构建步骤。
-- 不读取、不打印任何 `.env` 和密钥；不访问远程服务器；不执行 git commit / push（由编排者统一提交）。
-- 写完运行 `npm run check`、`npm test` 与适用的本地验证；交付时列出：改了哪些文件、怎么验证的、哪些没验证，不把 CI 通过等同于生产部署验证。
+pi-work 是基于 Pi Durable（`@earendil-works/pi-durable`，作为库嵌入）的 Web 编码工作台，fork 自 xiaomoBoy/pi-durable-assistant（MIT）。目标运行环境：内网 Windows，Node 22。
+
+## 核心模型
+- **工作区（Workspace）** > **对话（Conversation）** > **主 Agent（Main Agent）** > **子 Agent（Sub Agents）**。
+- 每个对话默认只有一个主 Agent：理解需求、拆任务、管理子 Agent、汇总结果；简单对话不派子 Agent。
+- **角色是模板**（如 tester / coder / auditor，可自定义配置），不是常驻 Agent；子 Agent 是按角色模板在某个对话里生成的独立实例，只属于该对话。
+- 需求支持断点续跑、自动继续、状态监控、多 Agent 并行、固定流程（pipeline）。
+
+## 文档
+- 计划与设计：`docs/PLAN.md`、`docs/ARCHITECTURE.md`、`design/`。接口契约以测试仓库的 `docs/API_CONTRACT.md` 为准。
+- `SPEC.md`、`docs/V3_PLAN.md`、`docs/UPSTREAM_README*.md`、`legacy/` 为上游历史资料，仅供参考，与上述文档冲突时以本项目文档和实际代码为准。
+- Pi API 以 `node_modules/@earendil-works/*/dist/**/*.d.ts` 和 `node_modules/@earendil-works/pi-durable/README.md` 为准，不凭记忆编 API。
+
+## 分工
+- **编排者（总指挥）**：拆分任务、合并分支、最终亲手验收并截图，只有编排者往 `main` 合并。
+- **Coder**：在 `backend`（或编排者指定的功能分支）上开发，可以提交并推送自己的分支，**禁止提交或推送 `main`**；不编写、不修改测试。
+- **Tester**：独立 Agent，只在测试目录（`tests/`、单元测试与 Playwright e2e、fixtures）工作，不改业务代码。
+- **Auditor**：独立 Agent，只做代码审计与报告，不直接改代码。
+- **设计**：Antigravity（`--model gemini-3.8-flash-high`）出设计稿；设计稿和架构由用户确认。
+
+## 约束
+- 只改任务范围内的文件；新增依赖需说明理由。保持原生 ESM。
+- 不读取、不打印 `.env` 和密钥；不访问未授权的远程服务器。
+- 交付前运行 `npm run check`、`npm test` 及适用的本地验证；交付时列出改了哪些文件、怎么验证的、哪些没验证。
+- UI 风格：简洁、低饱和；效果图一律 4K。
