@@ -2,7 +2,7 @@
   "name": "pi-work",
   "version": "0.1.0",
   "private": true,
-  "description": "基于 Pi Durable 的网页版个人 Agent：断点恢复、记事本、子 Agent、定时计划、任务中心和微信通道",
+  "description": "网页版个人 Agent。当前 src/ 运行时使用自定义 SQLite 日志（不是 pi-durable）；pi-durable 仍可通过 legacy/ 使用。断点恢复、多角色并行、流水线编排。",
   "type": "module",
   "engines": {
     "node": ">=22.13"

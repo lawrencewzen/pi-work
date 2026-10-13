@@ -1,13 +1,23 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { resolveInWorkspace } from '../core/paths.mjs';
 import { diffStats } from '../core/diff.mjs';
+import { TOOLS as TOOL_REGISTRY } from '../core/config.mjs';
+
+const OUTPUT_CAP = 1024 * 1024;
+const TRUNCATE_MARKER = '\n[truncated: output exceeded 1 MiB]\n';
+const BASH_INTERRUPTED = 'INTERRUPTED — side effects unknown, check state before retrying';
 
 function toolError(code, message) {
   const err = new Error(message);
   err.code = code;
   return err;
+}
+
+export function sha256Text(text) {
+  return createHash('sha256').update(text ?? '', 'utf8').digest('hex');
 }
 
 async function readText(abs) {
@@ -23,8 +33,127 @@ function stringifyOutput(output) {
   return typeof output === 'string' ? output : JSON.stringify(output);
 }
 
+async function writeAtomic(abs, content) {
+  const tmp = `${abs}.tmp.${process.pid}`;
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  try {
+    await fs.writeFile(tmp, content, 'utf8');
+    await fs.rename(tmp, abs);
+  } catch (err) {
+    try { await fs.unlink(tmp); } catch { /* ignore */ }
+    throw err;
+  }
+}
+
+function killProcessGroup(pid) {
+  if (!pid) return;
+  try { process.kill(-pid, 'SIGKILL'); } catch { /* ESRCH */ }
+}
+
+async function recoverWriteEdit(name, args, prev, ctx) {
+  const { store, toolCallId, workspacePath, conversationId } = ctx;
+  const input = args && Object.keys(args).length ? args : (prev.input || {});
+  const rel = input.path || prev.path;
+  const abs = await resolveInWorkspace(workspacePath, rel);
+  const current = (await readText(abs)) ?? '';
+  const currentHash = sha256Text(current);
+  const beforeHash = prev.beforeHash;
+  const afterHash = prev.afterHash;
+
+  if (afterHash && currentHash === afterHash) {
+    const output = prev.output ?? `${name} ${rel}`;
+    await store.upsertToolCall({
+      id: toolCallId,
+      conversationId,
+      name,
+      status: 'completed',
+      input,
+      output,
+      path: rel,
+      beforeHash,
+      afterHash,
+    });
+    return { name, path: rel, output, status: 'completed' };
+  }
+
+  if (beforeHash && currentHash === beforeHash) {
+    const fn = name === 'edit' ? edit : write;
+    const result = await fn(input, { workspacePath });
+    await store.upsertToolCall({
+      id: toolCallId,
+      conversationId,
+      name,
+      status: result.status || 'completed',
+      input,
+      output: result.output,
+      path: result.path,
+      added: result.added,
+      removed: result.removed,
+      beforeHash,
+      afterHash: afterHash || sha256Text(result.after ?? ''),
+    });
+    if (result.path != null) {
+      await store.addChange({
+        conversationId,
+        path: result.path,
+        before: result.before ?? '',
+        after: result.after ?? '',
+        added: result.added ?? 0,
+        removed: result.removed ?? 0,
+        toolCallId,
+      });
+    }
+    return result;
+  }
+
+  const output = { interrupted: true, conflict: true, note: 'file changed externally' };
+  await store.upsertToolCall({
+    id: toolCallId,
+    conversationId,
+    name,
+    status: 'completed',
+    input,
+    output,
+    path: rel,
+    beforeHash,
+    afterHash,
+  });
+  return { name, path: rel, output, status: 'completed', interrupted: true, conflict: true };
+}
+
+async function journalMutatingStart(name, args, ctx) {
+  const { store, toolCallId, workspacePath, conversationId } = ctx;
+  const rel = args.path;
+  const abs = await resolveInWorkspace(workspacePath, rel);
+  const before = (await readText(abs)) ?? '';
+  const beforeHash = sha256Text(before);
+  let afterContent;
+  if (name === 'write') {
+    afterContent = args.content ?? '';
+  } else {
+    if (!String(before).includes(args.old)) {
+      throw toolError('E_EDIT', `old text not found in ${rel}`);
+    }
+    afterContent = String(before).replace(args.old, args.new);
+  }
+  const afterHash = sha256Text(afterContent);
+  await store.upsertToolCall({
+    id: toolCallId,
+    conversationId,
+    name,
+    status: 'started',
+    input: args,
+    path: rel,
+    beforeHash,
+    afterHash,
+  });
+  return { beforeHash, afterHash };
+}
+
 export async function executeTool(name, args = {}, ctx = {}) {
   const { store, toolCallId, workspacePath, signal, conversationId, timeout } = ctx;
+  if (!TOOL_REGISTRY.includes(name)) throw toolError('E_UNKNOWN_TOOL', `unknown tool: ${name}`);
+
   if (store && toolCallId) {
     const prev = await store.getToolCall(toolCallId);
     if (prev?.status === 'completed') {
@@ -39,7 +168,7 @@ export async function executeTool(name, args = {}, ctx = {}) {
       };
     }
     if (name === 'bash' && prev?.status === 'started') {
-      const output = prev.output ?? { interrupted: true, message: 'bash was interrupted; not re-run' };
+      const output = BASH_INTERRUPTED;
       await store.upsertToolCall({
         id: toolCallId,
         conversationId,
@@ -47,13 +176,21 @@ export async function executeTool(name, args = {}, ctx = {}) {
         status: 'completed',
         output,
       });
-      return { name: 'bash', output, status: 'completed', duplicate: true, interrupted: true };
+      return { name: 'bash', output, status: 'completed', interrupted: true };
+    }
+    if ((name === 'write' || name === 'edit') && prev?.status === 'started') {
+      return recoverWriteEdit(name, args, prev, ctx);
     }
   }
 
   const fns = { read, write, edit, ls, grep, bash };
   const fn = fns[name];
   if (!fn) throw toolError('E_UNKNOWN_TOOL', `unknown tool: ${name}`);
+
+  let hashes;
+  if ((name === 'write' || name === 'edit') && store && toolCallId) {
+    hashes = await journalMutatingStart(name, args, ctx);
+  }
 
   if (name === 'bash' && store && toolCallId) {
     await store.upsertToolCall({
@@ -78,6 +215,8 @@ export async function executeTool(name, args = {}, ctx = {}) {
       path: result.path,
       added: result.added,
       removed: result.removed,
+      beforeHash: hashes?.beforeHash,
+      afterHash: hashes?.afterHash ?? (result.after != null ? sha256Text(result.after) : undefined),
     });
     if ((name === 'write' || name === 'edit') && result.path != null) {
       await store.addChange({
@@ -102,9 +241,8 @@ export async function read({ path: rel } = {}, { workspacePath } = {}) {
 
 export async function write({ path: rel, content = '' } = {}, { workspacePath } = {}) {
   const abs = await resolveInWorkspace(workspacePath, rel);
-  await fs.mkdir(path.dirname(abs), { recursive: true });
   const before = await readText(abs);
-  await fs.writeFile(abs, content, 'utf8');
+  await writeAtomic(abs, content);
   const { added, removed } = diffStats(before, content);
   return {
     name: 'write',
@@ -125,7 +263,7 @@ export async function edit({ path: rel, old: oldText, new: newText } = {}, { wor
     throw toolError('E_EDIT', `old text not found in ${rel}`);
   }
   const after = String(before).replace(oldText, newText);
-  await fs.writeFile(abs, after, 'utf8');
+  await writeAtomic(abs, after);
   const { added, removed } = diffStats(before, after);
   return {
     name: 'edit',
@@ -203,27 +341,61 @@ export async function grep({ pattern, path: rel = '.', glob } = {}, { workspaceP
 export async function bash({ command, timeout: timeoutMs } = {}, { workspacePath, signal, timeout } = {}) {
   const cwd = workspacePath;
   const limit = timeoutMs ?? timeout ?? 60_000;
+  // TODO: run under bubblewrap (bwrap) for a full OS sandbox: bind-mount the
+  // workspace read-write, everything else read-only, network optional. v1
+  // mitigations are env allow-list, cwd, 1 MiB combined output cap, and
+  // process-group SIGKILL on timeout/abort. Full OS sandbox is recommended
+  // but not required for v1.
+  const env = {
+    PATH: '/usr/bin:/bin:/usr/local/bin',
+    HOME: workspacePath,
+    LANG: 'C.UTF-8',
+    TERM: 'dumb',
+  };
   const output = await new Promise((resolve, reject) => {
-    const child = spawn('/bin/sh', ['-c', command], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('/bin/sh', ['-c', command], {
+      cwd,
+      env,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     let stdout = '';
     let stderr = '';
+    let combined = 0;
+    let truncated = false;
     let settled = false;
+    const take = (buf) => {
+      const s = String(buf);
+      if (combined >= OUTPUT_CAP) {
+        truncated = true;
+        return '';
+      }
+      const room = OUTPUT_CAP - combined;
+      if (s.length > room) {
+        truncated = true;
+        combined = OUTPUT_CAP;
+        return s.slice(0, room);
+      }
+      combined += s.length;
+      return s;
+    };
     const finish = (value, err) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
+      if (truncated) stdout += TRUNCATE_MARKER;
       if (err) reject(err);
       else resolve(value);
     };
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killProcessGroup(child.pid);
       const err = new Error('bash timeout');
       err.code = 'ETIMEDOUT';
       finish(null, err);
     }, limit);
     const onAbort = () => {
-      child.kill('SIGKILL');
+      killProcessGroup(child.pid);
       const err = new Error('aborted');
       err.code = 'E_ABORTED';
       err.name = 'AbortError';
@@ -231,8 +403,8 @@ export async function bash({ command, timeout: timeoutMs } = {}, { workspacePath
     };
     if (signal?.aborted) onAbort();
     else signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout.on('data', (b) => { stdout += b; });
-    child.stderr.on('data', (b) => { stderr += b; });
+    child.stdout.on('data', (b) => { stdout += take(b); });
+    child.stderr.on('data', (b) => { stderr += take(b); });
     child.on('error', (err) => finish(null, err));
     child.on('close', (code) => finish({ stdout, stderr, code }));
   });

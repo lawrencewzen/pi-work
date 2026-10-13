@@ -5,24 +5,67 @@ import path from 'node:path';
 
 const execFileP = promisify(execFile);
 
+function noDashComponents(s) {
+  return String(s || '').split('/').filter(Boolean).every((p) => !p.startsWith('-'));
+}
+
+function hostOk(host) {
+  const h = String(host || '');
+  return h.length > 0 && !h.startsWith('-');
+}
+
 /**
- * Allowed clone URLs: https, ssh, git@host:path, file.
- * Reject anything that looks like a shell metacharacter payload.
+ * Allowed clone URLs: https:, ssh:, git@host:path.
+ * Reject file:, ext:, ftp:, http:, git:, and hosts/path components starting with `-`.
  */
 export function validateGitUrl(url) {
   const s = String(url || '').trim();
   if (!s || s.length > 2048) return false;
   if (/[\0\n\r\s;|&$`<>]/.test(s)) return false;
-  if (/^https:\/\//i.test(s)) return true;
-  if (/^ssh:\/\//i.test(s)) return true;
-  if (/^file:\/\//i.test(s)) return true;
-  if (/^git@[\w.-]+:/.test(s)) return true;
+
+  if (/^https:\/\//i.test(s)) {
+    try {
+      const u = new URL(s);
+      if (u.protocol !== 'https:') return false;
+      if (!hostOk(u.hostname)) return false;
+      if (!noDashComponents(u.pathname)) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  if (/^ssh:\/\//i.test(s)) {
+    try {
+      const u = new URL(s);
+      if (u.protocol !== 'ssh:') return false;
+      if (!hostOk(u.hostname)) return false;
+      if (!noDashComponents(u.pathname)) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const m = s.match(/^git@([^:]+):(.+)$/);
+  if (m) {
+    if (!hostOk(m[1])) return false;
+    if (!noDashComponents(m[2])) return false;
+    return true;
+  }
   return false;
 }
 
 export function validateBranch(branch) {
   if (branch == null || branch === '') return true;
-  return /^[A-Za-z0-9._/\-]+$/.test(String(branch)) && String(branch).length <= 200;
+  const s = String(branch);
+  if (s.startsWith('-')) return false;
+  return /^[A-Za-z0-9._/\-]+$/.test(s) && s.length <= 200;
+}
+
+/** Strip `user:pass@` from https/ssh URLs so credentials are not stored or returned. */
+export function stripGitUrlCredentials(url) {
+  return String(url || '').replace(/^([a-z][a-z0-9+.-]*:\/\/)([^/@]+):([^/@]+)@/i, '$1');
 }
 
 /**
@@ -41,18 +84,30 @@ export async function cloneGitRepo({ url, branch, dest }) {
     throw err;
   }
   await mkdir(path.dirname(dest), { recursive: true });
-  const args = ['clone', '--depth', '1'];
+  const args = [
+    '-c', 'protocol.file.allow=never',
+    '-c', 'protocol.ext.allow=never',
+    'clone', '--depth', '1',
+  ];
   if (branch) args.push('--branch', String(branch));
-  args.push(String(url).trim(), dest);
+  args.push('--', String(url).trim(), dest);
   try {
     await execFileP('git', args, {
       timeout: 120_000,
       windowsHide: true,
       maxBuffer: 2_000_000,
+      env: {
+        PATH: '/usr/bin:/bin:/usr/local/bin',
+        HOME: process.env.HOME || '',
+        LANG: process.env.LANG || 'C.UTF-8',
+        USER: process.env.USER || '',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_ASKPASS: 'echo',
+      },
     });
-  } catch (e) {
-    const detail = String(e?.stderr || e?.message || 'git clone failed').trim().slice(0, 500);
-    const err = new Error(detail || 'git clone failed');
+  } catch {
+    const err = new Error('git clone failed');
     err.status = 400;
     throw err;
   }

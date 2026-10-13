@@ -1,6 +1,6 @@
 const ROLE_ID = /^[a-z][a-z0-9-]{0,31}$/;
-const TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'bash'];
-const DEFAULT_TOOLS = ['read', 'ls', 'grep'];
+export const TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'bash'];
+export const DEFAULT_TOOLS = ['read', 'ls', 'grep'];
 const INPUTS = new Set(['previous', 'user']);
 
 export function validateRole(obj) {

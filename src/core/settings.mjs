@@ -13,18 +13,24 @@ const THEMES = new Set(['white', 'claude', 'codex', 'grok', 'cursor']);
 const APPEARANCES = new Set(['light', 'dark', 'system']);
 const LANGS = new Set(['zh', 'en']);
 
+/** Last 4 characters only, e.g. `••••abcd`. No sk- prefix. */
 export function maskApiKey(key) {
   if (!key) return '';
   const s = String(key);
-  if (s.length <= 4) return `…${s}`;
-  return `${s.slice(0, 3)}…${s.slice(-4)}`;
+  if (!s) return '';
+  return `••••${s.slice(-4)}`;
 }
 
-export function isMaskedOrEmptyApiKey(value) {
+/**
+ * Empty/null, equal to the currently masked form, or our bullet-mask pattern.
+ * Does not treat arbitrary `...` / `**` inside a real key as masked.
+ */
+export function isMaskedOrEmptyApiKey(value, currentMasked = '') {
   if (value == null) return true;
   const s = String(value).trim();
   if (!s) return true;
-  if (s.includes('…') || s.includes('...') || /[•*]{2,}/.test(s)) return true;
+  if (currentMasked && s === currentMasked) return true;
+  if (/^[•*]+\w{0,4}$/.test(s)) return true;
   return false;
 }
 
@@ -69,8 +75,13 @@ export function mergeSettings(prev, patch = {}) {
   if (patch.language != null) next.language = String(patch.language);
   if (patch.theme != null) next.theme = String(patch.theme);
   if (patch.appearance != null) next.appearance = String(patch.appearance);
-  if (Object.prototype.hasOwnProperty.call(patch, 'apiKey') && !isMaskedOrEmptyApiKey(patch.apiKey)) {
-    next.apiKey = String(patch.apiKey);
+  const hasNewKey = Object.prototype.hasOwnProperty.call(patch, 'apiKey')
+    && !isMaskedOrEmptyApiKey(patch.apiKey, maskApiKey(cur.apiKey));
+  if (hasNewKey) next.apiKey = String(patch.apiKey);
+  const baseUrlChanging = patch.baseUrl != null && String(patch.baseUrl) !== String(cur.baseUrl);
+  const providerChanging = patch.provider != null && String(patch.provider) !== String(cur.provider);
+  if ((baseUrlChanging || providerChanging) && !hasNewKey) {
+    next.apiKey = '';
   }
   if (patch.models && typeof patch.models === 'object' && !Array.isArray(patch.models)) {
     next.models = { ...cur.models, ...patch.models };

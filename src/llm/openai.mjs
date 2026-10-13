@@ -78,8 +78,15 @@ function abortError() {
   return err;
 }
 
+function redactProviderBody(body) {
+  return String(body ?? '')
+    .slice(0, 500)
+    .replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-***');
+}
+
 function httpError(status, body) {
-  const err = new Error(typeof body === 'string' && body ? body : `LLM HTTP ${status}`);
+  const redacted = redactProviderBody(body);
+  const err = new Error(redacted || `LLM HTTP ${status}`);
   err.status = status;
   if (status === 429) err.code = 'ETIMEDOUT';
   return err;
@@ -167,7 +174,7 @@ export function createOpenAILLM({
       if (!res.ok) {
         let body = '';
         try { body = await res.text(); } catch { /* ignore */ }
-        throw httpError(res.status, body.slice(0, 500));
+        throw httpError(res.status, body);
       }
 
       const json = await res.json();

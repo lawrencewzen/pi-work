@@ -1,8 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, chmodSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
+
+const SCHEMA_VERSION = 2;
+
+function chmodSecret(p) {
+  try { chmodSync(p, 0o600); } catch { /* wal/shm may not exist yet */ }
+}
 
 const DEFAULT_ROLE = {
   id: 'default',
@@ -43,10 +49,14 @@ function convFromRow(row) {
 
 export function createSqliteStore(dir) {
   mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(path.join(dir, 'pi-work.sqlite'));
+  const dbPath = path.join(dir, 'pi-work.sqlite');
+  const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA synchronous = FULL');
+  db.exec('PRAGMA synchronous = NORMAL');
   db.exec('PRAGMA busy_timeout = 5000');
+  chmodSecret(dbPath);
+  chmodSecret(`${dbPath}-wal`);
+  chmodSecret(`${dbPath}-shm`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY,
@@ -128,6 +138,9 @@ export function createSqliteStore(dir) {
       name TEXT,
       steps_json TEXT
     );
+    CREATE TABLE IF NOT EXISTS schema_version (
+      version INTEGER NOT NULL
+    );
   `);
 
   {
@@ -140,6 +153,19 @@ export function createSqliteStore(dir) {
     addCol('branch', 'branch TEXT');
     addCol('root_path', 'root_path TEXT');
     addCol('worktrees_json', 'worktrees_json TEXT');
+  }
+
+  {
+    const toolCols = new Set(db.prepare('PRAGMA table_info(tool_calls)').all().map((c) => c.name));
+    if (!toolCols.has('before_hash')) db.exec('ALTER TABLE tool_calls ADD COLUMN before_hash TEXT');
+    if (!toolCols.has('after_hash')) db.exec('ALTER TABLE tool_calls ADD COLUMN after_hash TEXT');
+  }
+
+  {
+    const row = db.prepare('SELECT version FROM schema_version LIMIT 1').get();
+    if (!row) db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
+    else if (row.version < SCHEMA_VERSION) db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
   const q = {
@@ -167,8 +193,8 @@ export function createSqliteStore(dir) {
     maxMsgSeq: db.prepare('SELECT COALESCE(MAX(seq),0) AS m FROM messages WHERE conversation_id = ?'),
     updMsg: db.prepare('UPDATE messages SET role=?, text=?, tool_json=? WHERE id=?'),
     getTool: db.prepare('SELECT * FROM tool_calls WHERE id = ?'),
-    insTool: db.prepare(`INSERT INTO tool_calls (id, conversation_id, name, status, input_json, output_json, path, added, removed)
-      VALUES (?,?,?,?,?,?,?,?,?)
+    insTool: db.prepare(`INSERT INTO tool_calls (id, conversation_id, name, status, input_json, output_json, path, added, removed, before_hash, after_hash)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET
         conversation_id=excluded.conversation_id,
         name=COALESCE(excluded.name, tool_calls.name),
@@ -177,7 +203,9 @@ export function createSqliteStore(dir) {
         output_json=COALESCE(excluded.output_json, tool_calls.output_json),
         path=COALESCE(excluded.path, tool_calls.path),
         added=COALESCE(excluded.added, tool_calls.added),
-        removed=COALESCE(excluded.removed, tool_calls.removed)`),
+        removed=COALESCE(excluded.removed, tool_calls.removed),
+        before_hash=COALESCE(excluded.before_hash, tool_calls.before_hash),
+        after_hash=COALESCE(excluded.after_hash, tool_calls.after_hash)`),
     insChange: db.prepare('INSERT INTO changes (conversation_id, path, before_text, after_text, added, removed, tool_call_id) VALUES (?,?,?,?,?,?,?)'),
     listChanges: db.prepare('SELECT * FROM changes WHERE conversation_id = ? ORDER BY id ASC'),
     maxEvent: db.prepare('SELECT COALESCE(MAX(event_id),0) AS m FROM events WHERE conversation_id = ?'),
@@ -194,6 +222,10 @@ export function createSqliteStore(dir) {
   if (!q.getRole.get(DEFAULT_ROLE.id)) {
     q.insRole.run(DEFAULT_ROLE.id, DEFAULT_ROLE.name, DEFAULT_ROLE.systemPrompt, j(DEFAULT_ROLE.tools), null);
   }
+
+  chmodSecret(dbPath);
+  chmodSecret(`${dbPath}-wal`);
+  chmodSecret(`${dbPath}-shm`);
 
   function msgFromRow(row) {
     if (!row) return undefined;
@@ -215,6 +247,8 @@ export function createSqliteStore(dir) {
       path: row.path ?? undefined,
       added: row.added ?? undefined,
       removed: row.removed ?? undefined,
+      beforeHash: row.before_hash ?? undefined,
+      afterHash: row.after_hash ?? undefined,
     };
   }
 
@@ -381,6 +415,8 @@ export function createSqliteStore(dir) {
         next.path ?? prev.path ?? null,
         next.added ?? prev.added ?? null,
         next.removed ?? prev.removed ?? null,
+        next.beforeHash ?? prev.beforeHash ?? null,
+        next.afterHash ?? prev.afterHash ?? null,
       );
       return toolFromRow(q.getTool.get(row.id));
     },

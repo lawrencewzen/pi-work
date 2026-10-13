@@ -1,7 +1,6 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
-import { access } from 'node:fs/promises';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createOrchestrator } from './src/core/orchestrator.mjs';
@@ -11,20 +10,48 @@ import { validateRole, validatePipeline } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { diffStats, unifiedDiff } from './src/core/diff.mjs';
 import { publicSettings } from './src/core/settings.mjs';
-import { cloneGitRepo } from './src/core/git-import.mjs';
+import { cloneGitRepo, stripGitUrlCredentials } from './src/core/git-import.mjs';
 import { scanPlugins, scanSkills } from './src/core/catalog.mjs';
-import { loadRoleTemplates } from './src/core/roles-load.mjs';
+import { loadRoleTemplates, loadPipelineTemplates } from './src/core/roles-load.mjs';
+import { buildAgents } from './src/core/agents.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
 import { loadFauxLLM, createFauxLLM } from './src/llm/faux.mjs';
 import { createOpenAILLM } from './src/llm/openai.mjs';
+import {
+  loadOrCreateToken,
+  requestAuthorized,
+  hostAllowed,
+  originAllowed,
+  isMutating,
+  isJsonContentType,
+  isSecureRequest,
+  setCookieHeader,
+  SECURITY_HEADERS,
+  issueSseTicket,
+  consumeSseTicket,
+  tokensMatch,
+} from './src/core/auth.mjs';
+import { resolveAllowedWorkspacePath } from './src/core/workspace-guard.mjs';
+import { acquireDataDirLock } from './src/core/lock.mjs';
 import fs from 'node:fs/promises';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const PORT = process.env.PORT !== undefined && process.env.PORT !== '' ? Number(process.env.PORT) : 3000;
 const DATA_DIR = process.env.PI_WORK_DATA_DIR || path.join(ROOT, 'data');
-const TOKEN = process.env.PI_WORK_TOKEN || '';
 const LLM_KIND = process.env.PI_WORK_LLM || 'faux';
+
+await fs.mkdir(DATA_DIR, { recursive: true });
+
+let dataLock;
+try {
+  dataLock = await acquireDataDirLock(DATA_DIR);
+} catch (err) {
+  console.error(`PI_WORK_ERROR ${err.message || err}`);
+  process.exit(1);
+}
+
+const { token: AUTH_TOKEN, generated: TOKEN_GENERATED } = await loadOrCreateToken(DATA_DIR);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -40,13 +67,20 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
+    ...SECURITY_HEADERS,
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    ...extraHeaders,
   });
   res.end(payload);
+}
+
+function boundPort() {
+  const addr = server.address();
+  return typeof addr === 'object' && addr ? addr.port : PORT;
 }
 
 async function readBody(req, limit = 2_000_000) {
@@ -71,16 +105,6 @@ async function readBody(req, limit = 2_000_000) {
   }
 }
 
-function bearerOk(req) {
-  if (!TOKEN) return true;
-  const header = req.headers.authorization || '';
-  const prefix = 'Bearer ';
-  if (!header.startsWith(prefix)) return false;
-  const given = Buffer.from(header.slice(prefix.length));
-  const expected = Buffer.from(TOKEN);
-  return given.length === expected.length && expected.length > 0 && timingSafeEqual(given, expected);
-}
-
 function liveStatus(orch, conv) {
   const s = orch.status(conv.id);
   if (s && s.status && s.status !== 'idle') {
@@ -91,14 +115,22 @@ function liveStatus(orch, conv) {
       retries: s.retries,
       currentStep: s.currentStep,
       lastCheckpointAt: s.lastCheckpointAt,
+      pipelineStep: s.pipelineStep ?? conv.pipelineStep,
     };
   }
   return conv;
 }
 
+async function agentsFor(conv, messages) {
+  const pipeline = conv.pipelineId ? await store.getPipeline(conv.pipelineId) : undefined;
+  const roles = await store.listRoles();
+  const role = (conv.roleId && await store.getRole(conv.roleId)) || await store.getRole('default');
+  return buildAgents({ conv, pipeline, role, roles, messages });
+}
+
 function serveStatic(req, res, url) {
   if (!existsSync(PUBLIC)) {
-    res.writeHead(404);
+    res.writeHead(404, { ...SECURITY_HEADERS });
     res.end('Not found');
     return;
   }
@@ -106,28 +138,45 @@ function serveStatic(req, res, url) {
   if (rel === '/') rel = '/index.html';
   const fp = path.resolve(PUBLIC, `.${rel}`);
   if (!fp.startsWith(PUBLIC + path.sep) && fp !== PUBLIC) {
-    res.writeHead(403);
+    res.writeHead(403, { ...SECURITY_HEADERS });
     res.end('Forbidden');
     return;
   }
   if (!existsSync(fp) || !statSync(fp).isFile()) {
     const fallback = path.join(PUBLIC, 'index.html');
     if (rel !== '/index.html' && existsSync(fallback)) {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'text/html; charset=utf-8' });
       createReadStream(fallback).pipe(res);
       return;
     }
-    res.writeHead(404);
+    res.writeHead(404, { ...SECURITY_HEADERS });
     res.end('Not found');
     return;
   }
   const type = MIME[path.extname(fp)] || 'application/octet-stream';
-  res.writeHead(200, { 'content-type': type });
+  res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': type });
   createReadStream(fp).pipe(res);
 }
 
+function isSsePath(p) {
+  return /^\/api\/conversations\/[^/]+\/events$/.test(p);
+}
+
 const store = createSqliteStore(DATA_DIR);
+
+function shutdown() {
+  try { store.close(); } catch { /* ignore */ }
+  try { dataLock?.release?.(); } catch { /* ignore */ }
+  dataLock = null;
+  process.exit(0);
+}
+process.on('exit', () => { try { dataLock?.release?.(); } catch { /* ignore */ } });
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, shutdown);
+}
+
 await loadRoleTemplates(store, path.join(ROOT, 'roles'));
+await loadPipelineTemplates(store, path.join(ROOT, 'examples', 'pipelines'));
 
 {
   const cur = await store.getSettings();
@@ -167,11 +216,51 @@ await orch.recover();
 
 const server = createServer(async (req, res) => {
   try {
-    const url = new URL(req.url || '/', 'http://127.0.0.1');
-    if (url.pathname.startsWith('/api/')) {
-      if (!bearerOk(req)) {
+    const port = boundPort();
+    if (!hostAllowed(req.headers.host, port)) {
+      sendJson(res, 400, { error: 'invalid host' });
+      return;
+    }
+
+    const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);
+
+    if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login/')) {
+      const given = url.searchParams.get('token') || '';
+      if (!tokensMatch(given, AUTH_TOKEN)) {
         sendJson(res, 401, { error: 'unauthorized' });
         return;
+      }
+      res.writeHead(302, {
+        ...SECURITY_HEADERS,
+        'Set-Cookie': setCookieHeader(AUTH_TOKEN, { secure: isSecureRequest(req) }),
+        Location: '/',
+      });
+      res.end();
+      return;
+    }
+
+    if (isMutating(req.method)) {
+      const origin = req.headers.origin;
+      if (origin && !originAllowed(origin, port)) {
+        sendJson(res, 403, { error: 'invalid origin' });
+        return;
+      }
+      if (!isJsonContentType(req)) {
+        sendJson(res, 415, { error: 'unsupported media type' });
+        return;
+      }
+    }
+
+    if (url.pathname.startsWith('/api/')) {
+      const p = url.pathname.replace(/\/$/, '') || '/';
+      const authed = requestAuthorized(req, AUTH_TOKEN);
+      if (!authed) {
+        if (req.method === 'GET' && isSsePath(p) && consumeSseTicket(url.searchParams.get('ticket'))) {
+          /* ticket consumed */
+        } else {
+          sendJson(res, 401, { error: 'unauthorized' });
+          return;
+        }
       }
       await routeApi(req, res, url);
       return;
@@ -201,10 +290,15 @@ async function routeApi(req, res, url) {
     return;
   }
 
+  if (m === 'POST' && p === '/api/sse-ticket') {
+    sendJson(res, 200, issueSseTicket(60_000));
+    return;
+  }
+
   if (m === 'POST' && p === '/api/workspaces') {
     const body = await readBody(req);
     if (!body?.name) {
-      sendJson(res, 400, { error: 'name and path required' });
+      sendJson(res, 400, { error: 'name required' });
       return;
     }
     if (body.gitUrl) {
@@ -216,12 +310,13 @@ async function routeApi(req, res, url) {
         sendJson(res, err.status || 400, { error: err.message || 'git clone failed' });
         return;
       }
+      const gitUrl = stripGitUrlCredentials(body.gitUrl);
       const ws = await store.createWorkspace({
         id,
         name: body.name,
         path: dest,
         source: 'git',
-        gitUrl: body.gitUrl,
+        gitUrl,
         branch: body.branch || null,
         rootPath: dest,
         worktrees: [],
@@ -229,17 +324,29 @@ async function routeApi(req, res, url) {
       sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path, source: ws.source, gitUrl: ws.gitUrl, branch: ws.branch, rootPath: ws.rootPath, worktrees: ws.worktrees });
       return;
     }
-    if (!body?.path) {
-      sendJson(res, 400, { error: 'name and path required' });
+    if (!body.path) {
+      const id = randomUUID();
+      const dest = path.join(DATA_DIR, 'workspaces', id, 'repo');
+      await fs.mkdir(dest, { recursive: true });
+      const ws = await store.createWorkspace({
+        id,
+        name: body.name,
+        path: dest,
+        source: 'local',
+        rootPath: dest,
+        worktrees: [],
+      });
+      sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path, source: ws.source, gitUrl: ws.gitUrl, branch: ws.branch, rootPath: ws.rootPath, worktrees: ws.worktrees });
       return;
     }
+    let resolved;
     try {
-      await access(body.path);
-    } catch {
-      sendJson(res, 400, { error: 'path does not exist' });
+      resolved = await resolveAllowedWorkspacePath(body.path, { dataDir: DATA_DIR });
+    } catch (err) {
+      sendJson(res, err.status || 400, { error: err.message || 'path is not allowed' });
       return;
     }
-    const ws = await store.createWorkspace({ name: body.name, path: body.path, source: 'local', rootPath: body.path, worktrees: [] });
+    const ws = await store.createWorkspace({ name: body.name, path: resolved, source: 'local', rootPath: resolved, worktrees: [] });
     sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path, source: ws.source, gitUrl: ws.gitUrl, branch: ws.branch, rootPath: ws.rootPath, worktrees: ws.worktrees });
     return;
   }
@@ -327,6 +434,7 @@ async function routeApi(req, res, url) {
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
     const live = liveStatus(orch, conv);
     const messages = await store.getMessages(cid);
+    const agents = await agentsFor(live, messages);
     sendJson(res, 200, {
       id: live.id,
       title: live.title,
@@ -336,6 +444,7 @@ async function routeApi(req, res, url) {
       lastCheckpointAt: live.lastCheckpointAt,
       currentStep: live.currentStep,
       messages,
+      agents,
     });
     return;
   }
@@ -403,11 +512,13 @@ async function routeApi(req, res, url) {
     const last = req.headers['last-event-id'];
     const afterId = last != null && last !== '' ? Number(last) : 0;
     res.writeHead(200, {
+      ...SECURITY_HEADERS,
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     });
+    res.write(':\n\n');
     const pending = [];
     let replaying = true;
     const unsub = orch.subscribe(cid, (ev) => {
@@ -538,4 +649,8 @@ server.listen(PORT, '127.0.0.1', () => {
   const addr = server.address();
   const port = typeof addr === 'object' && addr ? addr.port : PORT;
   console.log(`PI_WORK_READY http://127.0.0.1:${port}`);
+  if (TOKEN_GENERATED) {
+    console.log(`PI_WORK_LOGIN http://127.0.0.1:${port}/login?token=${AUTH_TOKEN}`);
+    console.log(`PI_WORK_TOKEN ${AUTH_TOKEN}`);
+  }
 });
