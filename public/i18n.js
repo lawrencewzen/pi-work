@@ -119,6 +119,9 @@ export const translations = {
     about_upstream: '上游项目',
     about_runtime: '运行时',
     about_runtime_connected: 'Pi Durable Runtime 已连接',
+    default_conversation_title: '新对话',
+    unauthorized_notice: '未授权：请打开服务器启动时打印的登录链接',
+    models_key_safety_warn: '更改服务商或 Base URL 时若未输入新密钥，已保存的 API Key 将被清空以确保安全。',
   },
   en: {
     app_name: 'pi-work',
@@ -238,6 +241,9 @@ export const translations = {
     about_upstream: 'Upstream Project',
     about_runtime: 'Runtime',
     about_runtime_connected: 'Pi Durable Runtime Connected',
+    default_conversation_title: 'New Conversation',
+    unauthorized_notice: 'Unauthorized: Please open the login URL printed when the server started',
+    models_key_safety_warn: 'Changing provider or Base URL without entering a new key will clear the saved API key for safety.',
   },
 };
 

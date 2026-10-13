@@ -1824,3 +1824,50 @@ a:hover {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Fullscreen Auth Overlay */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: var(--bg-surface, #ffffff);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+}
+.auth-notice-card {
+  max-width: 520px;
+  padding: 36px 28px;
+  background: var(--bg-surface-subtle, #f9f9f9);
+  border: 1px solid var(--border-subtle, #e5e5e5);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+}
+.auth-notice-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary, #111111);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+.auth-notice-sub {
+  font-size: 13.5px;
+  color: var(--text-muted, #666666);
+  line-height: 1.5;
+}
+
+/* Model API Key Warning Box */
+.cfg-warn-box {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--status-waiting, #b45309);
+  border-radius: var(--radius-md, 6px);
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 10px;
+}
+

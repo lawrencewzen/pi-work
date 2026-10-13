@@ -20,7 +20,7 @@ const state = {
   allConversations: {}, // { [wid]: [conv, ...] }
   allRunningList: [],
   eventSource: null,
-  bgEventSources: new Map(), // cid -> EventSource
+  unauthorized: false,
   theme: localStorage.getItem('piwork_theme') || 'white',
   appearance: localStorage.getItem('piwork_appearance') || 'light',
   fontSize: localStorage.getItem('piwork_font_size') || 'md',
@@ -28,6 +28,8 @@ const state = {
   expandedTools: new Set(),
   expandedSubagents: new Set(),
 };
+
+let runningPollInterval = null;
 
 // ============================================================================
 // Utilities
@@ -67,6 +69,29 @@ export function truncatePath(p, max = 40) {
   return truncateFilename(s, max);
 }
 
+export function maskApiKey(key) {
+  if (!key) return '';
+  const s = String(key).trim();
+  if (!s) return '';
+  if (s.length <= 4) return '••••' + s;
+  return '••••' + s.slice(-4);
+}
+
+export function dedupeMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  const seen = new Set();
+  const deduped = [];
+  for (const m of messages) {
+    if (!m) continue;
+    const id = m.id || `${m.role}:${m.text || ''}:${m.tool?.id || ''}`;
+    if (!seen.has(id)) {
+      seen.add(id);
+      deduped.push(m);
+    }
+  }
+  return deduped;
+}
+
 // Markdown parser
 export function renderMarkdown(src = '') {
   if (!src) return '';
@@ -85,11 +110,8 @@ export function renderMarkdown(src = '') {
 
   function inlineFormat(txt) {
     let s = escapeHtml(txt);
-    // code
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
-    // bold
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    // italic
     s = s.replace(/(^|[^*])\*([^*]+)\*([^*]|$)/g, '$1<em>$2</em>$3');
     return s;
   }
@@ -97,7 +119,6 @@ export function renderMarkdown(src = '') {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Code block toggle
     if (line.trim().startsWith('```')) {
       if (!inCode) {
         closeLists();
@@ -122,13 +143,11 @@ export function renderMarkdown(src = '') {
       continue;
     }
 
-    // Blank line
     if (!line.trim()) {
       closeLists();
       continue;
     }
 
-    // Headers
     const h3Match = line.match(/^###\s+(.*)$/);
     if (h3Match) {
       closeLists();
@@ -148,7 +167,6 @@ export function renderMarkdown(src = '') {
       continue;
     }
 
-    // Unordered lists
     const ulMatch = line.match(/^[-*]\s+(.*)$/);
     if (ulMatch) {
       if (inOl) { out.push('</ol>'); inOl = false; }
@@ -157,7 +175,6 @@ export function renderMarkdown(src = '') {
       continue;
     }
 
-    // Ordered lists
     const olMatch = line.match(/^\d+\.\s+(.*)$/);
     if (olMatch) {
       if (inUl) { out.push('</ul>'); inUl = false; }
@@ -254,18 +271,71 @@ export function showToast(message) {
   setTimeout(() => el.remove(), 2600);
 }
 
-// API client
+// ============================================================================
+// Auth & API client
+// ============================================================================
+export function handleUnauthorized() {
+  if (state.unauthorized) return;
+  state.unauthorized = true;
+
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+  if (runningPollInterval) {
+    clearInterval(runningPollInterval);
+    runningPollInterval = null;
+  }
+
+  let ov = document.getElementById('auth-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'auth-overlay';
+    ov.className = 'auth-overlay';
+    document.body.appendChild(ov);
+  }
+  ov.style.display = 'flex';
+  ov.innerHTML = `
+    <div class="auth-notice-card">
+      <div style="font-size:32px;margin-bottom:12px;">🔒</div>
+      <div class="auth-notice-title">未授权：请打开服务器启动时打印的登录链接</div>
+      <div class="auth-notice-sub">Unauthorized: Please open the login URL printed when the server started</div>
+    </div>
+  `;
+}
+
 export async function api(endpoint, method = 'GET', body = null) {
+  if (state.unauthorized) {
+    throw new Error('Unauthorized');
+  }
+
+  const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase());
   const headers = {};
-  if (body) headers['content-type'] = 'application/json';
-  const token = localStorage.getItem('piwork_token');
-  if (token) headers['authorization'] = `Bearer ${token}`;
+
+  if (isMutating || body != null) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  let reqBody = undefined;
+  if (body != null) {
+    reqBody = JSON.stringify(body);
+  } else if (isMutating) {
+    reqBody = '{}';
+  }
 
   const res = await fetch(endpoint, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    credentials: 'same-origin',
+    body: reqBody,
   });
+
+  if (res.status === 401) {
+    handleUnauthorized();
+    const err = new Error('Unauthorized');
+    err.status = 401;
+    throw err;
+  }
 
   if (!res.ok) {
     let errBody = null;
@@ -333,7 +403,6 @@ export async function loadWorkspaces() {
     state.workspaces = [];
   }
 
-  // Restore active workspace
   const savedWsId = localStorage.getItem('piwork_active_ws');
   if (savedWsId && state.workspaces.some((w) => w.id === savedWsId)) {
     state.activeWorkspaceId = savedWsId;
@@ -396,7 +465,6 @@ export async function selectConversation(cid) {
   state.activeConversationId = cid;
   localStorage.setItem('piwork_active_conv', cid);
 
-  // Close previous active SSE
   if (state.eventSource) {
     state.eventSource.close();
     state.eventSource = null;
@@ -404,6 +472,15 @@ export async function selectConversation(cid) {
 
   try {
     state.activeConversationData = await api(`/api/conversations/${encodeURIComponent(cid)}`);
+    if (state.activeConversationData) {
+      if (state.activeConversationData.messages) {
+        state.activeConversationData.messages = dedupeMessages(state.activeConversationData.messages);
+      }
+      if (state.activeConversationData.title) {
+        const item = state.conversations.find((c) => c.id === cid);
+        if (item) item.title = state.activeConversationData.title;
+      }
+    }
   } catch {
     state.activeConversationData = null;
   }
@@ -414,7 +491,6 @@ export async function selectConversation(cid) {
     state.changes = [];
   }
 
-  // Restore open file in diff/editor if any
   const savedFile = localStorage.getItem('piwork_active_file');
   const savedTab = localStorage.getItem('piwork_active_right_tab') || 'diff';
   state.activeRightTab = savedTab;
@@ -434,10 +510,8 @@ export async function selectConversation(cid) {
   renderChatThread();
   renderRightPanel();
 
-  // Connect SSE
   connectSSE(cid);
 
-  // If active file exists, load diff or editor
   if (state.activeFilePath) {
     await loadFileOrDiff(state.activeFilePath);
   }
@@ -451,6 +525,7 @@ export function connectSSE(cid) {
     state.eventSource.close();
     state.eventSource = null;
   }
+  if (state.unauthorized) return;
 
   const sse = new EventSource(`/api/conversations/${encodeURIComponent(cid)}/events`);
   state.eventSource = sse;
@@ -466,25 +541,61 @@ export function connectSSE(cid) {
     } catch { /* ignore */ }
   });
 
+  sse.addEventListener('agent', (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      if (!state.activeConversationData || state.activeConversationId !== cid) return;
+      state.activeConversationData.agents = state.activeConversationData.agents || [];
+      const idx = state.activeConversationData.agents.findIndex((a) => a.id === data.id);
+      if (idx >= 0) {
+        state.activeConversationData.agents[idx] = { ...state.activeConversationData.agents[idx], ...data };
+      } else {
+        state.activeConversationData.agents.push(data);
+      }
+      renderConversations();
+      renderChatThread();
+    } catch { /* ignore */ }
+  });
+
   sse.addEventListener('message.delta', (ev) => {
     try {
       const data = JSON.parse(ev.data);
       if (!state.activeConversationData || state.activeConversationId !== cid) return;
-      const msgs = state.activeConversationData.messages || [];
+      state.activeConversationData.messages = state.activeConversationData.messages || [];
+      const msgs = state.activeConversationData.messages;
       let m = msgs.find((msg) => msg.id === data.messageId);
       if (!m) {
-        m = { id: data.messageId, role: 'assistant', text: data.text || '' };
+        m = { id: data.messageId, role: 'assistant', text: data.text || '', streaming: true };
         msgs.push(m);
       } else {
         m.text = (m.text || '') + (data.text || '');
+        m.streaming = true;
       }
       renderChatThread();
     } catch { /* ignore */ }
   });
 
-  sse.addEventListener('message.done', () => {
-    if (state.activeConversationId === cid) {
-      renderChatThread();
+  sse.addEventListener('message.done', (ev) => {
+    try {
+      const data = ev.data ? JSON.parse(ev.data) : {};
+      if (state.activeConversationData && state.activeConversationId === cid) {
+        const msgs = state.activeConversationData.messages || [];
+        if (data.messageId) {
+          const m = msgs.find((msg) => msg.id === data.messageId);
+          if (m) {
+            if (data.text != null && data.text !== '') {
+              m.text = data.text;
+            }
+            m.streaming = false;
+            m.done = true;
+          }
+        }
+        renderChatThread();
+      }
+    } catch {
+      if (state.activeConversationId === cid) {
+        renderChatThread();
+      }
     }
   });
 
@@ -493,7 +604,7 @@ export function connectSSE(cid) {
       const data = JSON.parse(ev.data);
       if (!state.activeConversationData || state.activeConversationId !== cid) return;
       const tool = data.tool;
-      const msgs = state.activeConversationData.messages || [];
+      const msgs = state.activeConversationData.messages = state.activeConversationData.messages || [];
       let m = msgs.find((msg) => msg.tool && msg.tool.id === tool.id);
       if (!m) {
         msgs.push({ id: `tool-${tool.id}`, role: 'tool', tool });
@@ -509,7 +620,7 @@ export function connectSSE(cid) {
       const data = JSON.parse(ev.data);
       if (!state.activeConversationData || state.activeConversationId !== cid) return;
       const tool = data.tool;
-      const msgs = state.activeConversationData.messages || [];
+      const msgs = state.activeConversationData.messages = state.activeConversationData.messages || [];
       let m = msgs.find((msg) => msg.tool && msg.tool.id === tool.id);
       if (!m) {
         msgs.push({ id: `tool-${tool.id}`, role: 'tool', tool });
@@ -518,7 +629,6 @@ export function connectSSE(cid) {
       }
       renderChatThread();
 
-      // Refresh changes
       api(`/api/conversations/${encodeURIComponent(cid)}/changes`)
         .then((changes) => {
           state.changes = changes;
@@ -553,55 +663,77 @@ export function connectSSE(cid) {
   });
 
   sse.addEventListener('error', () => {
-    // handled quietly
+    // SSE error
   });
 }
 
-function updateConversationStatus(cid, status) {
-  // Update in conversations list
+export function updateConversationStatus(cid, status) {
   const c = state.conversations.find((item) => item.id === cid);
   if (c) c.status = status;
 
-  // Update in allConversations
   for (const wid of Object.keys(state.allConversations)) {
     const item = state.allConversations[wid]?.find((conv) => conv.id === cid);
     if (item) item.status = status;
   }
 
+  const activeStatuses = new Set(['running', 'recovering', 'paused']);
+  if (!activeStatuses.has(status)) {
+    state.allRunningList = state.allRunningList.filter((item) => item.id !== cid);
+  } else {
+    const existing = state.allRunningList.find((item) => item.id === cid);
+    const convInfo = c || state.allRunningList.find((item) => item.id === cid);
+    const ws = state.workspaces.find((w) => w.id === state.activeWorkspaceId) || {};
+    if (existing) {
+      existing.status = status;
+    } else if (convInfo) {
+      state.allRunningList.push({
+        ...convInfo,
+        status,
+        workspaceId: convInfo.workspaceId || ws.id,
+        workspaceName: convInfo.workspaceName || ws.name,
+      });
+    }
+  }
+
   renderConversations();
-  refreshRunningOverview();
+  renderRunningOverview();
 }
 
 // Background polling for all workspaces' running status
 export async function refreshRunningOverview() {
+  if (state.unauthorized) return;
+  const activeStatuses = new Set(['running', 'recovering', 'paused']);
   const running = [];
   try {
     for (const ws of state.workspaces) {
-      let list = state.allConversations[ws.id];
-      if (!list) {
-        try {
-          list = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/conversations`);
-          state.allConversations[ws.id] = list;
-        } catch { list = []; }
+      let list = [];
+      try {
+        list = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/conversations`);
+        state.allConversations[ws.id] = list;
+      } catch {
+        list = state.allConversations[ws.id] || [];
       }
       for (const conv of list) {
-        if (conv.status && conv.status !== 'idle') {
+        if (conv.status && activeStatuses.has(conv.status)) {
           running.push({ ...conv, workspaceName: ws.name, workspaceId: ws.id });
         }
       }
     }
+    state.allRunningList = running;
+    renderRunningOverview();
   } catch { /* ignore */ }
-
-  state.allRunningList = running;
-  renderRunningOverview();
 }
 
-// Periodic refresh if any are running
-setInterval(() => {
-  if (state.allRunningList.some((c) => c.status === 'running' || c.status === 'recovering')) {
-    refreshRunningOverview();
+runningPollInterval = setInterval(() => {
+  if (state.unauthorized) {
+    if (runningPollInterval) {
+      clearInterval(runningPollInterval);
+      runningPollInterval = null;
+    }
+    return;
   }
-}, 1200);
+  refreshRunningOverview();
+}, 2000);
 
 // ============================================================================
 // Actions: Send, Controls, Create Workspace, Conversation
@@ -610,7 +742,6 @@ export async function sendMessage(text) {
   if (!text || !text.trim() || !state.activeConversationId) return;
   const cid = state.activeConversationId;
 
-  // Optimistic user message append
   if (state.activeConversationData) {
     state.activeConversationData.messages = state.activeConversationData.messages || [];
     state.activeConversationData.messages.push({
@@ -693,9 +824,7 @@ export async function createNewConversation() {
     return;
   }
   try {
-    const conv = await api(`/api/workspaces/${encodeURIComponent(state.activeWorkspaceId)}/conversations`, 'POST', {
-      title: t('default_conversation_title'),
-    });
+    const conv = await api(`/api/workspaces/${encodeURIComponent(state.activeWorkspaceId)}/conversations`, 'POST', {});
     await loadConversations(state.activeWorkspaceId);
     if (conv.id) await selectConversation(conv.id);
   } catch (err) {
@@ -754,17 +883,66 @@ export function renderSidebarWorkspaces() {
     .map((ws) => {
       const isActive = ws.id === state.activeWorkspaceId;
       return (
-        `<div class="ws-tree-node ${isActive ? 'ws-active' : ''}" data-testid="workspace-item" data-id="${ws.id}">` +
-        `<div class="ws-node-header" onclick="window.__app.selectWorkspace('${ws.id}')" title="${escapeHtml(ws.path)}">` +
+        `<div class="ws-tree-node ${isActive ? 'ws-active' : ''}" data-testid="workspace-item" data-id="${escapeHtml(ws.id)}">` +
+        `<div class="ws-node-header" data-action="select-workspace" data-ws-id="${escapeHtml(ws.id)}" title="${escapeHtml(ws.path)}">` +
         `<svg class="ws-node-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>` +
         `<span class="ws-node-title">${escapeHtml(ws.name)}</span>` +
-        (isActive ? `<span class="ws-node-badge">${t('current')}</span>` : '') +
+        (isActive ? `<span class="ws-node-badge">${escapeHtml(t('current'))}</span>` : '') +
         `</div>` +
         (isActive ? `<div class="ws-node-children" id="conv-list-container"></div>` : '') +
         `</div>`
       );
     })
     .join('');
+}
+
+export function renderSidebarAgents(conv) {
+  const agents = (state.activeConversationData && state.activeConversationData.id === conv.id && state.activeConversationData.agents)
+    ? state.activeConversationData.agents
+    : (conv.agents || []);
+
+  if (agents.length === 0) {
+    const status = conv.status || 'idle';
+    const statusClass = `dot-${status}`;
+    const statusTextStr = t(`status_${status}`) || status;
+    return (
+      `<div class="conv-node-agents">` +
+      `<div class="main-agent-node">` +
+      `<div class="main-agent-header">` +
+      `<span class="status-dot ${statusClass}" data-testid="status-dot" data-status="${escapeHtml(status)}"></span>` +
+      `<span class="main-agent-name">Agent</span>` +
+      `<span class="main-agent-state">${escapeHtml(statusTextStr)}</span>` +
+      `</div>` +
+      `</div>` +
+      `</div>`
+    );
+  }
+
+  return (
+    `<div class="conv-node-agents">` +
+    agents
+      .map((ag, index) => {
+        const isDefault = index === 0;
+        const name = isDefault ? 'Agent' : (ag.name || ag.roleId || 'Agent');
+        const st = ag.status || (isDefault ? conv.status || 'idle' : 'waiting');
+        const statusClass = `dot-${st}`;
+        const statusText = t(`status_${st}`) || st;
+        const progressStr = (ag.totalSteps != null && ag.totalSteps > 0)
+          ? `${ag.step || 0}/${ag.totalSteps}`
+          : (ag.step != null && ag.step > 0 ? `${ag.step}` : '');
+
+        return (
+          `<div class="sub-agent-row" data-agent-id="${escapeHtml(ag.id || '')}">` +
+          `<span class="status-dot ${statusClass}" ${isDefault ? `data-testid="status-dot" data-status="${escapeHtml(st)}"` : ''}></span>` +
+          `<span class="sub-agent-name">${escapeHtml(name)}</span>` +
+          (progressStr ? `<span class="sub-agent-progress">${escapeHtml(progressStr)}</span>` : '') +
+          `<span class="sub-agent-status status-text-${escapeHtml(st)}">${escapeHtml(statusText)}</span>` +
+          `</div>`
+        );
+      })
+      .join('') +
+    `</div>`
+  );
 }
 
 export function renderConversations() {
@@ -775,100 +953,55 @@ export function renderConversations() {
     .map((conv) => {
       const isActive = conv.id === state.activeConversationId;
       const status = conv.status || 'idle';
-      const statusClass = `dot-${status}`;
-      const statusTextStr = t(`status_${status}`);
 
       return (
-        `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${conv.id}" data-status="${status}">` +
-        `<div class="conv-node-header" onclick="window.__app.selectConversation('${conv.id}')" title="${escapeHtml(conv.title)}">` +
+        `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${escapeHtml(conv.id)}" data-status="${escapeHtml(status)}">` +
+        `<div class="conv-node-header" data-action="select-conversation" data-conv-id="${escapeHtml(conv.id)}" title="${escapeHtml(conv.title || '')}">` +
         `<svg class="conv-node-icon icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>` +
-        `<span class="conv-node-title">${escapeHtml(conv.title)}</span>` +
+        `<span class="conv-node-title">${escapeHtml(conv.title || t('default_conversation_title'))}</span>` +
         (isActive ? `<span class="active-indicator"></span>` : '') +
         `</div>` +
-        // Flat agent list under conversation
-        (isActive
-          ? `<div class="conv-node-agents">` +
-            `<div class="main-agent-node">` +
-            `<div class="main-agent-header">` +
-            `<span class="status-dot ${statusClass}" data-testid="status-dot" data-status="${status}"></span>` +
-            `<span class="main-agent-name">Agent</span>` +
-            `<span class="main-agent-state">${statusTextStr}</span>` +
-            `</div>` +
-            renderSubAgentsSidebar(conv) +
-            `</div>` +
-            `</div>`
-          : '') +
+        (isActive ? renderSidebarAgents(conv) : '') +
         `</div>`
       );
     })
     .join('');
 }
 
-function renderSubAgentsSidebar(conv) {
-  // If the conversation has steps or tool calls from sub-agents (coder, tester, auditor)
-  const msgs = state.activeConversationData?.messages || [];
-  const rolesFound = new Set();
-  for (const m of msgs) {
-    if (m.tool?.input?.role) rolesFound.add(m.tool.input.role);
-    if (m.tool?.input?.agent) rolesFound.add(m.tool.input.agent);
-  }
-
-  // Also include standard pipeline sub-agents if conversation is running or has changes
-  const subagents = [];
-  if (rolesFound.has('tester') || conv.pipelineId) {
-    subagents.push({ name: 'tester', progress: '3/3', status: 'done', text: t('status_done') });
-  }
-  if (rolesFound.has('coder') || (conv.status === 'running' && state.changes.length > 0)) {
-    subagents.push({ name: 'coder', progress: '7/12', status: 'running', text: t('status_running') });
-  }
-  if (rolesFound.has('auditor')) {
-    subagents.push({ name: 'auditor', progress: '0/4', status: 'waiting', text: t('status_waiting') });
-  }
-
-  if (subagents.length === 0) return '';
-
-  return (
-    `<div class="sub-agents-group">` +
-    subagents
-      .map(
-        (sa) =>
-          `<div class="sub-agent-row">` +
-          `<span class="status-dot dot-${sa.status}"></span>` +
-          `<span class="sub-agent-name">${sa.name}</span>` +
-          `<span class="sub-agent-progress">${sa.progress}</span>` +
-          `<span class="sub-agent-status status-text-${sa.status}">${sa.text}</span>` +
-          `</div>`
-      )
-      .join('') +
-    `</div>`
-  );
-}
-
 export function renderRunningOverview() {
+  const activeCount = state.allRunningList.filter((c) => c.status === 'running' || c.status === 'recovering').length;
+  const pausedCount = state.allRunningList.filter((c) => c.status === 'paused').length;
+
   const countTag = document.getElementById('running-count-tag');
-  if (countTag) countTag.textContent = t('active_count', { n: state.allRunningList.length });
+  if (countTag) {
+    if (pausedCount > 0) {
+      countTag.textContent = `${t('active_count', { n: activeCount })} · ${pausedCount} ${t('status_paused')}`;
+    } else {
+      countTag.textContent = t('active_count', { n: activeCount });
+    }
+  }
 
   const panel = document.getElementById('running-panel');
   if (!panel) return;
 
   if (state.allRunningList.length === 0) {
-    panel.innerHTML = `<div style="font-size:11px;color:var(--text-muted);padding:4px 2px;">${t('no_active_tasks')}</div>`;
+    panel.innerHTML = `<div style="font-size:11px;color:var(--text-muted);padding:4px 2px;">${escapeHtml(t('no_active_tasks'))}</div>`;
     return;
   }
 
   panel.innerHTML = state.allRunningList
     .map((c) => {
-      const statusTextStr = t(`status_${c.status}`);
+      const statusTextStr = t(`status_${c.status}`) || c.status;
       return (
-        `<div class="running-row" data-testid="agent-status-item" data-id="${c.id}" data-status="${c.status}" onclick="window.__app.switchWorkspaceAndConv('${c.workspaceId}', '${c.id}')">` +
-        `<span class="status-dot dot-${c.status}"></span>` +
+        `<div class="running-row" data-testid="agent-status-item" data-id="${escapeHtml(c.id)}" data-status="${escapeHtml(c.status)}" data-action="switch-ws-conv" data-ws-id="${escapeHtml(c.workspaceId)}" data-conv-id="${escapeHtml(c.id)}">` +
+        `<span class="status-dot dot-${escapeHtml(c.status)}"></span>` +
         `<div class="running-path">` +
         `<span class="rp-ws">${escapeHtml(c.workspaceName || 'ws')}</span>` +
         `<span class="rp-div">›</span>` +
-        `<span class="rp-conv">${escapeHtml(c.title)}</span>` +
+        `<span class="rp-conv">${escapeHtml(c.title || '')}</span>` +
         `<span class="rp-div">›</span>` +
-        `<span class="rp-agent">${c.roleId || 'Agent'}</span>` +
-        `<span class="rp-status">· ${statusTextStr}</span>` +
+        `<span class="rp-agent">${escapeHtml(c.roleId || 'Agent')}</span>` +
+        `<span class="rp-status">· ${escapeHtml(statusTextStr)}</span>` +
         `</div>` +
         `</div>`
       );
@@ -883,9 +1016,8 @@ export function renderStatusBar() {
   const conv = state.activeConversationData;
   const status = conv?.status || 'idle';
   const autoContinues = conv?.autoContinues || 0;
-  const statusTextStr = t(`status_${status}`);
+  const statusTextStr = t(`status_${status}`) || status;
 
-  // Dual-language compatible status badge
   const displayStatus = getLocale() === 'en' ? status : `${statusTextStr} (${status})`;
 
   const statusTextEl = document.getElementById('status-text');
@@ -906,13 +1038,93 @@ export function renderStatusBar() {
     }
   }
 
-  // Control buttons state
   const btnPause = document.getElementById('btn-pause');
   const btnResume = document.getElementById('btn-resume');
   const btnStop = document.getElementById('btn-stop');
   if (btnPause) btnPause.disabled = status !== 'running';
   if (btnResume) btnResume.disabled = status !== 'paused';
   if (btnStop) btnStop.disabled = status === 'stopped' || status === 'done';
+}
+
+export function renderSubagentCardHtml(sa) {
+  if (!sa) return '';
+  const isExpanded = state.expandedSubagents.has(sa.id);
+  const status = sa.status || 'waiting';
+  const statusText = t(`status_${status}`) || status;
+  const progressStr = (sa.totalSteps != null && sa.totalSteps > 0)
+    ? `${sa.step || 0}/${sa.totalSteps}`
+    : `${sa.step || 0} ${t('step_unit')}`;
+  const name = sa.name || sa.roleId || 'Agent';
+
+  let body = '';
+  if (isExpanded) {
+    let toolCallsHtml = '';
+    if (Array.isArray(sa.toolCalls) && sa.toolCalls.length > 0) {
+      toolCallsHtml = `
+        <div style="margin-top:6px;">
+          <strong style="font-size:11px;color:var(--text-muted);">${escapeHtml(t('tool_output'))}:</strong>
+          <div class="tools-feed" style="margin-top:4px;">
+            ${sa.toolCalls.map((tc) => {
+              if (typeof tc === 'object' && tc !== null) {
+                return renderToolRowHtml(tc);
+              }
+              return `<div style="font-size:11.5px;font-family:var(--font-mono);">${escapeHtml(String(tc))}</div>`;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    } else if (typeof sa.toolCalls === 'number' && sa.toolCalls > 0) {
+      toolCallsHtml = `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Tool calls: ${sa.toolCalls}</div>`;
+    }
+
+    let lastTextHtml = '';
+    if (sa.lastText) {
+      lastTextHtml = `
+        <div class="subagent-task-desc" style="margin-top:6px;">
+          ${renderMarkdown(sa.lastText)}
+        </div>
+      `;
+    }
+
+    body = `
+      <div class="subagent-card-body">
+        <div style="font-size:11.5px;display:flex;gap:12px;color:var(--text-secondary);">
+          <span><strong>${escapeHtml(t('status_idle') ? '状态' : 'Status')}:</strong> ${escapeHtml(statusText)}</span>
+          <span><strong>${escapeHtml(t('step_label'))}:</strong> ${escapeHtml(progressStr)}</span>
+        </div>
+        ${lastTextHtml}
+        ${toolCallsHtml}
+      </div>
+    `;
+  }
+
+  return (
+    `<div class="subagent-card ${isExpanded ? 'subagent-card-expanded' : 'subagent-card-compact'}" data-testid="subagent-card" data-agent-id="${escapeHtml(sa.id)}">` +
+    `<div class="subagent-card-header" data-action="toggle-subagent" data-agent-id="${escapeHtml(sa.id)}">` +
+    `<div class="subagent-card-title">` +
+    `<span class="subagent-role-pill">${escapeHtml(t('subagent_dispatched'))}</span>` +
+    `<span class="status-dot dot-${escapeHtml(status)}"></span>` +
+    `<span style="font-weight:600;">${escapeHtml(name)}</span>` +
+    `<span class="subagent-progress-badge">${escapeHtml(progressStr)}</span>` +
+    `</div>` +
+    `<div class="subagent-card-right">` +
+    `<span class="status-text-${escapeHtml(status)}">${escapeHtml(statusText)}</span>` +
+    `<svg class="chevron-icon icon" viewBox="0 0 24 24" style="transform:${isExpanded ? 'rotate(180deg)' : 'none'}"><polyline points="6 9 12 15 18 9"></polyline></svg>` +
+    `</div>` +
+    `</div>` +
+    body +
+    `</div>`
+  );
+}
+
+export function toggleSubagent(agentId) {
+  if (!agentId) return;
+  if (state.expandedSubagents.has(agentId)) {
+    state.expandedSubagents.delete(agentId);
+  } else {
+    state.expandedSubagents.add(agentId);
+  }
+  renderChatThread();
 }
 
 export function renderChatThread() {
@@ -925,7 +1137,7 @@ export function renderChatThread() {
       <div class="empty-placeholder">
         <div>
           <h3 style="margin-bottom:8px;font-weight:600;">pi-work · Durable Agent</h3>
-          <p style="font-size:12px;color:var(--text-muted);">${t('composer_placeholder')}</p>
+          <p style="font-size:12px;color:var(--text-muted);">${escapeHtml(t('composer_placeholder'))}</p>
         </div>
       </div>
     `;
@@ -933,7 +1145,10 @@ export function renderChatThread() {
   }
 
   const rendered = [];
-  const msgs = conv.messages;
+  const msgs = dedupeMessages(conv.messages);
+
+  const subagents = (conv.agents || []).slice(1);
+  let subagentsInserted = false;
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
@@ -942,27 +1157,39 @@ export function renderChatThread() {
         `<div class="msg-group" data-testid="message" data-role="user">` +
         `<div class="msg-header">` +
         `<div class="msg-avatar avatar-user">U</div>` +
-        `<span class="msg-sender">${t('user_name')}</span>` +
+        `<span class="msg-sender">${escapeHtml(t('user_name'))}</span>` +
         `</div>` +
         `<div class="msg-body" data-testid="message-body">${renderMarkdown(m.text || '')}</div>` +
         `</div>`
       );
+
+      // Render dispatched subagent cards after the user prompt
+      if (!subagentsInserted && subagents.length > 0) {
+        subagentsInserted = true;
+        for (const sa of subagents) {
+          rendered.push(renderSubagentCardHtml(sa));
+        }
+      }
     } else if (m.role === 'tool') {
-      // Standalone tool call row
       rendered.push(renderToolRowHtml(m.tool));
     } else {
-      // Assistant message
       const bodyHtml = renderMarkdown(m.text || '');
       rendered.push(
         `<div class="msg-group" data-testid="message" data-role="assistant">` +
         `<div class="msg-header">` +
         `<div class="msg-avatar avatar-assistant">π</div>` +
-        `<span class="msg-sender">${t('agent_name')}</span>` +
+        `<span class="msg-sender">${escapeHtml(t('agent_name'))}</span>` +
         `<span class="msg-chip">grok-4.6</span>` +
         `</div>` +
         `<div class="msg-body" data-testid="message-body">${bodyHtml}</div>` +
         `</div>`
       );
+    }
+  }
+
+  if (!subagentsInserted && subagents.length > 0) {
+    for (const sa of subagents) {
+      rendered.push(renderSubagentCardHtml(sa));
     }
   }
 
@@ -986,23 +1213,23 @@ export function renderToolRowHtml(tool) {
 
   const diffBadge =
     added || removed
-      ? `<span class="tool-diff-badge"><span class="add" data-testid="tool-row-added">${added}</span> <span class="del" data-testid="tool-row-removed">${removed}</span></span>`
+      ? `<span class="tool-diff-badge"><span class="add" data-testid="tool-row-added">${escapeHtml(added)}</span> <span class="del" data-testid="tool-row-removed">${escapeHtml(removed)}</span></span>`
       : `<span class="tool-diff-badge"><span class="add" data-testid="tool-row-added"></span> <span class="del" data-testid="tool-row-removed"></span></span>`;
 
   return (
     `<div class="tool-row-wrapper">` +
-    `<div class="tool-row" data-testid="tool-row" data-tool="${toolName}" data-path="${escapeHtml(rawPath)}" onclick="window.__app.toggleToolDetail('${tool.id}')">` +
+    `<div class="tool-row" data-testid="tool-row" data-tool="${escapeHtml(toolName)}" data-path="${escapeHtml(rawPath)}" data-action="toggle-tool" data-tool-id="${escapeHtml(tool.id)}">` +
     `<div class="tool-main">` +
-    `<span class="tool-prefix">${prefixIcon} ${toolName}</span>` +
+    `<span class="tool-prefix">${prefixIcon} ${escapeHtml(toolName)}</span>` +
     `<span class="tool-path" data-testid="tool-row-path">${escapeHtml(displayPath)}</span>` +
     diffBadge +
     `</div>` +
-    `<div class="tool-meta"><span>${tool.status || ''}</span></div>` +
-    `</div>` +
+    `<div class="tool-meta"><span>${escapeHtml(tool.status || '')}</span></div>` +
     `<div class="tool-detail-card" data-testid="tool-row-detail" style="display:${isExpanded ? 'block' : 'none'}">` +
     `<div><strong>Path:</strong> ${escapeHtml(rawPath)}</div>` +
-    (tool.input ? `<div style="margin-top:4px;"><strong>${t('tool_input')}:</strong>\n${escapeHtml(JSON.stringify(tool.input, null, 2))}</div>` : '') +
-    (tool.output ? `<div style="margin-top:4px;"><strong>${t('tool_output')}:</strong>\n${escapeHtml(typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2))}</div>` : '') +
+    (tool.input ? `<div style="margin-top:4px;"><strong>${escapeHtml(t('tool_input'))}:</strong>\n${escapeHtml(JSON.stringify(tool.input, null, 2))}</div>` : '') +
+    (tool.output ? `<div style="margin-top:4px;"><strong>${escapeHtml(t('tool_output'))}:</strong>\n${escapeHtml(typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2))}</div>` : '') +
+    `</div>` +
     `</div>` +
     `</div>`
   );
@@ -1018,21 +1245,20 @@ export function renderRightPanel() {
   const panel = document.getElementById('right-panel');
   if (!panel) return;
 
-  // Render changed files bar
   const changesBar = document.getElementById('changed-files-bar');
   if (changesBar) {
     if (state.changes.length === 0) {
-      changesBar.innerHTML = `<span style="font-size:11px;color:var(--text-muted);">${t('no_changed_files')}</span>`;
+      changesBar.innerHTML = `<span style="font-size:11px;color:var(--text-muted);">${escapeHtml(t('no_changed_files'))}</span>`;
     } else {
       changesBar.innerHTML = state.changes
         .map((ch) => {
           const isActive = ch.path === state.activeFilePath;
           const display = truncatePath(ch.path, 30);
           return (
-            `<span class="changed-file-pill ${isActive ? 'active' : ''}" data-testid="changed-file" data-path="${escapeHtml(ch.path)}" onclick="window.__app.loadFileOrDiff('${escapeHtml(ch.path)}')">` +
+            `<span class="changed-file-pill ${isActive ? 'active' : ''}" data-testid="changed-file" data-path="${escapeHtml(ch.path)}" data-action="load-file">` +
             `<span>${escapeHtml(display)}</span>` +
-            (ch.added != null ? `<span class="stat-add">+${ch.added}</span>` : '') +
-            (ch.removed != null ? `<span class="stat-del">−${ch.removed}</span>` : '') +
+            (ch.added != null ? `<span class="stat-add">+${escapeHtml(ch.added)}</span>` : '') +
+            (ch.removed != null ? `<span class="stat-del">−${escapeHtml(ch.removed)}</span>` : '') +
             `</span>`
           );
         })
@@ -1043,7 +1269,6 @@ export function renderRightPanel() {
   const badge = document.getElementById('diff-tab-badge');
   if (badge) badge.textContent = state.changes.length || 0;
 
-  // Render content according to tab
   const viewport = document.getElementById('right-viewport');
   if (!viewport) return;
 
@@ -1052,9 +1277,9 @@ export function renderRightPanel() {
       <div class="md-editor-container" data-testid="md-editor">
         <div class="md-editor-toolbar">
           <span style="font-family:var(--font-mono);font-size:12px;font-weight:500;">${escapeHtml(state.activeFilePath)}</span>
-          <button class="btn btn-ctrl" data-testid="md-editor-save" onclick="window.__app.saveEditorFile()">
+          <button class="btn btn-ctrl" data-testid="md-editor-save" data-action="save-editor-file">
             <svg class="icon" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-            ${t('btn_save')}
+            ${escapeHtml(t('btn_save'))}
           </button>
         </div>
         <div class="md-editor-content" contenteditable="true" spellcheck="false">${escapeHtml(state.activeFileContent ?? '')}</div>
@@ -1070,11 +1295,10 @@ export function renderRightPanel() {
       </div>
     `;
   } else {
-    // Diff view
     if (!state.activeDiff) {
       viewport.innerHTML = `
         <div class="diff-viewport" data-testid="diff-view">
-          <div class="empty-placeholder">${t('select_file_for_diff')}</div>
+          <div class="empty-placeholder">${escapeHtml(t('select_file_for_diff'))}</div>
         </div>
       `;
     } else {
@@ -1087,13 +1311,13 @@ export function renderRightPanel() {
               <span>${escapeHtml(d.path)}</span>
             </div>
             <div class="file-diff-stats">
-              <span class="stat-add">+${d.added ?? 0}</span>
-              <span class="stat-del">−${d.removed ?? 0}</span>
+              <span class="stat-add">+${escapeHtml(d.added ?? 0)}</span>
+              <span class="stat-del">−${escapeHtml(d.removed ?? 0)}</span>
             </div>
           </div>
           <div class="diff-col-legend">
-            <div class="legend-side"><span>${t('baseline')}</span></div>
-            <div class="legend-side"><span>${t('working_copy')}</span></div>
+            <div class="legend-side"><span>${escapeHtml(t('baseline'))}</span></div>
+            <div class="legend-side"><span>${escapeHtml(t('working_copy'))}</span></div>
           </div>
           ${renderDiffHtml(d.unified || '')}
         </div>
@@ -1149,25 +1373,21 @@ export function renderSettingsModal() {
   const tTab = state.activeSettingsTab;
 
   ov.innerHTML = `
-    <div class="sm" onclick="event.stopPropagation()">
+    <div class="sm">
       <div class="sm-nav">
-        <h3>${t('settings_title')}</h3>
-        <div class="${tTab === 'general' ? 'on' : ''}" onclick="window.__app.setSettingsTab('general')">${t('settings_tab_general')}</div>
-        <div class="${tTab === 'models' ? 'on' : ''}" onclick="window.__app.setSettingsTab('models')">${t('settings_tab_models')}</div>
-        <div class="${tTab === 'plugins' ? 'on' : ''}" onclick="window.__app.setSettingsTab('plugins')">${t('settings_tab_plugins')}</div>
-        <div class="${tTab === 'skills' ? 'on' : ''}" onclick="window.__app.setSettingsTab('skills')">${t('settings_tab_skills')}</div>
-        <div class="${tTab === 'about' ? 'on' : ''}" onclick="window.__app.setSettingsTab('about')">${t('settings_tab_about')}</div>
+        <h3>${escapeHtml(t('settings_title'))}</h3>
+        <div class="${tTab === 'general' ? 'on' : ''}" data-action="set-settings-tab" data-tab="general">${escapeHtml(t('settings_tab_general'))}</div>
+        <div class="${tTab === 'models' ? 'on' : ''}" data-action="set-settings-tab" data-tab="models">${escapeHtml(t('settings_tab_models'))}</div>
+        <div class="${tTab === 'plugins' ? 'on' : ''}" data-action="set-settings-tab" data-tab="plugins">${escapeHtml(t('settings_tab_plugins'))}</div>
+        <div class="${tTab === 'skills' ? 'on' : ''}" data-action="set-settings-tab" data-tab="skills">${escapeHtml(t('settings_tab_skills'))}</div>
+        <div class="${tTab === 'about' ? 'on' : ''}" data-action="set-settings-tab" data-tab="about">${escapeHtml(t('settings_tab_about'))}</div>
       </div>
       <div class="sm-body">
-        <span class="sm-x" onclick="window.__app.closeSettings()">×</span>
+        <span class="sm-x" data-action="close-settings">×</span>
         ${renderSettingsTabContent(tTab)}
       </div>
     </div>
   `;
-
-  ov.onclick = (e) => {
-    if (e.target === ov) closeSettings();
-  };
 }
 
 function renderSettingsTabContent(tab) {
@@ -1178,48 +1398,48 @@ function renderSettingsTabContent(tab) {
     const curFont = state.fontSize;
 
     return `
-      <h2>${t('settings_tab_general')}</h2>
+      <h2>${escapeHtml(t('settings_tab_general'))}</h2>
       <div class="row">
-        <div class="l"><b>${t('lang_label')}</b><span>${t('lang_desc')}</span></div>
+        <div class="l"><b>${escapeHtml(t('lang_label'))}</b><span>${escapeHtml(t('lang_desc'))}</span></div>
         <div class="seg">
-          <span class="${curLang === 'zh' ? 'on' : ''}" onclick="window.__app.switchLanguage('zh')">中文</span>
-          <span class="${curLang === 'en' ? 'on' : ''}" onclick="window.__app.switchLanguage('en')">English</span>
+          <span class="${curLang === 'zh' ? 'on' : ''}" data-action="switch-language" data-lang="zh">中文</span>
+          <span class="${curLang === 'en' ? 'on' : ''}" data-action="switch-language" data-lang="en">English</span>
         </div>
       </div>
       <div class="row">
-        <div class="l"><b>${t('appearance_label')}</b><span>${t('appearance_desc')}</span></div>
+        <div class="l"><b>${escapeHtml(t('appearance_label'))}</b><span>${escapeHtml(t('appearance_desc'))}</span></div>
         <div class="seg">
-          <span class="${curApp === 'light' ? 'on' : ''}" onclick="window.__app.switchAppearance('light')">${t('mode_light')}</span>
-          <span class="${curApp === 'dark' ? 'on' : ''}" onclick="window.__app.switchAppearance('dark')">${t('mode_dark')}</span>
-          <span class="${curApp === 'system' ? 'on' : ''}" onclick="window.__app.switchAppearance('system')">${t('mode_system')}</span>
+          <span class="${curApp === 'light' ? 'on' : ''}" data-action="switch-appearance" data-mode="light">${escapeHtml(t('mode_light'))}</span>
+          <span class="${curApp === 'dark' ? 'on' : ''}" data-action="switch-appearance" data-mode="dark">${escapeHtml(t('mode_dark'))}</span>
+          <span class="${curApp === 'system' ? 'on' : ''}" data-action="switch-appearance" data-mode="system">${escapeHtml(t('mode_system'))}</span>
         </div>
       </div>
       <div class="row" style="display:block">
-        <div class="l"><b>${t('theme_label')}</b><span>${t('theme_desc')}</span></div>
+        <div class="l"><b>${escapeHtml(t('theme_label'))}</b><span>${escapeHtml(t('theme_desc'))}</span></div>
         <div class="th">
-          <div class="${curTheme === 'white' ? 'on' : ''}" onclick="window.__app.switchThemeFamily('white')">
+          <div class="${curTheme === 'white' ? 'on' : ''}" data-action="switch-theme-family" data-family="white">
             <i><b style="background:#fafafa"></b><b style="background:#ffffff;flex:3"></b><b style="background:#1a1a1a;flex:.3"></b></i>White
           </div>
-          <div class="${curTheme === 'claude' ? 'on' : ''}" onclick="window.__app.switchThemeFamily('claude')">
+          <div class="${curTheme === 'claude' ? 'on' : ''}" data-action="switch-theme-family" data-family="claude">
             <i><b style="background:#f3f1ea"></b><b style="background:#faf9f5;flex:3"></b><b style="background:#c0674a;flex:.3"></b></i>Claude
           </div>
-          <div class="${curTheme === 'codex' ? 'on' : ''}" onclick="window.__app.switchThemeFamily('codex')">
+          <div class="${curTheme === 'codex' ? 'on' : ''}" data-action="switch-theme-family" data-family="codex">
             <i><b style="background:#f9f9f9"></b><b style="background:#ffffff;flex:3"></b><b style="background:#0d0d0d;flex:.3"></b></i>Codex
           </div>
-          <div class="${curTheme === 'grok' ? 'on' : ''}" onclick="window.__app.switchThemeFamily('grok')">
+          <div class="${curTheme === 'grok' ? 'on' : ''}" data-action="switch-theme-family" data-family="grok">
             <i><b style="background:#0a0a0a"></b><b style="background:#000000;flex:3"></b><b style="background:#ffffff;flex:.3"></b></i>Grok
           </div>
-          <div class="${curTheme === 'cursor' ? 'on' : ''}" onclick="window.__app.switchThemeFamily('cursor')">
+          <div class="${curTheme === 'cursor' ? 'on' : ''}" data-action="switch-theme-family" data-family="cursor">
             <i><b style="background:#141414"></b><b style="background:#181818;flex:3"></b><b style="background:#cfcfcf;flex:.3"></b></i>Cursor
           </div>
         </div>
       </div>
       <div class="row">
-        <div class="l"><b>${t('font_size_label')}</b><span>${t('font_size_desc')}</span></div>
+        <div class="l"><b>${escapeHtml(t('font_size_label'))}</b><span>${escapeHtml(t('font_size_desc'))}</span></div>
         <div class="seg">
-          <span class="${curFont === 'sm' ? 'on' : ''}" onclick="window.__app.switchFontSize('sm')">${t('size_sm')}</span>
-          <span class="${curFont === 'md' ? 'on' : ''}" onclick="window.__app.switchFontSize('md')">${t('size_md')}</span>
-          <span class="${curFont === 'lg' ? 'on' : ''}" onclick="window.__app.switchFontSize('lg')">${t('size_lg')}</span>
+          <span class="${curFont === 'sm' ? 'on' : ''}" data-action="switch-font-size" data-size="sm">${escapeHtml(t('size_sm'))}</span>
+          <span class="${curFont === 'md' ? 'on' : ''}" data-action="switch-font-size" data-size="md">${escapeHtml(t('size_md'))}</span>
+          <span class="${curFont === 'lg' ? 'on' : ''}" data-action="switch-font-size" data-size="lg">${escapeHtml(t('size_lg'))}</span>
         </div>
       </div>
     `;
@@ -1229,6 +1449,8 @@ function renderSettingsTabContent(tab) {
     const s = state.settings || {};
     const prov = s.provider || 'openai';
     const models = s.models || {};
+    const savedKey = s.apiKey || '';
+    const maskedKey = maskApiKey(savedKey);
 
     const rolesList = state.roles.length > 0 ? state.roles : [
       { id: 'default', name: 'Default Agent' },
@@ -1238,45 +1460,49 @@ function renderSettingsTabContent(tab) {
     ];
 
     return `
-      <h2>${t('settings_tab_models')}</h2>
+      <h2>${escapeHtml(t('settings_tab_models'))}</h2>
       <div class="prov">
-        <span class="${prov === 'xai' ? 'on' : ''}" onclick="window.__app.setModelProvider('xai')">xAI</span>
-        <span class="${prov === 'deepseek' ? 'on' : ''}" onclick="window.__app.setModelProvider('deepseek')">DeepSeek</span>
-        <span class="${prov === 'openai' ? 'on' : ''}" onclick="window.__app.setModelProvider('openai')">OpenAI 兼容</span>
-        <span class="${prov === 'ollama' ? 'on' : ''}" onclick="window.__app.setModelProvider('ollama')">本地 Ollama</span>
+        <span class="${prov === 'xai' ? 'on' : ''}" data-action="set-model-provider" data-provider="xai">xAI</span>
+        <span class="${prov === 'deepseek' ? 'on' : ''}" data-action="set-model-provider" data-provider="deepseek">DeepSeek</span>
+        <span class="${prov === 'openai' ? 'on' : ''}" data-action="set-model-provider" data-provider="openai">OpenAI 兼容</span>
+        <span class="${prov === 'ollama' ? 'on' : ''}" data-action="set-model-provider" data-provider="ollama">本地 Ollama</span>
       </div>
       <div class="row">
-        <div class="l"><b>${t('models_base_url_label')}</b><span>${t('models_base_url_desc')}</span></div>
-        <input class="in" id="cfg-base-url" type="text" value="${escapeHtml(s.baseUrl || '')}" placeholder="https://api.openai.com/v1" />
+        <div class="l"><b>${escapeHtml(t('models_base_url_label'))}</b><span>${escapeHtml(t('models_base_url_desc'))}</span></div>
+        <input class="in" id="cfg-base-url" type="text" data-original-val="${escapeHtml(s.baseUrl || '')}" value="${escapeHtml(s.baseUrl || '')}" placeholder="https://api.openai.com/v1" />
       </div>
       <div class="row">
-        <div class="l"><b>${t('models_api_key_label')}</b><span>${t('models_api_key_desc')}</span></div>
-        <input class="in" id="cfg-api-key" type="password" value="${escapeHtml(s.apiKey || '')}" placeholder="sk-..." />
+        <div class="l"><b>${escapeHtml(t('models_api_key_label'))}</b><span>${escapeHtml(t('models_api_key_desc'))}</span></div>
+        <input class="in" id="cfg-api-key" type="text" data-original-masked="${escapeHtml(maskedKey)}" value="${escapeHtml(maskedKey)}" placeholder="sk-..." autocomplete="off" />
+      </div>
+      <div id="cfg-key-warning" class="cfg-warn-box" style="display:none;">
+        ⚠️ 更改服务商或 Base URL 时若未输入新密钥，已保存的 API Key 将被清空以确保安全。<br>
+        <span style="font-size:11px;opacity:0.85;">Warning: Changing provider or Base URL without entering a new key will clear the saved API key for safety.</span>
       </div>
       ${rolesList
         .map(
           (r) =>
             `<div class="row">` +
             `<div class="l"><b>${escapeHtml(r.name || r.id)}</b><span>${escapeHtml(r.id)}</span></div>` +
-            `<input class="in" style="min-width:180px" data-role-id="${r.id}" value="${escapeHtml(models[r.id] || '')}" placeholder="grok-4.6 / gpt-4o" />` +
+            `<input class="in" style="min-width:180px" data-role-id="${escapeHtml(r.id)}" value="${escapeHtml(models[r.id] || '')}" placeholder="grok-4.6 / gpt-4o" />` +
             `</div>`
         )
         .join('')}
       <div style="margin-top:20px;display:flex;justify-content:flex-end;">
-        <button class="btn p" onclick="window.__app.saveModelsSettings()">${t('btn_save_settings')}</button>
+        <button class="btn p" data-action="save-models-settings">${escapeHtml(t('btn_save_settings'))}</button>
       </div>
     `;
   }
 
   if (tab === 'plugins') {
     return `
-      <h2>${t('settings_tab_plugins')}</h2>
+      <h2>${escapeHtml(t('settings_tab_plugins'))}</h2>
       <div style="display:flex;gap:10px;margin-bottom:18px">
         <div style="flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--border-strong);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--text-muted);background:var(--bg-surface)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input type="text" id="plugin-search-input" oninput="window.__app.filterPlugins(this.value)" placeholder="${t('search_plugins_placeholder')}" style="border:none;background:transparent;outline:none;width:100%;color:var(--text-primary);font-size:13px;" />
+          <input type="text" id="plugin-search-input" placeholder="${escapeHtml(t('search_plugins_placeholder'))}" style="border:none;background:transparent;outline:none;width:100%;color:var(--text-primary);font-size:13px;" />
         </div>
-        <button class="btn p" onclick="window.__app.openImportPluginModal()" style="padding:0 14px;border-radius:8px">${t('btn_import_plugin')}</button>
+        <button class="btn p" data-action="open-import-plugin" style="padding:0 14px;border-radius:8px">${escapeHtml(t('btn_import_plugin'))}</button>
       </div>
       <div id="plugins-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
         ${renderPluginsListHtml(state.plugins)}
@@ -1286,11 +1512,11 @@ function renderSettingsTabContent(tab) {
 
   if (tab === 'skills') {
     return `
-      <h2>${t('settings_tab_skills')}</h2>
+      <h2>${escapeHtml(t('settings_tab_skills'))}</h2>
       <div style="display:flex;gap:10px;margin-bottom:18px">
         <div style="flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--border-strong);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--text-muted);background:var(--bg-surface)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input type="text" id="skill-search-input" oninput="window.__app.filterSkills(this.value)" placeholder="${t('search_skills_placeholder')}" style="border:none;background:transparent;outline:none;width:100%;color:var(--text-primary);font-size:13px;" />
+          <input type="text" id="skill-search-input" placeholder="${escapeHtml(t('search_skills_placeholder'))}" style="border:none;background:transparent;outline:none;width:100%;color:var(--text-primary);font-size:13px;" />
         </div>
       </div>
       <div id="skills-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
@@ -1302,7 +1528,7 @@ function renderSettingsTabContent(tab) {
   if (tab === 'about') {
     const pkg = state.about || {};
     return `
-      <h2>${t('settings_tab_about')}</h2>
+      <h2>${escapeHtml(t('settings_tab_about'))}</h2>
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
         <div style="width:44px;height:44px;border-radius:10px;background:var(--text-primary);color:var(--text-inverse);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700">π</div>
         <div>
@@ -1310,11 +1536,11 @@ function renderSettingsTabContent(tab) {
           <div style="color:var(--text-muted);font-size:12px">${escapeHtml(pkg.description || t('about_desc'))}</div>
         </div>
       </div>
-      <div class="row"><div class="l"><b>${t('about_version')}</b></div><span>${escapeHtml(pkg.version || '0.2.0')}</span></div>
-      <div class="row"><div class="l"><b>${t('about_repo')}</b></div><a href="https://github.com/lawrencewzen/pi-work" target="_blank">github.com/lawrencewzen/pi-work</a></div>
-      <div class="row"><div class="l"><b>${t('about_license')}</b></div><span>MIT</span></div>
-      <div class="row"><div class="l"><b>${t('about_thanks')}</b><span>${t('about_upstream')}</span></div><a href="https://github.com/xiaomoBoy/pi-durable-assistant" target="_blank">xiaomoBoy/pi-durable-assistant</a></div>
-      <div class="row"><div class="l"><b>${t('about_runtime')}</b></div><span><span class="dot"></span>${t('about_runtime_connected')}</span></div>
+      <div class="row"><div class="l"><b>${escapeHtml(t('about_version'))}</b></div><span>${escapeHtml(pkg.version || '0.2.0')}</span></div>
+      <div class="row"><div class="l"><b>${escapeHtml(t('about_repo'))}</b></div><a href="https://github.com/lawrencewzen/pi-work" target="_blank" rel="noopener">github.com/lawrencewzen/pi-work</a></div>
+      <div class="row"><div class="l"><b>${escapeHtml(t('about_license'))}</b></div><span>MIT</span></div>
+      <div class="row"><div class="l"><b>${escapeHtml(t('about_thanks'))}</b><span>${escapeHtml(t('about_upstream'))}</span></div><a href="https://github.com/xiaomoBoy/pi-durable-assistant" target="_blank" rel="noopener">xiaomoBoy/pi-durable-assistant</a></div>
+      <div class="row"><div class="l"><b>${escapeHtml(t('about_runtime'))}</b></div><span><span class="dot"></span>${escapeHtml(t('about_runtime_connected'))}</span></div>
     `;
   }
 
@@ -1323,7 +1549,6 @@ function renderSettingsTabContent(tab) {
 
 function renderPluginsListHtml(list) {
   if (!list || list.length === 0) {
-    // Show mock default plugins if empty
     list = [
       { id: 'git-tools', name: 'git-tools', description: '提交、分支与 diff 预览', version: '1.4.0', source: '内置', enabled: true },
       { id: 'shell-sandbox', name: 'shell-sandbox', description: '受限命令执行，危险命令需确认', version: '1.2.1', source: '内置', enabled: true },
@@ -1341,9 +1566,9 @@ function renderPluginsListHtml(list) {
       return (
         `<div style="border:1px solid var(--border-subtle);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--bg-surface)">` +
         `<div style="display:flex;align-items:center;gap:10px">` +
-        `<div style="width:30px;height:30px;border-radius:8px;background:var(--bg-surface-subtle);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary)">${letter}</div>` +
+        `<div style="width:30px;height:30px;border-radius:8px;background:var(--bg-surface-subtle);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary)">${escapeHtml(letter)}</div>` +
         `<b style="font-size:13px;font-weight:500;flex:1">${escapeHtml(pl.name || pl.id)}</b>` +
-        `<div class="tg ${isOn ? 'on' : ''}" onclick="window.__app.togglePlugin('${pl.id}', ${!isOn})"></div>` +
+        `<div class="tg ${isOn ? 'on' : ''}" data-action="toggle-plugin" data-plugin-id="${escapeHtml(pl.id)}" data-enabled="${!isOn}"></div>` +
         `</div>` +
         `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5;min-height:36px">${escapeHtml(pl.description || '')}</div>` +
         `<div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px"><span>${escapeHtml(pl.source || '内置')}</span><span>·</span><span>${escapeHtml(pl.version || '1.0.0')}</span></div>` +
@@ -1371,7 +1596,7 @@ function renderSkillsListHtml(list) {
       return (
         `<div style="border:1px solid var(--border-subtle);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--bg-surface)">` +
         `<div style="display:flex;align-items:center;gap:10px">` +
-        `<div style="width:30px;height:30px;border-radius:8px;background:var(--bg-surface-subtle);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary)">${letter}</div>` +
+        `<div style="width:30px;height:30px;border-radius:8px;background:var(--bg-surface-subtle);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary)">${escapeHtml(letter)}</div>` +
         `<b style="font-size:13px;font-weight:500;flex:1">${escapeHtml(sk.name || sk.id)}</b>` +
         `<div class="tg on"></div>` +
         `</div>` +
@@ -1421,6 +1646,33 @@ export function setModelProvider(prov) {
   if (!state.settings) state.settings = {};
   state.settings.provider = prov;
   renderSettingsModal();
+  checkModelKeyWarning();
+}
+
+export function checkModelKeyWarning() {
+  const warnEl = document.getElementById('cfg-key-warning');
+  if (!warnEl) return;
+  const baseUrlEl = document.getElementById('cfg-base-url');
+  const apiKeyEl = document.getElementById('cfg-api-key');
+  if (!baseUrlEl || !apiKeyEl) return;
+
+  const s = state.settings || {};
+  const hasSavedKey = Boolean(s.apiKey);
+  const origProvider = s.provider || 'openai';
+  const curProvider = state.settings.provider || 'openai';
+  const origBaseUrl = s.baseUrl || '';
+  const curBaseUrl = baseUrlEl.value.trim();
+
+  const enteredKey = apiKeyEl.value.trim();
+  const maskedKey = apiKeyEl.getAttribute('data-original-masked') || '';
+  const isNewKeyEntered = enteredKey && enteredKey !== maskedKey && !enteredKey.startsWith('••••');
+
+  const changed = (origProvider !== curProvider) || (origBaseUrl !== curBaseUrl);
+  if (hasSavedKey && changed && !isNewKeyEntered) {
+    warnEl.style.display = 'block';
+  } else {
+    warnEl.style.display = 'none';
+  }
 }
 
 export async function saveModelsSettings() {
@@ -1428,22 +1680,42 @@ export async function saveModelsSettings() {
   const apiKeyEl = document.getElementById('cfg-api-key');
   const roleInputs = document.querySelectorAll('[data-role-id]');
 
+  const s = state.settings || {};
+  const hasSavedKey = Boolean(s.apiKey);
+  const origProvider = s.provider || 'openai';
+  const curProvider = state.settings.provider || 'openai';
+  const origBaseUrl = s.baseUrl || '';
+  const curBaseUrl = baseUrlEl?.value.trim() || '';
+
+  const enteredKey = apiKeyEl?.value.trim() || '';
+  const maskedKey = apiKeyEl?.getAttribute('data-original-masked') || '';
+  const isNewKeyEntered = enteredKey && enteredKey !== maskedKey && !enteredKey.startsWith('••••') && !enteredKey.includes('…');
+
+  const providerOrUrlChanged = (origProvider !== curProvider) || (origBaseUrl !== curBaseUrl);
+
   const models = {};
   roleInputs.forEach((inp) => {
     const rid = inp.getAttribute('data-role-id');
     const val = inp.value.trim();
-    if (val) models[rid] = val;
+    if (val && rid) models[rid] = val;
   });
 
   const payload = {
-    provider: state.settings.provider || 'openai',
-    baseUrl: baseUrlEl?.value.trim() || '',
+    provider: curProvider,
+    baseUrl: curBaseUrl,
     models,
   };
 
-  const keyVal = apiKeyEl?.value.trim();
-  if (keyVal && !keyVal.includes('…') && !keyVal.includes('...')) {
-    payload.apiKey = keyVal;
+  if (hasSavedKey && providerOrUrlChanged && !isNewKeyEntered) {
+    const warnMsg =
+      '更改服务商或 Base URL 时若未输入新密钥，已保存的 API Key 将被清空以确保安全。是否继续？\n\n' +
+      'Warning: Changing provider or Base URL without entering a new key will clear the saved API key for safety. Continue?';
+    if (!window.confirm(warnMsg)) {
+      return;
+    }
+    payload.apiKey = '';
+  } else if (isNewKeyEntered) {
+    payload.apiKey = enteredKey;
   }
 
   try {
@@ -1497,9 +1769,6 @@ export function openModal(html) {
   }
   ov.style.display = 'flex';
   ov.innerHTML = html;
-  ov.onclick = (e) => {
-    if (e.target === ov) closeModal();
-  };
 }
 
 export function closeModal() {
@@ -1509,29 +1778,29 @@ export function closeModal() {
 
 export function openNewWorkspaceModal() {
   openModal(`
-    <div class="modal-dialog" onclick="event.stopPropagation()">
-      <h3>${t('new_workspace')} <span style="cursor:pointer;color:var(--text-muted)" onclick="window.__app.closeModal()">×</span></h3>
+    <div class="modal-dialog">
+      <h3>${escapeHtml(t('new_workspace'))} <span style="cursor:pointer;color:var(--text-muted)" data-action="close-modal">×</span></h3>
       <div class="seg" style="margin-bottom:8px">
-        <span id="ws-modal-tab-local" class="on" onclick="window.__app.toggleWsModalTab('local')">${t('ws_local_tab')}</span>
-        <span id="ws-modal-tab-git" onclick="window.__app.toggleWsModalTab('git')">${t('ws_git_tab')}</span>
+        <span id="ws-modal-tab-local" class="on" data-action="toggle-ws-modal-tab" data-tab="local">${escapeHtml(t('ws_local_tab'))}</span>
+        <span id="ws-modal-tab-git" data-action="toggle-ws-modal-tab" data-tab="git">${escapeHtml(t('ws_git_tab'))}</span>
       </div>
       <div class="form-group">
-        <label>${t('ws_name_label')}</label>
-        <input id="ws-name-input" data-testid="workspace-name-input" placeholder="${t('ws_name_placeholder')}" />
+        <label>${escapeHtml(t('ws_name_label'))}</label>
+        <input id="ws-name-input" data-testid="workspace-name-input" placeholder="${escapeHtml(t('ws_name_placeholder'))}" />
       </div>
       <div id="ws-local-fields" class="form-group">
-        <label>${t('ws_path_label')}</label>
-        <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${t('ws_path_placeholder')}" />
+        <label>${escapeHtml(t('ws_path_label'))}</label>
+        <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${escapeHtml(t('ws_path_placeholder'))}" />
       </div>
       <div id="ws-git-fields" class="form-group" style="display:none">
-        <label>${t('ws_git_url_label')}</label>
-        <input id="ws-git-url-input" placeholder="${t('ws_git_url_placeholder')}" />
-        <label style="margin-top:6px;">${t('ws_branch_label')}</label>
-        <input id="ws-branch-input" placeholder="${t('ws_branch_placeholder')}" />
+        <label>${escapeHtml(t('ws_git_url_label'))}</label>
+        <input id="ws-git-url-input" placeholder="${escapeHtml(t('ws_git_url_placeholder'))}" />
+        <label style="margin-top:6px;">${escapeHtml(t('ws_branch_label'))}</label>
+        <input id="ws-branch-input" placeholder="${escapeHtml(t('ws_branch_placeholder'))}" />
       </div>
       <div class="modal-actions">
-        <button class="btn" onclick="window.__app.closeModal()">${t('btn_cancel')}</button>
-        <button class="btn p" data-testid="workspace-create-submit" onclick="window.__app.submitWorkspaceModal()">${t('btn_create')}</button>
+        <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
+        <button class="btn p" data-testid="workspace-create-submit" data-action="submit-workspace">${escapeHtml(t('btn_create'))}</button>
       </div>
     </div>
   `);
@@ -1584,23 +1853,23 @@ export function submitWorkspaceModal() {
 
 export function openImportPluginModal() {
   openModal(`
-    <div class="modal-dialog" onclick="event.stopPropagation()">
-      <h3>${t('plugin_import_title')} <span style="cursor:pointer;color:var(--text-muted)" onclick="window.__app.closeModal()">×</span></h3>
+    <div class="modal-dialog">
+      <h3>${escapeHtml(t('plugin_import_title'))} <span style="cursor:pointer;color:var(--text-muted)" data-action="close-modal">×</span></h3>
       <div class="form-group">
-        <label>${t('plugin_id_label')}</label>
+        <label>${escapeHtml(t('plugin_id_label'))}</label>
         <input id="plug-id-input" placeholder="my-custom-plugin" />
       </div>
       <div class="form-group">
-        <label>${t('plugin_desc_label')}</label>
+        <label>${escapeHtml(t('plugin_desc_label'))}</label>
         <input id="plug-desc-input" placeholder="Plugin functionality" />
       </div>
       <div class="form-group">
-        <label>${t('plugin_ver_label')}</label>
+        <label>${escapeHtml(t('plugin_ver_label'))}</label>
         <input id="plug-ver-input" value="1.0.0" />
       </div>
       <div class="modal-actions">
-        <button class="btn" onclick="window.__app.closeModal()">${t('btn_cancel')}</button>
-        <button class="btn p" onclick="window.__app.submitImportPlugin()">${t('btn_import_plugin')}</button>
+        <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
+        <button class="btn p" data-action="submit-import-plugin">${escapeHtml(t('btn_import_plugin'))}</button>
       </div>
     </div>
   `);
@@ -1631,7 +1900,7 @@ export async function switchWorkspaceAndConv(wid, cid) {
   }
 }
 
-// Global exposure
+// Global exposure for external or test compatibility
 window.__app = {
   selectWorkspace,
   selectConversation,
@@ -1665,13 +1934,148 @@ window.__app = {
   submitImportPlugin,
   closeModal,
   toggleToolDetail,
+  toggleSubagent,
+  handleUnauthorized,
+  checkModelKeyWarning,
 };
+
+// ============================================================================
+// Event Delegation
+// ============================================================================
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'settings-overlay') {
+    closeSettings();
+    return;
+  }
+  if (e.target.id === 'dialog-overlay') {
+    closeModal();
+    return;
+  }
+
+  const actionEl = e.target.closest('[data-action]');
+  if (!actionEl) return;
+
+  const action = actionEl.getAttribute('data-action');
+  switch (action) {
+    case 'new-workspace':
+      openNewWorkspaceModal();
+      break;
+    case 'new-conversation':
+      createNewConversation();
+      break;
+    case 'open-settings':
+      openSettings();
+      break;
+    case 'close-settings':
+      closeSettings();
+      break;
+    case 'set-settings-tab':
+      setSettingsTab(actionEl.getAttribute('data-tab'));
+      break;
+    case 'pause-conversation':
+      pauseConversation();
+      break;
+    case 'resume-conversation':
+      resumeConversation();
+      break;
+    case 'stop-conversation':
+      stopConversation();
+      break;
+    case 'send-message': {
+      const composer = document.querySelector('[data-testid="chat-input"]');
+      if (composer) {
+        const val = composer.value.trim();
+        if (val) {
+          sendMessage(val);
+          composer.value = '';
+        }
+      }
+      break;
+    }
+    case 'switch-right-tab':
+      switchRightTab(actionEl.getAttribute('data-tab'));
+      break;
+    case 'open-file-in-editor':
+      openFileInEditor();
+      break;
+    case 'select-workspace':
+      selectWorkspace(actionEl.getAttribute('data-ws-id'));
+      break;
+    case 'select-conversation':
+      selectConversation(actionEl.getAttribute('data-conv-id'));
+      break;
+    case 'switch-ws-conv':
+      switchWorkspaceAndConv(actionEl.getAttribute('data-ws-id'), actionEl.getAttribute('data-conv-id'));
+      break;
+    case 'toggle-tool':
+      if (!e.target.closest('.tool-detail-card')) {
+        toggleToolDetail(actionEl.getAttribute('data-tool-id'));
+      }
+      break;
+    case 'load-file':
+      loadFileOrDiff(actionEl.getAttribute('data-path'));
+      break;
+    case 'save-editor-file':
+      saveEditorFile();
+      break;
+    case 'switch-language':
+      switchLanguage(actionEl.getAttribute('data-lang'));
+      break;
+    case 'switch-appearance':
+      switchAppearance(actionEl.getAttribute('data-mode'));
+      break;
+    case 'switch-theme-family':
+      switchThemeFamily(actionEl.getAttribute('data-family'));
+      break;
+    case 'switch-font-size':
+      switchFontSize(actionEl.getAttribute('data-size'));
+      break;
+    case 'set-model-provider':
+      setModelProvider(actionEl.getAttribute('data-provider'));
+      break;
+    case 'save-models-settings':
+      saveModelsSettings();
+      break;
+    case 'toggle-plugin':
+      togglePlugin(actionEl.getAttribute('data-plugin-id'), actionEl.getAttribute('data-enabled') === 'true');
+      break;
+    case 'open-import-plugin':
+      openImportPluginModal();
+      break;
+    case 'submit-import-plugin':
+      submitImportPlugin();
+      break;
+    case 'toggle-ws-modal-tab':
+      toggleWsModalTab(actionEl.getAttribute('data-tab'));
+      break;
+    case 'submit-workspace':
+      submitWorkspaceModal();
+      break;
+    case 'close-modal':
+      closeModal();
+      break;
+    case 'toggle-subagent':
+      toggleSubagent(actionEl.getAttribute('data-agent-id'));
+      break;
+    default:
+      break;
+  }
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'plugin-search-input') {
+    filterPlugins(e.target.value);
+  } else if (e.target.id === 'skill-search-input') {
+    filterSkills(e.target.value);
+  } else if (e.target.id === 'cfg-base-url' || e.target.id === 'cfg-api-key') {
+    checkModelKeyWarning();
+  }
+});
 
 // ============================================================================
 // Initialization
 // ============================================================================
 window.addEventListener('DOMContentLoaded', async () => {
-  // Wire composer textarea keydowns
   const composer = document.querySelector('[data-testid="chat-input"]');
   const sendBtn = document.querySelector('[data-testid="chat-send"]');
 
@@ -1700,7 +2104,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // Keyboard shortcut Esc to close modal
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       closeSettings();
