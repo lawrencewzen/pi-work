@@ -1,4 +1,4 @@
-import { t, tPlural, getLocale, setLocale, applyI18n } from './i18n.js';
+import { t, tPlural, getLocale, setLocale, applyI18n, translations } from './i18n.js';
 
 // Application State
 const state = {
@@ -341,15 +341,36 @@ export function renderDiffHtml(diffText) {
   );
 }
 
-// Toast notification
-export function showToast(message) {
+function isToastKey(message) {
+  return typeof message === 'string' && message !== '' && Object.prototype.hasOwnProperty.call(translations.zh, message);
+}
+
+function toastText(message, vars) {
+  if (isToastKey(message)) return t(message, vars || {});
+  return message == null ? '' : String(message);
+}
+
+// Toast notification. i18n keys are translated when the toast is shown, not when the caller builds the string.
+export function showToast(message, vars) {
   const existing = document.querySelector('.toast-msg');
   if (existing) existing.remove();
   const el = document.createElement('div');
   el.className = 'toast-msg';
-  el.textContent = message;
+  if (isToastKey(message)) {
+    el.dataset.toastKey = message;
+    if (vars) el.dataset.toastVars = JSON.stringify(vars);
+  }
+  el.textContent = toastText(message, vars);
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 2600);
+}
+
+function refreshToasts() {
+  document.querySelectorAll('.toast-msg[data-toast-key]').forEach((el) => {
+    let vars = {};
+    try { vars = el.dataset.toastVars ? JSON.parse(el.dataset.toastVars) : {}; } catch { vars = {}; }
+    el.textContent = t(el.dataset.toastKey, vars);
+  });
 }
 
 // ============================================================================
@@ -1047,7 +1068,7 @@ export async function sendMessage(text) {
     await api(`/api/conversations/${encodeURIComponent(cid)}/messages`, 'POST', { text });
     scheduleConversationRefresh(cid);
   } catch (err) {
-    showToast(err.message || t('err_send'));
+    showToast(err.message || 'err_send');
     updateConversationStatus(cid, 'failed');
   }
 }
@@ -1062,7 +1083,7 @@ export async function pauseConversation() {
       renderStatusBar();
     }
   } catch (err) {
-    showToast(err.message || t('err_pause'));
+    showToast(err.message || 'err_pause');
   }
 }
 
@@ -1076,7 +1097,7 @@ export async function resumeConversation() {
       renderStatusBar();
     }
   } catch (err) {
-    showToast(err.message || t('err_resume'));
+    showToast(err.message || 'err_resume');
   }
 }
 
@@ -1090,13 +1111,13 @@ export async function stopConversation() {
       renderStatusBar();
     }
   } catch (err) {
-    showToast(err.message || t('err_stop'));
+    showToast(err.message || 'err_stop');
   }
 }
 
 export async function createNewWorkspace(data) {
   const ws = await api('/api/workspaces', 'POST', data);
-  showToast(t('ws_created', { name: ws.name || data?.name || '' }));
+  showToast('ws_created', { name: ws.name || data?.name || '' });
   closeModal();
   try {
     await loadWorkspaces();
@@ -1107,7 +1128,7 @@ export async function createNewWorkspace(data) {
 
 export async function createNewConversation(opts = {}) {
   if (!state.activeWorkspaceId) {
-    showToast(t('err_select_workspace'));
+    showToast('err_select_workspace');
     return;
   }
   const body = { title: opts.title || '' };
@@ -1119,7 +1140,7 @@ export async function createNewConversation(opts = {}) {
     if (conv.id) await selectConversation(conv.id);
     return conv;
   } catch (err) {
-    showToast(err.message || t('err_create_conversation'));
+    showToast(err.message || 'err_create_conversation');
   }
 }
 
@@ -1155,10 +1176,10 @@ export async function saveEditorFile() {
       path: state.activeFilePath,
       content,
     });
-    showToast(t('btn_saved'));
+    showToast('btn_saved');
     state.activeFileContent = content;
   } catch (err) {
-    showToast(err.message || t('err_save'));
+    showToast(err.message || 'err_save');
   }
 }
 
@@ -1451,7 +1472,8 @@ export function renderChatThread() {
   const rendered = [];
   const msgs = dedupeMessages(conv.messages);
 
-  const subagents = (conv.agents || []).slice(1);
+  const allAgents = conv.agents || [];
+  const subagents = allAgents.length > 1 ? allAgents : [];
   let subagentsInserted = false;
 
   for (let i = 0; i < msgs.length; i++) {
@@ -1538,7 +1560,7 @@ export function renderToolRowHtml(tool) {
     `<span class="tool-path" data-testid="tool-row-path">${escapeHtml(displayPath)}</span>` +
     diffBadge +
     `</div>` +
-    `<div class="tool-meta"><span>${escapeHtml(tool.status || '')}</span></div>` +
+    `<div class="tool-meta"><span>${escapeHtml(localizeToolStatus(tool.status))}</span></div>` +
     `<div class="tool-detail-card" data-testid="tool-row-detail" style="display:${isExpanded ? 'block' : 'none'}">` +
     `<div><strong>${escapeHtml(t('tool_path_label'))}:</strong> ${escapeHtml(rawPath)}</div>` +
     (tool.input ? `<div style="margin-top:4px;"><strong>${escapeHtml(t('tool_input'))}:</strong>\n${escapeHtml(JSON.stringify(tool.input, null, 2))}</div>` : '') +
@@ -1561,9 +1583,34 @@ function assistantLabel(m) {
 function assistantChip(m) {
   const rid = m?.roleId;
   const models = state.settings?.models || {};
-  if (rid && models[rid]) return models[rid];
-  if (rid && rid !== 'default') return localizeRoleLabel(rid);
-  return '';
+  let chip = '';
+  if (rid && models[rid]) chip = models[rid];
+  else if (rid && rid !== 'default') chip = localizeRoleLabel(rid);
+  if (!chip || chip === assistantLabel(m)) return '';
+  return chip;
+}
+
+function localizeToolStatus(status) {
+  const key = {
+    completed: 'tool_status_completed',
+    complete: 'tool_status_completed',
+    interrupted: 'tool_status_interrupted',
+    running: 'tool_status_running',
+    failed: 'tool_status_failed',
+    error: 'tool_status_failed',
+    pending: 'tool_status_pending',
+    waiting: 'tool_status_pending',
+  }[String(status || '').toLowerCase()];
+  return key ? t(key) : (status || '');
+}
+
+function pipelineOptionLabel(pipe) {
+  const steps = Array.isArray(pipe?.steps) ? pipe.steps : [];
+  const chain = steps.map((s) => localizeRoleLabel(s?.role || '')).filter(Boolean).join(' → ');
+  let title = String(pipe?.name || pipe?.id || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+  if (pipe?.id === 'demo' || /^demo$/i.test(title)) title = t('pipeline_demo_title');
+  else title = title.replace(/\b(coder|tester|auditor|default)\b/gi, (m) => localizeRoleLabel(m));
+  return chain ? `${title} (${chain})` : title;
 }
 
 function pluginSourceLabel(src) {
@@ -2020,6 +2067,7 @@ function applyChromeLabels() {
 
 export function rerenderI18nSurfaces() {
   applyI18n();
+  refreshToasts();
   renderSidebarWorkspaces();
   renderConversations();
   renderRunningOverview();
@@ -2170,10 +2218,10 @@ export async function saveModelsSettings() {
   try {
     state.settings = await api('/api/settings', 'PUT', payload);
     rememberSavedSettings(state.settings);
-    showToast(t('msg_settings_saved'));
+    showToast('msg_settings_saved');
     renderSettingsModal();
   } catch (err) {
-    showToast(err.message || t('err_save'));
+    showToast(err.message || 'err_save');
   }
 }
 
@@ -2184,7 +2232,7 @@ export async function togglePlugin(id, enabled) {
     if (p) p.enabled = enabled;
     renderSettingsModal();
   } catch (err) {
-    showToast(err.message || t('err_plugin_update'));
+    showToast(err.message || 'err_plugin_update');
   }
 }
 
@@ -2284,7 +2332,7 @@ function setWorkspaceSubmitBusy(busy) {
 
 export async function openNewConversationModal() {
   if (!state.activeWorkspaceId) {
-    showToast(t('err_select_workspace'));
+    showToast('err_select_workspace');
     return;
   }
   try { state.roles = await api('/api/roles'); } catch { /* keep existing */ }
@@ -2294,7 +2342,7 @@ export async function openNewConversationModal() {
     .map((r) => `<option value="role:${escapeHtml(r.id)}">${escapeHtml(localizeRoleLabel(r.id || r.name))}</option>`)
     .join('');
   const pipeOpts = (state.pipelines || [])
-    .map((p) => `<option value="pipeline:${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`)
+    .map((p) => `<option value="pipeline:${escapeHtml(p.id)}">${escapeHtml(pipelineOptionLabel(p))}</option>`)
     .join('');
 
   openModal(`
@@ -2323,7 +2371,7 @@ export async function openNewConversationModal() {
 
 export async function submitNewConversation() {
   if (!state.activeWorkspaceId) {
-    showToast(t('err_select_workspace'));
+    showToast('err_select_workspace');
     return;
   }
   const title = document.getElementById('conv-title-input')?.value.trim() || '';
