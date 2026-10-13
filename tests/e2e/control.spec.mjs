@@ -1,0 +1,64 @@
+import { test, expect } from '@playwright/test';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { startServer, tmpdir } from './helpers/server.mjs';
+import { createWorkspace, newConversation, send, statusText } from './helpers/ui.mjs';
+
+let srv;
+test.afterEach(async () => { await srv?.kill(); });
+const exists = (p) => fs.access(p).then(() => true, () => false);
+
+test('pause / continue / stop', async ({ page }) => {
+  const ws = await tmpdir();
+  srv = await startServer({ script: 'slow.json' });
+  await page.goto(srv.url);
+  await createWorkspace(page, 'ctl', ws);
+  await newConversation(page);
+  await send(page, 'run');
+  await expect(statusText(page)).toContainText(/running|运行/i);
+  await page.getByTestId('btn-pause').click();
+  await expect(statusText(page)).toContainText(/paused|暂停/i);
+  await page.waitForTimeout(3500);
+  expect(await exists(path.join(ws, 'b.txt'))).toBe(false); // no progress while paused
+  await page.getByTestId('btn-resume').click();
+  await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
+  expect(await exists(path.join(ws, 'b.txt'))).toBe(true);
+
+  await newConversation(page);
+  await send(page, 'run again');
+  await expect(statusText(page)).toContainText(/running|运行/i);
+  await page.getByTestId('btn-stop').click();
+  await expect(statusText(page)).toContainText(/stopped|已停止/i);
+  await page.waitForTimeout(4000);
+  await expect(statusText(page)).toContainText(/stopped|已停止/i);
+});
+
+test('two agents run in parallel', async ({ page }) => {
+  const ws1 = await tmpdir(); const ws2 = await tmpdir();
+  srv = await startServer({ script: 'slow.json' });
+  await page.goto(srv.url);
+  await createWorkspace(page, 'p1', ws1);
+  await newConversation(page);
+  await send(page, 'job one');
+  await createWorkspace(page, 'p2', ws2);
+  await newConversation(page);
+  await send(page, 'job two');
+  // both conversations show running at the same time
+  // agent-status list in left panel shows all running conversations across workspaces
+  await expect(page.locator('[data-testid=agent-status-item][data-status=running]')).toHaveCount(2, { timeout: 5000 });
+  const t0 = Date.now();
+  await expect.poll(async () => (await exists(path.join(ws1, 'b.txt'))) && (await exists(path.join(ws2, 'b.txt'))), { timeout: 20000 }).toBe(true);
+  expect(Date.now() - t0).toBeLessThan(9000); // serial would be ~2x slow.json duration
+});
+
+test('stream cut -> auto retry, autocontinue counter shown', async ({ page }) => {
+  const ws = await tmpdir();
+  srv = await startServer({ script: 'crash.json' });
+  await page.goto(srv.url);
+  await createWorkspace(page, 'cut', ws);
+  await newConversation(page);
+  await send(page, 'go');
+  await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 30000 });
+  await expect(page.getByTestId('autocontinue-count')).toHaveText(/[1-9]/);
+  expect(await fs.readFile(path.join(ws, 'final.txt'), 'utf8')).toBe('ok\n');
+});

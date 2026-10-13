@@ -1,0 +1,8 @@
+{ "turns": [
+  { "tool": "write", "args": { "path": "log.txt", "content": "1\n" } },
+  { "tool": "bash", "args": { "command": "echo once >> side_effect.txt" } },
+  { "delayMs": 3000 },
+  { "cut": true },
+  { "tool": "write", "args": { "path": "final.txt", "content": "ok\n" } },
+  { "text": "全部完成" }
+] }
