@@ -1,5 +1,5 @@
 {
-  "name": "pi-durable-assistant",
+  "name": "pi-work",
   "version": "0.1.0",
   "private": true,
   "description": "基于 Pi Durable 的网页版个人 Agent：断点恢复、记事本、子 Agent、定时计划、任务中心和微信通道",
@@ -9,8 +9,10 @@
   },
   "scripts": {
     "start": "node server.mjs",
+    "legacy-start": "node legacy/assistant-server.mjs",
     "dev": "sh scripts/dev.sh",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:legacy": "node --test tests/*.test.mjs",
     "check": "node --check server.mjs && node --check lib/agent.mjs && node --check lib/attachments.mjs && node --check lib/v3.mjs && node --check lib/v3-utils.mjs && node --check lib/wechat.mjs && node --check public/app.js && node --check public/v3.js"
   },
   "dependencies": {
