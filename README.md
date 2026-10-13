@@ -10,6 +10,8 @@
 - 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 界面稿：[design/mockup.html](design/mockup.html)
 
+![mockup](design/mockup.png)
+
 ## 目标
 - 三栏界面：工作区与会话、对话（Markdown + 折叠工具行）、Diff / 文件 / Markdown 编辑器
 - 多个 Agent 并行，角色（提示词 / 工具 / 模型）和流水线（如 测试 → 编码 → 审计）可配置

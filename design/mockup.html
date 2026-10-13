@@ -1,0 +1,2048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1440, initial-scale=1.0">
+  <title>pi-work · Durable Multi-Agent Workbench</title>
+  <style>
+    /* ==========================================================================
+       DESIGN SYSTEM & CSS VARIABLES
+       ========================================================================== */
+    :root {
+      /* Surface & Neutrals (Light Theme) */
+      --bg-app: #f4f4f5;
+      --bg-sidebar: #fafafa;
+      --bg-surface: #ffffff;
+      --bg-surface-subtle: #f8f8f9;
+      --bg-hover: #f1f1f3;
+      --bg-active: #ebecef;
+      --border-subtle: #e4e4e7;
+      --border-strong: #d4d4d8;
+      --border-focus: #a1a1aa;
+
+      /* Typography */
+      --text-primary: #18181b;
+      --text-secondary: #71717a;
+      --text-muted: #a1a1aa;
+      --text-inverse: #ffffff;
+
+      /* Low-saturation Accent: Slate Teal (~#4f7a78) */
+      --accent: #4f7a78;
+      --accent-hover: #436967;
+      --accent-active: #385856;
+      --accent-subtle: rgba(79, 122, 120, 0.08);
+      --accent-tint: rgba(79, 122, 120, 0.16);
+      --accent-border: rgba(79, 122, 120, 0.28);
+      --accent-text: #3c5e5c;
+
+      /* Status Indicators */
+      --status-running: #4f7a78;
+      --status-waiting: #d97706;
+      --status-resuming: #64748b;
+      --status-failed: #dc2626;
+      --status-done: #9ca3af;
+
+      /* Tool Rows & Warning */
+      --tool-bg: #fafafa;
+      --tool-border: #e4e4e7;
+      --tool-hover: #f2f2f4;
+      --warn-bg: rgba(217, 119, 6, 0.08);
+      --warn-border: rgba(217, 119, 6, 0.26);
+      --warn-text: #b45309;
+
+      /* Diff Colors */
+      --diff-del-bg: rgba(239, 68, 68, 0.08);
+      --diff-del-text: #991b1b;
+      --diff-del-num: #dc2626;
+      --diff-add-bg: rgba(16, 185, 129, 0.08);
+      --diff-add-text: #065f46;
+      --diff-add-num: #059669;
+      --diff-num-col: #a1a1aa;
+      --diff-hunk-bg: #f4f4f5;
+      --diff-hunk-text: #71717a;
+
+      /* Code Syntax Highlighting */
+      --syn-kw: #7c3aed;
+      --syn-fn: #0284c7;
+      --syn-str: #059669;
+      --syn-type: #d97706;
+      --syn-comment: #a1a1aa;
+      --syn-num: #ea580c;
+      --code-block-bg: #fafafa;
+      --code-block-border: #e4e4e7;
+
+      /* Radii */
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+
+      /* Typography Stacks */
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    }
+
+    /* Zinc-based Dark Theme (html.dark) */
+    html.dark {
+      --bg-app: #09090b;
+      --bg-sidebar: #0e0e11;
+      --bg-surface: #141417;
+      --bg-surface-subtle: #19191d;
+      --bg-hover: #1e1e24;
+      --bg-active: #25252d;
+      --border-subtle: #27272a;
+      --border-strong: #3f3f46;
+      --border-focus: #71717a;
+
+      --text-primary: #f4f4f5;
+      --text-secondary: #a1a1aa;
+      --text-muted: #71717a;
+      --text-inverse: #09090b;
+
+      /* Slate Teal (Dark Theme contrast) */
+      --accent: #5e8f8d;
+      --accent-hover: #6ea09e;
+      --accent-active: #7db5b3;
+      --accent-subtle: rgba(94, 143, 141, 0.12);
+      --accent-tint: rgba(94, 143, 141, 0.22);
+      --accent-border: rgba(94, 143, 141, 0.35);
+      --accent-text: #8bc2c0;
+
+      /* Status Indicators */
+      --status-running: #5e8f8d;
+      --status-waiting: #f59e0b;
+      --status-resuming: #94a3b8;
+      --status-failed: #ef4444;
+      --status-done: #71717a;
+
+      /* Tool Rows & Warning */
+      --tool-bg: #141417;
+      --tool-border: #27272a;
+      --tool-hover: #1b1b22;
+      --warn-bg: rgba(245, 158, 11, 0.10);
+      --warn-border: rgba(245, 158, 11, 0.28);
+      --warn-text: #fbbf24;
+
+      /* Diff Colors */
+      --diff-del-bg: rgba(239, 68, 68, 0.14);
+      --diff-del-text: #fca5a5;
+      --diff-del-num: #f87171;
+      --diff-add-bg: rgba(16, 185, 129, 0.14);
+      --diff-add-text: #86efac;
+      --diff-add-num: #34d399;
+      --diff-num-col: #52525b;
+      --diff-hunk-bg: #19191e;
+      --diff-hunk-text: #a1a1aa;
+
+      /* Code Syntax Highlighting */
+      --syn-kw: #c084fc;
+      --syn-fn: #38bdf8;
+      --syn-str: #4ade80;
+      --syn-type: #fbbf24;
+      --syn-comment: #71717a;
+      --syn-num: #fb923c;
+      --code-block-bg: #101014;
+      --code-block-border: #27272a;
+    }
+
+    /* ==========================================================================
+       BASE & RESET
+       ========================================================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100vh;
+      overflow: hidden; /* Page must not scroll */
+      background-color: var(--bg-app);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    button, input, textarea, select {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
+    }
+
+    /* Workbench Main Shell (1440x900 base target, fits without page scroll) */
+    .app-shell {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: var(--bg-app);
+    }
+
+    /* Subtle Slim Scrollbars for Inner Panes */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    /* ==========================================================================
+       COLUMN 1: LEFT SIDEBAR (~260px)
+       ========================================================================== */
+    .col-left {
+      width: 260px;
+      min-width: 260px;
+      max-width: 260px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      overflow: hidden;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    /* Brand Header */
+    .left-header {
+      padding: 12px 14px 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      height: 46px;
+      min-height: 46px;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-logo {
+      width: 22px;
+      height: 22px;
+      border-radius: var(--radius-md);
+      background-color: var(--accent);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-name {
+      font-size: 13.5px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+    }
+
+    .brand-badge {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      font-weight: 500;
+      border: 1px solid var(--accent-border);
+    }
+
+    /* Scrollable Inner Sidebar */
+    .left-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Section Label */
+    .section-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      padding: 0 6px 5px 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Workspace Switcher List */
+    .workspace-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .workspace-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 8px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: background 0.12s, color 0.12s;
+    }
+
+    .workspace-item:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .workspace-item.active {
+      background-color: var(--bg-active);
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .workspace-item-main {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      overflow: hidden;
+    }
+
+    .workspace-icon {
+      width: 14px;
+      height: 14px;
+      opacity: 0.75;
+      flex-shrink: 0;
+    }
+
+    .workspace-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 12.5px;
+    }
+
+    .active-indicator {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background-color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* Conversation History */
+    .conv-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .conv-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: background 0.12s, color 0.12s;
+    }
+
+    .conv-item:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .conv-item.active {
+      background-color: var(--bg-active);
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .conv-title {
+      font-size: 12.5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+    }
+
+    /* Status Dots */
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .dot-running {
+      background-color: var(--status-running);
+      box-shadow: 0 0 0 2px var(--accent-subtle);
+    }
+
+    .dot-waiting {
+      background-color: var(--status-waiting);
+      opacity: 0.9;
+    }
+
+    .dot-resuming {
+      background-color: var(--status-resuming);
+      animation: pulse-resuming 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    .dot-failed {
+      background-color: var(--status-failed);
+      opacity: 0.9;
+    }
+
+    .dot-done {
+      background-color: var(--status-done);
+      opacity: 0.7;
+    }
+
+    @keyframes pulse-resuming {
+      0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 0.35;
+        transform: scale(0.8);
+      }
+    }
+
+    /* Agents Parallel Run Section */
+    .agents-panel {
+      background-color: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 9px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .agent-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      padding: 2px 0;
+    }
+
+    .agent-id {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-primary);
+    }
+
+    .agent-pill {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      font-weight: 500;
+    }
+
+    .agent-pill.done {
+      background-color: var(--bg-hover);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .agent-pill.running {
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      border: 1px solid var(--accent-border);
+    }
+
+    .agent-pill.queued {
+      background-color: var(--bg-surface-subtle);
+      color: var(--text-muted);
+      border: 1px solid var(--border-subtle);
+    }
+
+    /* Pipeline Flow Indicator */
+    .pipeline-container {
+      margin-top: 3px;
+      padding-top: 7px;
+      border-top: 1px dashed var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .pipeline-caption {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+    }
+
+    .pipeline-flow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 5px 7px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .pipe-node {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .pipe-node.done {
+      color: var(--text-secondary);
+    }
+
+    .pipe-node.active {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .pipe-node.queued {
+      color: var(--text-muted);
+    }
+
+    .pipe-arrow {
+      color: var(--border-strong);
+      font-size: 11px;
+    }
+
+    /* Left Sidebar Footer */
+    .left-footer {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: var(--bg-sidebar);
+      height: 44px;
+      min-height: 44px;
+    }
+
+    .runtime-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .runtime-ping {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: #10b981;
+    }
+
+    .theme-toggle-btn {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      border-radius: var(--radius-md);
+      padding: 4px 7px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11.5px;
+      transition: all 0.15s;
+    }
+
+    .theme-toggle-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    /* ==========================================================================
+       COLUMN 2: CENTER PANE (flex: 1)
+       ========================================================================== */
+    .col-center {
+      flex: 1;
+      min-width: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      overflow: hidden;
+    }
+
+    /* Center Top Status Bar */
+    .center-top-bar {
+      height: 46px;
+      min-height: 46px;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      flex-shrink: 0;
+    }
+
+    .status-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .step-indicator {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 500;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .step-pulse-ring {
+      position: relative;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .step-pulse-ring::after {
+      content: "";
+      position: absolute;
+      top: -3px;
+      left: -3px;
+      right: -3px;
+      bottom: -3px;
+      border-radius: 50%;
+      border: 1.5px solid var(--accent);
+      opacity: 0.6;
+      animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.6); opacity: 0.8; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    .step-sep {
+      color: var(--border-strong);
+    }
+
+    .checkpoint-badge {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-secondary);
+      font-size: 11.5px;
+    }
+
+    .resume-count-badge {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      border: 1px solid var(--accent-border);
+      padding: 1px 6px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+
+    /* Control Button Group */
+    .status-bar-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-ctrl {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      color: var(--text-secondary);
+      transition: all 0.12s;
+    }
+
+    .btn-ctrl:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    .btn-ctrl.btn-stop:hover {
+      background-color: rgba(220, 38, 38, 0.08);
+      color: #dc2626;
+      border-color: rgba(220, 38, 38, 0.3);
+    }
+
+    /* Center Chat Thread */
+    .center-thread {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .msg-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .msg-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .msg-avatar {
+      width: 20px;
+      height: 20px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .avatar-user {
+      background-color: var(--border-strong);
+      color: var(--text-primary);
+    }
+
+    .avatar-assistant {
+      background-color: var(--accent);
+      color: #ffffff;
+    }
+
+    .msg-sender {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .msg-time {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    .msg-chip {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+      background-color: var(--bg-hover);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+    }
+
+    .msg-body {
+      font-size: 13.5px;
+      line-height: 1.55;
+      color: var(--text-primary);
+      padding-left: 28px;
+    }
+
+    /* Markdown Elements */
+    .msg-body h3 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin: 10px 0 5px 0;
+      color: var(--text-primary);
+    }
+
+    .msg-body h3:first-child {
+      margin-top: 0;
+    }
+
+    .msg-body p {
+      margin-bottom: 8px;
+    }
+
+    .msg-body ul {
+      margin: 6px 0 10px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .msg-body li {
+      color: var(--text-primary);
+    }
+
+    .msg-body code:not(pre code) {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+      background-color: var(--bg-surface-subtle);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+    }
+
+    /* Small Table */
+    .md-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 11.5px;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+
+    .md-table th {
+      background-color: var(--bg-surface-subtle);
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-align: left;
+      padding: 5px 9px;
+      border-bottom: 1px solid var(--border-subtle);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .md-table th:last-child {
+      border-right: none;
+    }
+
+    .md-table td {
+      padding: 5px 9px;
+      border-bottom: 1px solid var(--border-subtle);
+      border-right: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+    }
+    .md-table td:last-child {
+      border-right: none;
+    }
+
+    .md-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Collapsed Tool Rows (Monospace) */
+    .tools-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin: 10px 0;
+    }
+
+    .tool-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: var(--tool-bg);
+      border: 1px solid var(--tool-border);
+      border-radius: var(--radius-md);
+      padding: 5px 10px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      transition: background 0.12s, border-color 0.12s;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tool-row:hover {
+      background-color: var(--tool-hover);
+      border-color: var(--border-strong);
+    }
+
+    .tool-main {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      overflow: hidden;
+      white-space: pre;
+    }
+
+    .tool-prefix {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .tool-path {
+      color: var(--text-secondary);
+    }
+
+    .tool-diff-badge {
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .tool-diff-badge .add { color: #059669; }
+    .tool-diff-badge .del { color: #dc2626; }
+
+    .tool-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10.5px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    /* Interrupted / Auto-resumed Warning Row */
+    .tool-row.tool-interrupted {
+      background-color: var(--warn-bg);
+      border-color: var(--warn-border);
+      color: var(--warn-text);
+    }
+
+    .tool-row.tool-interrupted .tool-prefix {
+      color: var(--warn-text);
+      font-weight: 600;
+    }
+
+    .tool-row.tool-interrupted .tool-path {
+      color: var(--warn-text);
+    }
+
+    .tool-row.tool-interrupted .tool-meta {
+      color: var(--warn-text);
+      font-weight: 500;
+    }
+
+    /* Code Block in Chat */
+    .code-block-card {
+      margin: 10px 0;
+      border: 1px solid var(--code-block-border);
+      border-radius: var(--radius-lg);
+      background-color: var(--code-block-bg);
+      overflow: hidden;
+    }
+
+    .code-block-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 10px;
+      background-color: var(--bg-surface-subtle);
+      border-bottom: 1px solid var(--code-block-border);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .code-block-pre {
+      padding: 9px 12px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.5;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    /* Composer */
+    .center-composer {
+      padding: 10px 18px 12px 18px;
+      border-top: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .composer-box {
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      background-color: var(--bg-surface-subtle);
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .composer-box:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+
+    .composer-textarea {
+      width: 100%;
+      min-height: 48px;
+      max-height: 100px;
+      border: none;
+      outline: none;
+      background: transparent;
+      padding: 8px 10px;
+      color: var(--text-primary);
+      font-size: 13px;
+      line-height: 1.45;
+      resize: none;
+    }
+
+    .composer-textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    .composer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 9px 6px 9px;
+      border-top: 1px solid transparent;
+    }
+
+    .composer-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chip-selector {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: var(--radius-md);
+      background-color: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      font-size: 11.5px;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.12s;
+    }
+
+    .chip-selector:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    .chip-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--accent);
+    }
+
+    .chip-runtime-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 0 4px;
+    }
+
+    .composer-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .shortcut-hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .btn-send {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-md);
+      border: none;
+      background-color: var(--accent);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background-color 0.15s, transform 0.05s;
+    }
+
+    .btn-send:hover {
+      background-color: var(--accent-hover);
+    }
+
+    .btn-send:active {
+      transform: scale(0.96);
+    }
+
+    /* ==========================================================================
+       COLUMN 3: RIGHT PANE (~520px)
+       ========================================================================== */
+    .col-right {
+      width: 520px;
+      min-width: 520px;
+      max-width: 520px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg-surface);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    /* Tabs Header */
+    .right-tabs-bar {
+      height: 46px;
+      min-height: 46px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .tabs-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      height: 100%;
+    }
+
+    .tab-btn {
+      position: relative;
+      height: 30px;
+      padding: 0 12px;
+      border-radius: var(--radius-md);
+      background: transparent;
+      border: none;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.12s, background-color 0.12s;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-primary);
+      background-color: var(--bg-hover);
+    }
+
+    .tab-btn.active {
+      color: var(--text-primary);
+      background-color: var(--bg-active);
+      font-weight: 600;
+    }
+
+    .tab-btn.active::after {
+      content: "";
+      position: absolute;
+      bottom: -8px;
+      left: 12px;
+      right: 12px;
+      height: 2px;
+      background-color: var(--accent);
+      border-radius: 2px;
+    }
+
+    .tab-badge {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      background-color: var(--accent-subtle);
+      color: var(--accent);
+      font-weight: 600;
+      border: 1px solid var(--accent-border);
+    }
+
+    .tabs-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tab-action-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 11px;
+      transition: all 0.12s;
+    }
+
+    .tab-action-icon:hover {
+      background-color: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    /* File Path Header */
+    .diff-file-header {
+      padding: 6px 14px;
+      background-color: var(--bg-surface-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .file-path-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .file-path-icon {
+      color: var(--text-secondary);
+      width: 13px;
+      height: 13px;
+    }
+
+    .file-diff-stats {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .stat-add {
+      color: #059669;
+      background: rgba(5, 150, 105, 0.08);
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+    }
+
+    .stat-del {
+      color: #dc2626;
+      background: rgba(220, 38, 38, 0.08);
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+    }
+
+    /* Column Legend */
+    .diff-col-legend {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid var(--border-subtle);
+      background-color: var(--bg-surface);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--text-muted);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      flex-shrink: 0;
+    }
+
+    .legend-side {
+      padding: 4px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .legend-side:first-child {
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    /* Diff Viewport (Scrollable) */
+    .diff-viewport {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: auto;
+      background-color: var(--bg-surface);
+    }
+
+    /* Side-by-Side Diff Table */
+    .diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      line-height: 1.5;
+    }
+
+    /* Column Sizing: 28px line number column, remaining width for code */
+    .diff-table col.col-ln {
+      width: 28px;
+    }
+    .diff-table col.col-code {
+      width: calc(50% - 28px);
+    }
+
+    /* Hunk separator row */
+    .diff-row-hunk td {
+      background-color: var(--diff-hunk-bg);
+      color: var(--diff-hunk-text);
+      font-size: 10px;
+      padding: 3px 10px;
+      border-top: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    /* Diff Rows & Cells */
+    .diff-row td {
+      vertical-align: top;
+      padding: 0;
+      white-space: pre;
+    }
+
+    /* Line Numbers */
+    .ln {
+      text-align: right;
+      padding: 0 4px !important;
+      color: var(--diff-num-col);
+      user-select: none;
+      font-size: 10px;
+      width: 28px;
+      min-width: 28px;
+      max-width: 28px;
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    /* Code Cells: Keep code clean, clipped neatly at cell boundary */
+    .code-cell {
+      padding: 0 6px !important;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: clip;
+      white-space: pre;
+    }
+
+    .right-border {
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    /* Removed lines: faint red bg */
+    .del-line {
+      background-color: var(--diff-del-bg);
+      color: var(--diff-del-text);
+    }
+    .del-line.ln {
+      color: var(--diff-del-num);
+    }
+
+    /* Added lines: faint green bg */
+    .add-line {
+      background-color: var(--diff-add-bg);
+      color: var(--diff-add-text);
+    }
+    .add-line.ln {
+      color: var(--diff-add-num);
+    }
+
+    /* Empty state filler */
+    .empty-cell {
+      background-color: var(--bg-surface-subtle);
+      color: transparent;
+      user-select: none;
+    }
+
+    /* Syntax Tokens */
+    .syn-kw { color: var(--syn-kw); font-weight: 500; }
+    .syn-fn { color: var(--syn-fn); }
+    .syn-str { color: var(--syn-str); }
+    .syn-type { color: var(--syn-type); }
+    .syn-cm { color: var(--syn-comment); font-style: italic; }
+    .syn-num { color: var(--syn-num); }
+
+    /* SVG Utilities */
+    .icon {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      stroke-width: 2;
+      stroke: currentColor;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+
+    <!-- ======================================================================
+         COLUMN 1: LEFT SIDEBAR (~260px)
+         ====================================================================== -->
+    <aside class="col-left">
+      <!-- App Name & Brand Header -->
+      <div class="left-header">
+        <div class="brand-group">
+          <div class="brand-logo">π</div>
+          <span class="brand-name">pi-work</span>
+          <span class="brand-badge">durable</span>
+        </div>
+      </div>
+
+      <!-- Scrollable Inner Sidebar Content -->
+      <div class="left-body">
+        
+        <!-- Workspace Switcher List -->
+        <div class="workspace-section">
+          <div class="section-label">
+            <span>Workspaces</span>
+            <span style="font-size: 10px; opacity: 0.6;">3 active</span>
+          </div>
+          <div class="workspace-list">
+            <div class="workspace-item active" title="Active workspace">
+              <div class="workspace-item-main">
+                <svg class="workspace-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <span class="workspace-name">pi-work</span>
+              </div>
+              <span class="active-indicator"></span>
+            </div>
+            <div class="workspace-item" title="Switch to intranet-tools">
+              <div class="workspace-item-main">
+                <svg class="workspace-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <span class="workspace-name">intranet-tools</span>
+              </div>
+            </div>
+            <div class="workspace-item" title="Switch to notes">
+              <div class="workspace-item-main">
+                <svg class="workspace-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <span class="workspace-name">notes</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Conversation History: Today -->
+        <div class="conv-section">
+          <div class="section-label">Today</div>
+          <div class="conv-group">
+            <div class="conv-item active" title="Refactor durable tool execution (running)">
+              <span class="status-dot dot-running" title="running = accent"></span>
+              <span class="conv-title">Refactor durable tool execution</span>
+            </div>
+            <div class="conv-item" title="Implement SQLite checkpoint store (resuming)">
+              <span class="status-dot dot-resuming" title="resuming = blue-gray pulse"></span>
+              <span class="conv-title">Implement SQLite checkpoint store</span>
+            </div>
+            <div class="conv-item" title="Fix session replay memory leak (done)">
+              <span class="status-dot dot-done" title="done = gray"></span>
+              <span class="conv-title">Fix session replay memory leak</span>
+            </div>
+            <div class="conv-item" title="Auth token auto-refresh sidecar (waiting)">
+              <span class="status-dot dot-waiting" title="waiting = amber muted"></span>
+              <span class="conv-title">Auth token auto-refresh sidecar</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Conversation History: Yesterday -->
+        <div class="conv-section">
+          <div class="section-label">Yesterday</div>
+          <div class="conv-group">
+            <div class="conv-item" title="Distributed lock retry backoff (failed)">
+              <span class="status-dot dot-failed" title="failed = muted red"></span>
+              <span class="conv-title">Distributed lock retry backoff</span>
+            </div>
+            <div class="conv-item" title="Postgres WAL stream listener (done)">
+              <span class="status-dot dot-done" title="done = gray"></span>
+              <span class="conv-title">Postgres WAL stream listener</span>
+            </div>
+            <div class="conv-item" title="Benchmark agent latency p99 (done)">
+              <span class="status-dot dot-done" title="done = gray"></span>
+              <span class="conv-title">Benchmark agent latency p99</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Agents (Parallel agents & Pipeline indicator) -->
+        <div class="agents-section">
+          <div class="section-label">Agents</div>
+          <div class="agents-panel">
+            <div class="agent-row">
+              <span class="agent-id">
+                <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                test-writer
+              </span>
+              <span class="agent-pill done">done</span>
+            </div>
+            <div class="agent-row">
+              <span class="agent-id" style="color: var(--accent);">
+                <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                coder
+              </span>
+              <span class="agent-pill running">step 7/12</span>
+            </div>
+            <div class="agent-row">
+              <span class="agent-id" style="color: var(--text-muted);">
+                <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                auditor
+              </span>
+              <span class="agent-pill queued">queued</span>
+            </div>
+
+            <!-- Small Pipeline Indicator: test-writer → coder → auditor -->
+            <div class="pipeline-container">
+              <span class="pipeline-caption">Pipeline Flow</span>
+              <div class="pipeline-flow">
+                <span class="pipe-node done">test-writer</span>
+                <span class="pipe-arrow">→</span>
+                <span class="pipe-node active">coder</span>
+                <span class="pipe-arrow">→</span>
+                <span class="pipe-node queued">auditor</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Left Sidebar Footer: Runtime Meta & Theme Switcher -->
+      <div class="left-footer">
+        <div class="runtime-meta">
+          <span class="runtime-ping"></span>
+          <span>Pi Durable Runtime</span>
+        </div>
+        <button class="theme-toggle-btn" id="theme-btn" title="Toggle Light / Dark Theme">
+          <svg class="icon" style="width:13px;height:13px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <span id="theme-label">Theme</span>
+        </button>
+      </div>
+    </aside>
+
+
+    <!-- ======================================================================
+         COLUMN 2: CENTER PANE (flex: 1)
+         ====================================================================== -->
+    <main class="col-center">
+      <!-- Top Status Bar -->
+      <header class="center-top-bar">
+        <div class="status-bar-left">
+          <div class="step-indicator" title="Current agent execution step">
+            <span class="step-pulse-ring"></span>
+            <span>coder · editing src/tools/edit.ts</span>
+          </div>
+          <span class="step-sep">/</span>
+          <div class="checkpoint-badge" title="Durable snapshot timestamp">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+            <span>12s ago</span>
+          </div>
+          <span class="step-sep">/</span>
+          <div class="resume-count-badge" title="Automatic recoveries from interrupted streams">
+            <span>↻ 2</span>
+          </div>
+        </div>
+
+        <div class="status-bar-controls">
+          <button class="btn-ctrl" title="Pause execution">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+            Pause
+          </button>
+          <button class="btn-ctrl" title="Continue execution">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            Continue
+          </button>
+          <button class="btn-ctrl btn-stop" title="Halt pipeline & preserve checkpoint">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
+            Stop
+          </button>
+        </div>
+      </header>
+
+      <!-- Scrollable Chat Thread -->
+      <div class="center-thread">
+
+        <!-- User Message -->
+        <div class="msg-group">
+          <div class="msg-header">
+            <div class="msg-avatar avatar-user">U</div>
+            <span class="msg-sender">You</span>
+            <span class="msg-time">10:41 AM</span>
+          </div>
+          <div class="msg-body">
+            <p>The tool execution engine drops in-flight tool state whenever the model stream terminates unexpectedly. Let's make <code>src/tools/edit.ts</code> checkpoint-aware so if an interruption occurs during a multi-hunk patch, it can recover from the last durable transaction without re-running previous operations.</p>
+          </div>
+        </div>
+
+        <!-- Assistant Message (Coder Agent) -->
+        <div class="msg-group">
+          <div class="msg-header">
+            <div class="msg-avatar avatar-assistant">π</div>
+            <span class="msg-sender">coder</span>
+            <span class="msg-chip">grok-4.6</span>
+            <span class="msg-time">10:42 AM</span>
+          </div>
+          <div class="msg-body">
+            <h3>Durable Patch Recovery Architecture</h3>
+            <p>I have structured the recovery mechanism around an append-only journal. Before disk mutation, each patch hunk is verified against the state machine and assigned an atomic checkpoint hash:</p>
+
+            <ul>
+              <li>Persist pending hunk operations into <code>DurableTransactionJournal</code></li>
+              <li>Commit checkpoint barrier before invoking file system mutation</li>
+              <li>Replay uncommitted hunks automatically on stream reconnection</li>
+            </ul>
+
+            <!-- Markdown Table -->
+            <table class="md-table">
+              <thead>
+                <tr>
+                  <th>Phase</th>
+                  <th>State Durability</th>
+                  <th>Recovery Guarantee</th>
+                  <th>Checkpoint Key</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>pre-check</code></td>
+                  <td>In-Memory Snapshot</td>
+                  <td>Idempotent retry</td>
+                  <td><code>#chk_019a</code></td>
+                </tr>
+                <tr>
+                  <td><code>hunk-apply</code></td>
+                  <td>WAL Disk Journal</td>
+                  <td>Resume from last hunk</td>
+                  <td><code>#chk_019b</code></td>
+                </tr>
+                <tr>
+                  <td><code>commit</code></td>
+                  <td>Atomic Flush</td>
+                  <td>Zero-loss replay</td>
+                  <td><code>#chk_019c</code></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- Monospace Collapsed Tool Rows -->
+            <div class="tools-feed">
+              <div class="tool-row" title="Click to view tool execution trace">
+                <div class="tool-main">
+                  <span class="tool-prefix">✎ write</span>
+                  <span class="tool-path">src/…/tools/foo.ts</span>
+                  <span class="tool-diff-badge"><span class="add">+12</span> <span class="del">−3</span></span>
+                </div>
+                <div class="tool-meta">
+                  <span>78ms</span>
+                </div>
+              </div>
+
+              <div class="tool-row" title="Click to view tool execution trace">
+                <div class="tool-main">
+                  <span class="tool-prefix">📖 read</span>
+                  <span class="tool-path">docs/…/a.md</span>
+                </div>
+                <div class="tool-meta">
+                  <span>19ms</span>
+                </div>
+              </div>
+
+              <!-- Special Interrupted & Auto-resumed Row -->
+              <div class="tool-row tool-interrupted" title="Interrupted stream auto-resumed via Pi Durable runtime">
+                <div class="tool-main">
+                  <span class="tool-prefix">⚠ model stream interrupted</span>
+                  <span class="tool-path">· auto-resumed from checkpoint #14</span>
+                </div>
+                <div class="tool-meta">
+                  <span>↻ restored in 180ms</span>
+                </div>
+              </div>
+
+              <div class="tool-row" title="Click to view test runner logs">
+                <div class="tool-main">
+                  <span class="tool-prefix">$ bash</span>
+                  <span class="tool-path">npm test</span>
+                  <span style="color: #059669; font-weight: 500;">✓ 23 passed</span>
+                </div>
+                <div class="tool-meta">
+                  <span>1.42s</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Code Block with Syntax Colors -->
+            <div class="code-block-card">
+              <div class="code-block-bar">
+                <span>typescript · src/tools/edit.ts</span>
+                <span>checkpoint #14</span>
+              </div>
+              <pre class="code-block-pre"><code><span class="syn-cm">// Wrap multi-hunk file patch in durable transaction</span>
+<span class="syn-kw">export async function</span> <span class="syn-fn">applyDurablePatch</span>(
+  path: <span class="syn-type">string</span>,
+  hunks: <span class="syn-type">PatchHunk</span>[],
+  ctx: <span class="syn-type">DurableExecutionContext</span>
+): <span class="syn-type">Promise</span>&lt;<span class="syn-type">EditResult</span>&gt; {
+  <span class="syn-kw">const</span> journal = <span class="syn-kw">await</span> ctx.<span class="syn-fn">openJournal</span>(<span class="syn-str">`patch:${path}`</span>);
+
+  <span class="syn-kw">for</span> (<span class="syn-kw">const</span> [idx, hunk] <span class="syn-kw">of</span> hunks.<span class="syn-fn">entries</span>()) {
+    <span class="syn-kw">if</span> (journal.<span class="syn-fn">isCommitted</span>(idx)) <span class="syn-kw">continue</span>; <span class="syn-cm">// skip applied</span>
+    <span class="syn-kw">await</span> <span class="syn-fn">applyHunkAtomic</span>(path, hunk);
+    <span class="syn-kw">await</span> ctx.<span class="syn-fn">checkpoint</span>({ step: idx, hash: hunk.sha256 });
+  }
+
+  <span class="syn-kw">return</span> journal.<span class="syn-fn">finalize</span>();
+}</code></pre>
+            </div>
+
+            <p style="margin-top: 8px; color: var(--text-secondary); font-size: 13px;">
+              The side-by-side diff is populated in the right inspection pane. Review the transactional rollback safeguards before we trigger the auditor agent.
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Composer at Bottom -->
+      <footer class="center-composer">
+        <div class="composer-box">
+          <textarea class="composer-textarea" placeholder="Instruct coder or ask auditor to verify edge cases... (e.g. 'Simulate socket timeout at hunk #3')"></textarea>
+          <div class="composer-bar">
+            <div class="composer-chips">
+              <!-- Role / Model Selector Chip -->
+              <div class="chip-selector" title="Active agent role and LLM model">
+                <span class="chip-dot"></span>
+                <span>coder · grok-4.6</span>
+                <svg class="icon" style="width:11px;height:11px;opacity:0.7;" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              <span class="chip-runtime-meta">ctx: 24.8k / 128k</span>
+            </div>
+
+            <div class="composer-actions">
+              <span class="shortcut-hint">⌘↵ send</span>
+              <button class="btn-send" title="Send instruction (Cmd+Enter)">
+                <svg class="icon" style="width:13px;height:13px;" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </main>
+
+
+    <!-- ======================================================================
+         COLUMN 3: RIGHT PANE (~520px)
+         ====================================================================== -->
+    <aside class="col-right">
+      <!-- Tabs Header: Diff | File | Markdown -->
+      <header class="right-tabs-bar">
+        <nav class="tabs-nav">
+          <button class="tab-btn active" title="Side-by-side diff view">
+            Diff
+            <span class="tab-badge">1</span>
+          </button>
+          <button class="tab-btn" title="Full file content">
+            File
+          </button>
+          <button class="tab-btn" title="Rendered Markdown view">
+            Markdown
+          </button>
+        </nav>
+
+        <div class="tabs-actions">
+          <button class="tab-action-icon" title="Toggle Unified / Split View">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
+          </button>
+          <button class="tab-action-icon" title="Copy file path">
+            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- File Path Header -->
+      <div class="diff-file-header">
+        <div class="file-path-title">
+          <svg class="file-path-icon icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          <span>src/tools/edit.ts</span>
+        </div>
+        <div class="file-diff-stats">
+          <span class="stat-add">+28</span>
+          <span class="stat-del">−14</span>
+        </div>
+      </div>
+
+      <!-- Column Legend -->
+      <div class="diff-col-legend">
+        <div class="legend-side">
+          <span>ORIGINAL (HEAD~1)</span>
+          <span>ln 41-55</span>
+        </div>
+        <div class="legend-side">
+          <span>WORKING COPY (TRANSACTIONAL)</span>
+          <span>ln 41-69</span>
+        </div>
+      </div>
+
+      <!-- Side-by-Side Diff Table Viewport -->
+      <div class="diff-viewport">
+        <table class="diff-table">
+          <colgroup>
+            <col class="col-ln">
+            <col class="col-code">
+            <col class="col-ln">
+            <col class="col-code">
+          </colgroup>
+
+          <tbody>
+            <!-- Hunk Header -->
+            <tr class="diff-row-hunk">
+              <td colspan="4">@@ -41,14 +41,28 @@ export async function applyPatch</td>
+            </tr>
+
+            <!-- Context Line (Unchanged) -->
+            <tr class="diff-row">
+              <td class="ln">41</td>
+              <td class="code-cell right-border"><span class="syn-cm">// Apply patch to working tree</span></td>
+              <td class="ln">41</td>
+              <td class="code-cell"><span class="syn-cm">// Apply patch to working tree</span></td>
+            </tr>
+
+            <!-- Removed vs Added Signature -->
+            <tr class="diff-row">
+              <td class="ln del-line">42</td>
+              <td class="code-cell del-line right-border"><span class="syn-kw">export async function</span> <span class="syn-fn">applyPatch</span>(</td>
+              <td class="ln add-line">42</td>
+              <td class="code-cell add-line"><span class="syn-kw">export async function</span> <span class="syn-fn">applyPatch</span>(</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">43</td>
+              <td class="code-cell del-line right-border">  path: <span class="syn-type">string</span>,</td>
+              <td class="ln add-line">43</td>
+              <td class="code-cell add-line">  path: <span class="syn-type">string</span>,</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">44</td>
+              <td class="code-cell del-line right-border">  hunks: <span class="syn-type">PatchHunk</span>[]</td>
+              <td class="ln add-line">44</td>
+              <td class="code-cell add-line">  hunks: <span class="syn-type">PatchHunk</span>[],</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">45</td>
+              <td class="code-cell add-line">  ctx: <span class="syn-type">DurableExecutionContext</span></td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">45</td>
+              <td class="code-cell del-line right-border">): <span class="syn-type">Promise</span>&lt;<span class="syn-type">boolean</span>&gt; {</td>
+              <td class="ln add-line">46</td>
+              <td class="code-cell add-line">): <span class="syn-type">Promise</span>&lt;<span class="syn-type">EditResult</span>&gt; {</td>
+            </tr>
+
+            <!-- Context Line (Unchanged) -->
+            <tr class="diff-row">
+              <td class="ln">46</td>
+              <td class="code-cell right-border">  <span class="syn-kw">const</span> raw = fs.<span class="syn-fn">readFileSync</span>(path);</td>
+              <td class="ln">47</td>
+              <td class="code-cell">  <span class="syn-kw">const</span> raw = fs.<span class="syn-fn">readFileSync</span>(path);</td>
+            </tr>
+
+            <!-- Added Journal Setup -->
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">48</td>
+              <td class="code-cell add-line">  <span class="syn-kw">const</span> journal = <span class="syn-kw">await</span> ctx.<span class="syn-fn">openJournal</span>();</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">49</td>
+              <td class="code-cell add-line">  <span class="syn-kw">let</span> state = raw;</td>
+            </tr>
+
+            <!-- Context Line (Unchanged) -->
+            <tr class="diff-row">
+              <td class="ln">47</td>
+              <td class="code-cell right-border">  </td>
+              <td class="ln">50</td>
+              <td class="code-cell">  </td>
+            </tr>
+
+            <!-- Removed Direct Loop vs Added Safe Loop -->
+            <tr class="diff-row">
+              <td class="ln del-line">48</td>
+              <td class="code-cell del-line right-border">  <span class="syn-kw">for</span> (<span class="syn-kw">const</span> hunk <span class="syn-kw">of</span> hunks) {</td>
+              <td class="ln add-line">51</td>
+              <td class="code-cell add-line">  <span class="syn-kw">for</span> (<span class="syn-kw">const</span> [idx, hunk] <span class="syn-kw">of</span> hunks.<span class="syn-fn">entries</span>()) {</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">52</td>
+              <td class="code-cell add-line">    <span class="syn-kw">if</span> (journal.<span class="syn-fn">isCommitted</span>(idx)) <span class="syn-kw">continue</span>;</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">49</td>
+              <td class="code-cell del-line right-border">    raw = <span class="syn-fn">mutateHunk</span>(raw, hunk);</td>
+              <td class="ln add-line">53</td>
+              <td class="code-cell add-line">    state = <span class="syn-fn">mutateHunk</span>(state, hunk);</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">50</td>
+              <td class="code-cell del-line right-border">    fs.<span class="syn-fn">writeFileSync</span>(path, raw);</td>
+              <td class="ln add-line">54</td>
+              <td class="code-cell add-line">    <span class="syn-kw">await</span> journal.<span class="syn-fn">writeWal</span>(idx, hunk);</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">55</td>
+              <td class="code-cell add-line">    <span class="syn-kw">await</span> ctx.<span class="syn-fn">checkpoint</span>({ step: idx });</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln">51</td>
+              <td class="code-cell right-border">  }</td>
+              <td class="ln">56</td>
+              <td class="code-cell">  }</td>
+            </tr>
+
+            <!-- Flush and Return -->
+            <tr class="diff-row">
+              <td class="ln empty-cell"></td>
+              <td class="code-cell empty-cell right-border"></td>
+              <td class="ln add-line">57</td>
+              <td class="code-cell add-line">  fs.<span class="syn-fn">writeFileSync</span>(path, state);</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln del-line">52</td>
+              <td class="code-cell del-line right-border">  <span class="syn-kw">return</span> <span class="syn-kw">true</span>;</td>
+              <td class="ln add-line">58</td>
+              <td class="code-cell add-line">  <span class="syn-kw">return</span> journal.<span class="syn-fn">finalize</span>();</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln">53</td>
+              <td class="code-cell right-border">}</td>
+              <td class="ln">59</td>
+              <td class="code-cell">}</td>
+            </tr>
+
+            <!-- Context Lines -->
+            <tr class="diff-row">
+              <td class="ln">54</td>
+              <td class="code-cell right-border"></td>
+              <td class="ln">60</td>
+              <td class="code-cell"></td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln">55</td>
+              <td class="code-cell right-border"><span class="syn-cm">// Validate checksum integrity</span></td>
+              <td class="ln">61</td>
+              <td class="code-cell"><span class="syn-cm">// Validate checksum integrity</span></td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln">56</td>
+              <td class="code-cell right-border"><span class="syn-kw">export function</span> <span class="syn-fn">verifyChecksum</span>(f: <span class="syn-type">string</span>) {</td>
+              <td class="ln">62</td>
+              <td class="code-cell"><span class="syn-kw">export function</span> <span class="syn-fn">verifyChecksum</span>(f: <span class="syn-type">string</span>) {</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln">57</td>
+              <td class="code-cell right-border">  <span class="syn-kw">return</span> crypto.<span class="syn-fn">createHash</span>(<span class="syn-str">'sha256'</span>)</td>
+              <td class="ln">63</td>
+              <td class="code-cell">  <span class="syn-kw">return</span> crypto.<span class="syn-fn">createHash</span>(<span class="syn-str">'sha256'</span>)</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln">58</td>
+              <td class="code-cell right-border">    .<span class="syn-fn">update</span>(f).<span class="syn-fn">digest</span>(<span class="syn-str">'hex'</span>);</td>
+              <td class="ln">64</td>
+              <td class="code-cell">    .<span class="syn-fn">update</span>(f).<span class="syn-fn">digest</span>(<span class="syn-str">'hex'</span>);</td>
+            </tr>
+            <tr class="diff-row">
+              <td class="ln">59</td>
+              <td class="code-cell right-border">}</td>
+              <td class="ln">65</td>
+              <td class="code-cell">}</td>
+            </tr>
+
+          </tbody>
+        </table>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Lightweight Vanilla JS for Theme Toggle & Interactive Previews -->
+  <script>
+    (function() {
+      // Theme Toggle (Light / Dark)
+      const themeBtn = document.getElementById('theme-btn');
+      const themeLabel = document.getElementById('theme-label');
+      
+      themeBtn.addEventListener('click', function() {
+        const isDark = document.documentElement.classList.toggle('dark');
+        themeLabel.textContent = isDark ? 'Dark' : 'Light';
+      });
+
+      // Tab switcher: Keeps Diff active by default as requested
+      const tabs = document.querySelectorAll('.tab-btn');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+          tabs.forEach(t => t.classList.remove('active'));
+          this.classList.add('active');
+        });
+      });
+
+      // Workspace selector active item switch
+      const wsItems = document.querySelectorAll('.workspace-item');
+      wsItems.forEach(item => {
+        item.addEventListener('click', function() {
+          wsItems.forEach(w => {
+            w.classList.remove('active');
+            const ind = w.querySelector('.active-indicator');
+            if (ind) ind.remove();
+          });
+          this.classList.add('active');
+          const ind = document.createElement('span');
+          ind.className = 'active-indicator';
+          this.appendChild(ind);
+        });
+      });
+
+      // Conversation item active state
+      const convItems = document.querySelectorAll('.conv-item');
+      convItems.forEach(item => {
+        item.addEventListener('click', function() {
+          convItems.forEach(c => c.classList.remove('active'));
+          this.classList.add('active');
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
