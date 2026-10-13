@@ -32,7 +32,7 @@
 ## 运行
 ```bash
 # 仓库根目录，Node ≥ 22
-node --test tests/unit/
+node --test tests/unit/*.test.mjs
 npx playwright install chromium
 npx playwright test -c tests/playwright.config.mjs
 ```

@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
@@ -10,6 +10,10 @@ import { formatSSE } from './src/core/sse.mjs';
 import { validateRole, validatePipeline } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { diffStats, unifiedDiff } from './src/core/diff.mjs';
+import { publicSettings } from './src/core/settings.mjs';
+import { cloneGitRepo } from './src/core/git-import.mjs';
+import { scanPlugins, scanSkills } from './src/core/catalog.mjs';
+import { loadRoleTemplates } from './src/core/roles-load.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
 import { loadFauxLLM, createFauxLLM } from './src/llm/faux.mjs';
 import { createOpenAILLM } from './src/llm/openai.mjs';
@@ -123,8 +127,29 @@ function serveStatic(req, res, url) {
 }
 
 const store = createSqliteStore(DATA_DIR);
+await loadRoleTemplates(store, path.join(ROOT, 'roles'));
+
+{
+  const cur = await store.getSettings();
+  const seed = {};
+  if (!cur.baseUrl && process.env.LLM_BASE_URL) seed.baseUrl = process.env.LLM_BASE_URL;
+  if (!cur.apiKey && process.env.LLM_API_KEY) seed.apiKey = process.env.LLM_API_KEY;
+  if (!cur.models?.default && process.env.LLM_MODEL) seed.models = { default: process.env.LLM_MODEL };
+  if (Object.keys(seed).length) await store.putSettings(seed);
+}
+
 const llm = LLM_KIND === 'openai'
-  ? createOpenAILLM()
+  ? createOpenAILLM({
+      getConfig: async ({ roleId, model: modelOverride } = {}) => {
+        const s = await store.getSettings();
+        const models = s.models || {};
+        return {
+          baseUrl: s.baseUrl || process.env.LLM_BASE_URL,
+          apiKey: s.apiKey || process.env.LLM_API_KEY,
+          model: modelOverride || (roleId && models[roleId]) || models.default || process.env.LLM_MODEL,
+        };
+      },
+    })
   : (process.env.PI_WORK_FAUX_SCRIPT ? loadFauxLLM(process.env.PI_WORK_FAUX_SCRIPT) : createFauxLLM({ turns: [] }));
 
 const orch = createOrchestrator({
@@ -178,7 +203,33 @@ async function routeApi(req, res, url) {
 
   if (m === 'POST' && p === '/api/workspaces') {
     const body = await readBody(req);
-    if (!body?.path || !body?.name) {
+    if (!body?.name) {
+      sendJson(res, 400, { error: 'name and path required' });
+      return;
+    }
+    if (body.gitUrl) {
+      const id = randomUUID();
+      const dest = path.join(DATA_DIR, 'workspaces', id, 'repo');
+      try {
+        await cloneGitRepo({ url: body.gitUrl, branch: body.branch, dest });
+      } catch (err) {
+        sendJson(res, err.status || 400, { error: err.message || 'git clone failed' });
+        return;
+      }
+      const ws = await store.createWorkspace({
+        id,
+        name: body.name,
+        path: dest,
+        source: 'git',
+        gitUrl: body.gitUrl,
+        branch: body.branch || null,
+        rootPath: dest,
+        worktrees: [],
+      });
+      sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path, source: ws.source, gitUrl: ws.gitUrl, branch: ws.branch, rootPath: ws.rootPath, worktrees: ws.worktrees });
+      return;
+    }
+    if (!body?.path) {
       sendJson(res, 400, { error: 'name and path required' });
       return;
     }
@@ -188,8 +239,8 @@ async function routeApi(req, res, url) {
       sendJson(res, 400, { error: 'path does not exist' });
       return;
     }
-    const ws = await store.createWorkspace({ name: body.name, path: body.path });
-    sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path });
+    const ws = await store.createWorkspace({ name: body.name, path: body.path, source: 'local', rootPath: body.path, worktrees: [] });
+    sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path, source: ws.source, gitUrl: ws.gitUrl, branch: ws.branch, rootPath: ws.rootPath, worktrees: ws.worktrees });
     return;
   }
 
@@ -412,6 +463,71 @@ async function routeApi(req, res, url) {
     if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
     const pipe = await store.createPipeline(v.value);
     sendJson(res, 201, pipe);
+    return;
+  }
+
+  if (p === '/api/settings' && m === 'GET') {
+    sendJson(res, 200, publicSettings(await store.getSettings()));
+    return;
+  }
+  if (p === '/api/settings' && m === 'PUT') {
+    const body = await readBody(req);
+    const saved = await store.putSettings(body || {});
+    sendJson(res, 200, publicSettings(saved));
+    return;
+  }
+
+  if (p === '/api/about' && m === 'GET') {
+    let pkg = { name: 'pi-work', version: '0.0.0', description: '' };
+    try {
+      pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    } catch { /* ignore */ }
+    sendJson(res, 200, { name: pkg.name, version: pkg.version, description: pkg.description || '' });
+    return;
+  }
+
+  if (p === '/api/plugins' && m === 'GET') {
+    const list = await scanPlugins(path.join(ROOT, 'plugins'));
+    const s = await store.getSettings();
+    const enabledMap = s.plugins || {};
+    sendJson(res, 200, list.map((pl) => ({
+      ...pl,
+      enabled: enabledMap[pl.id] !== false,
+    })));
+    return;
+  }
+  if (p === '/api/plugins' && m === 'POST') {
+    const body = await readBody(req);
+    const id = String(body?.id || body?.name || '').trim();
+    if (!id || !/^[a-zA-Z0-9._-]{1,64}$/.test(id)) {
+      sendJson(res, 400, { error: 'invalid plugin id' });
+      return;
+    }
+    const dir = path.join(ROOT, 'plugins', id);
+    await fs.mkdir(dir, { recursive: true });
+    const manifest = {
+      id,
+      name: body.name || id,
+      description: body.description || '',
+      version: body.version || '0.0.0',
+      source: body.source || 'imported',
+    };
+    await fs.writeFile(path.join(dir, 'plugin.json'), JSON.stringify(manifest, null, 2));
+    sendJson(res, 201, { ...manifest, enabled: true });
+    return;
+  }
+  match = p.match(/^\/api\/plugins\/([^/]+)$/);
+  if (match && m === 'PUT') {
+    const id = decodeURIComponent(match[1]);
+    const body = await readBody(req);
+    const enabled = body?.enabled !== false;
+    await store.putSettings({ plugins: { [id]: enabled } });
+    sendJson(res, 200, { id, enabled });
+    return;
+  }
+
+  if (p === '/api/skills' && m === 'GET') {
+    sendJson(res, 200, await scanSkills(path.join(ROOT, 'skills')));
     return;
   }
 

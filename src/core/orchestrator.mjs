@@ -199,6 +199,8 @@ export function createOrchestrator({
             signal: rt.abort.signal,
             onProgress: () => markProgress(rt),
             tools: rt.role?.tools,
+            model: rt.role?.model,
+            roleId: rt.role?.id,
           });
           attempt = 1;
         } catch (err) {

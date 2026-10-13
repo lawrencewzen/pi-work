@@ -27,7 +27,7 @@ const wechat = wechatEnabled ? new WechatChannel({
 if (wechat) await wechat.start();
 // 整个会话库的任务图（每个持久任务的状态），所有 SSE 连接共用一份
 const taskGraph = await harness.taskGraph(ctx);
-const publicFile = (name) => new URL(`../public/${name}`, import.meta.url);
+const publicFile = (name) => new URL(`./public/${name}`, import.meta.url);
 const staticAssets = {
 	"/": { file: publicFile("index.html"), type: "text/html; charset=utf-8" },
 	"/style.css": { file: publicFile("style.css"), type: "text/css; charset=utf-8" },

@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
   subgraph Browser["浏览器（三栏 UI）"]
-    L[左栏：工作区 / 会话 / Agent 状态]
+    L[左栏：工作区 / 会话 / 扁平 Agent 列表 / 运行中]
     C[中栏：对话 + 工具行 + 状态条]
     R[右栏：Diff / 文件 / Markdown 编辑器]
   end
@@ -43,3 +43,13 @@ flowchart LR
 - **Pipeline**：角色有序组合，带交接产物和失败回退。
 - **Monitor**：每个 Agent 记录最后进展时间；超时或流中断 → 从最近检查点续跑，计数显示在状态条（↻ N）。
 - **工具沙箱**：所有路径解析后必须位于工作区根目录内；写操作生成 diff 并入库，供右栏展示。
+
+## Git 工作区与 worktree
+
+`POST /api/workspaces` 支持 `{name, gitUrl, branch?}`：用 `git clone --depth 1`（`execFile`，无 shell）把仓库克隆到 `PI_WORK_DATA_DIR/workspaces/<id>/repo`，并把该路径写入 `workspace.path`。工作区记录额外字段：
+
+```
+{ source: 'local' | 'git', gitUrl, branch, rootPath, worktrees: [] }
+```
+
+**TODO：git worktree 尚未实现。** `worktrees` 目前恒为空数组，预留给后续 `git worktree add`（每个对话/Agent 独立工作树、互不覆盖工作区文件）。不要在当前版本假设存在多 worktree。

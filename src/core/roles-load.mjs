@@ -1,0 +1,28 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { validateRole } from './config.mjs';
+
+export async function loadRoleTemplates(store, dir) {
+  let files;
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+  const loaded = [];
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    let obj;
+    try {
+      obj = JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'));
+    } catch {
+      continue;
+    }
+    const v = validateRole(obj);
+    if (!v.ok) continue;
+    const existing = await store.getRole(v.value.id);
+    if (!existing) await store.createRole(v.value);
+    loaded.push(v.value.id);
+  }
+  return loaded;
+}

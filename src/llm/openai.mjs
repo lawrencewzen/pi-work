@@ -116,16 +116,24 @@ export function createOpenAILLM({
   apiKey = process.env.LLM_API_KEY,
   model = process.env.LLM_MODEL,
   stream = false,
+  getConfig,
 } = {}) {
-  const root = String(baseUrl || '').replace(/\/$/, '');
-
   return {
-    async next({ messages, signal, tools } = {}) {
+    async next({ messages, signal, tools, model: modelOverride, roleId } = {}) {
       if (signal?.aborted) throw abortError();
       const last = [...(messages || [])].reverse().find((m) => m.role === 'assistant' || m.role === 'tool' || m.role === 'user');
       if (last?.role === 'assistant' && !last.tool_calls && (last.text || last.content)) {
         return { type: 'end' };
       }
+
+      let cfg = { baseUrl, apiKey, model };
+      if (typeof getConfig === 'function') {
+        const extra = await getConfig({ roleId, model: modelOverride });
+        if (extra && typeof extra === 'object') cfg = { ...cfg, ...extra };
+      }
+      const root = String(cfg.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, '');
+      const key = cfg.apiKey || process.env.LLM_API_KEY;
+      const mdl = modelOverride || cfg.model || process.env.LLM_MODEL;
 
       const allowed = Array.isArray(tools) && tools.length
         ? TOOL_DEFS.filter((t) => tools.includes(t.function.name))
@@ -138,10 +146,10 @@ export function createOpenAILLM({
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+            ...(key ? { authorization: `Bearer ${key}` } : {}),
           },
           body: JSON.stringify({
-            model,
+            model: mdl,
             messages: toOpenAIMessages(messages),
             tools: allowed,
             stream: !!stream,

@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
 
 const DEFAULT_ROLE = {
   id: 'default',
@@ -50,7 +51,16 @@ export function createSqliteStore(dir) {
     CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      path TEXT NOT NULL
+      path TEXT NOT NULL,
+      source TEXT,
+      git_url TEXT,
+      branch TEXT,
+      root_path TEXT,
+      worktrees_json TEXT
+    );
+    CREATE TABLE IF NOT EXISTS settings (
+      id TEXT PRIMARY KEY,
+      json TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
@@ -120,10 +130,24 @@ export function createSqliteStore(dir) {
     );
   `);
 
+  {
+    const wsCols = new Set(db.prepare('PRAGMA table_info(workspaces)').all().map((c) => c.name));
+    const addCol = (name, ddl) => {
+      if (!wsCols.has(name)) db.exec(`ALTER TABLE workspaces ADD COLUMN ${ddl}`);
+    };
+    addCol('source', 'source TEXT');
+    addCol('git_url', 'git_url TEXT');
+    addCol('branch', 'branch TEXT');
+    addCol('root_path', 'root_path TEXT');
+    addCol('worktrees_json', 'worktrees_json TEXT');
+  }
+
   const q = {
-    insWs: db.prepare('INSERT INTO workspaces (id, name, path) VALUES (?, ?, ?)'),
-    listWs: db.prepare('SELECT id, name, path FROM workspaces'),
-    getWs: db.prepare('SELECT id, name, path FROM workspaces WHERE id = ?'),
+    insWs: db.prepare('INSERT INTO workspaces (id, name, path, source, git_url, branch, root_path, worktrees_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
+    listWs: db.prepare('SELECT * FROM workspaces'),
+    getWs: db.prepare('SELECT * FROM workspaces WHERE id = ?'),
+    getSettings: db.prepare('SELECT json FROM settings WHERE id = ?'),
+    putSettings: db.prepare('INSERT INTO settings (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json'),
     insConv: db.prepare(`INSERT INTO conversations (
       id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
       current_step, pipeline_step, updated_at, created_at, role_id, pipeline_id,
@@ -201,18 +225,42 @@ export function createSqliteStore(dir) {
     return r;
   }
 
+  function wsFromRow(r) {
+    if (!r) return undefined;
+    return {
+      id: r.id,
+      name: r.name,
+      path: r.path,
+      source: r.source || (r.git_url ? 'git' : 'local'),
+      gitUrl: r.git_url ?? null,
+      branch: r.branch ?? null,
+      rootPath: r.root_path || r.path,
+      // TODO: git worktrees are not implemented yet; reserved for future `git worktree add`.
+      worktrees: p(r.worktrees_json) || [],
+    };
+  }
+
   return {
-    async createWorkspace({ id, name, path: wsPath } = {}) {
-      const ws = { id: id || randomUUID(), name, path: wsPath };
-      q.insWs.run(ws.id, ws.name, ws.path);
+    async createWorkspace({ id, name, path: wsPath, source, gitUrl, branch, rootPath, worktrees } = {}) {
+      const ws = {
+        id: id || randomUUID(),
+        name,
+        path: wsPath,
+        source: source || (gitUrl ? 'git' : 'local'),
+        gitUrl: gitUrl ?? null,
+        branch: branch ?? null,
+        rootPath: rootPath || wsPath,
+        // TODO: git worktrees are not implemented yet; reserved for future `git worktree add`.
+        worktrees: Array.isArray(worktrees) ? worktrees : [],
+      };
+      q.insWs.run(ws.id, ws.name, ws.path, ws.source, ws.gitUrl, ws.branch, ws.rootPath, j(ws.worktrees));
       return ws;
     },
     async listWorkspaces() {
-      return q.listWs.all().map((r) => ({ id: r.id, name: r.name, path: r.path }));
+      return q.listWs.all().map(wsFromRow);
     },
     async getWorkspace(id) {
-      const r = q.getWs.get(id);
-      return r ? { id: r.id, name: r.name, path: r.path } : undefined;
+      return wsFromRow(q.getWs.get(id));
     },
 
     async createConversation({
@@ -420,6 +468,17 @@ export function createSqliteStore(dir) {
     async getPipeline(id) {
       const r = q.getPipe.get(id);
       return r ? { id: r.id, name: r.name, steps: p(r.steps_json) } : undefined;
+    },
+
+    async getSettings() {
+      const row = q.getSettings.get('app');
+      return normalizeSettings(row ? p(row.json) : DEFAULT_SETTINGS);
+    },
+    async putSettings(patch = {}) {
+      const cur = await this.getSettings();
+      const next = mergeSettings(cur, patch);
+      q.putSettings.run('app', j(next));
+      return next;
     },
 
     close() {

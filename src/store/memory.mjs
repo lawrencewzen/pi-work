@@ -1,7 +1,22 @@
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
 
 function clone(v) {
   return v == null ? v : JSON.parse(JSON.stringify(v));
+}
+
+function shapeWorkspace({ id, name, path, source, gitUrl, branch, rootPath, worktrees } = {}) {
+  return {
+    id: id || randomUUID(),
+    name,
+    path,
+    source: source || (gitUrl ? 'git' : 'local'),
+    gitUrl: gitUrl ?? null,
+    branch: branch ?? null,
+    rootPath: rootPath || path,
+    // TODO: git worktrees are not implemented yet; reserved for future `git worktree add`.
+    worktrees: Array.isArray(worktrees) ? worktrees : [],
+  };
 }
 
 const DEFAULT_ROLE = {
@@ -21,6 +36,7 @@ export function createMemoryStore() {
   const eventSeq = new Map();
   const roles = new Map([[DEFAULT_ROLE.id, { ...DEFAULT_ROLE }]]);
   const pipelines = new Map();
+  let settings = normalizeSettings(DEFAULT_SETTINGS);
 
   const convMsgs = (cid) => {
     if (!messages.has(cid)) messages.set(cid, []);
@@ -28,8 +44,8 @@ export function createMemoryStore() {
   };
 
   return {
-    async createWorkspace({ id, name, path } = {}) {
-      const ws = { id: id || randomUUID(), name, path };
+    async createWorkspace(input = {}) {
+      const ws = shapeWorkspace(input);
       workspaces.set(ws.id, ws);
       return clone(ws);
     },
@@ -218,6 +234,14 @@ export function createMemoryStore() {
     },
     async getPipeline(id) {
       return clone(pipelines.get(id));
+    },
+
+    async getSettings() {
+      return clone(settings);
+    },
+    async putSettings(patch = {}) {
+      settings = mergeSettings(settings, patch);
+      return clone(settings);
     },
   };
 }
