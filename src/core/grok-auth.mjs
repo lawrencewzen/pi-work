@@ -29,6 +29,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { attachUsage } from './usage.mjs';
 
 export const GROK_ISSUER = 'https://auth.x.ai';
 export const GROK_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
@@ -434,7 +435,7 @@ export function actionFromGrokResponses(json) {
       try { args = JSON.parse(args); } catch { args = { _raw: args }; }
     }
     if (args == null || typeof args !== 'object') args = {};
-    return { type: 'tool', name: String(call.name), args };
+    return attachUsage({ type: 'tool', name: String(call.name), args }, json?.usage);
   }
   const texts = [];
   for (const item of output) {
@@ -452,7 +453,7 @@ export function actionFromGrokResponses(json) {
     err.code = 'E_EMPTY_OUTPUT';
     throw err;
   }
-  return { type: 'text', text };
+  return attachUsage({ type: 'text', text }, json?.usage);
 }
 
 /**

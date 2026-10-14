@@ -26,6 +26,10 @@
 | E7 | E2E | 两个工作区两个 Agent 同时 running，总耗时显著小于串行 | e2e/control |
 | E8 | E2E | 断流桩 → 自动重试，续跑计数 ≥1，最终写入正确 | e2e/control |
 | E9 | E2E | 执行中 `kill -9`，同数据目录重启 → 恢复中 → 完成；bash 副作用和写文件不重复，工具行不重复 | e2e/recovery |
+| E10 | E2E | 无用量时上下文芯片为 `—`；模型上报 `total_tokens` 后显示 `16.4k / 200k`（窗口来自 `LLM_CONTEXT_WINDOW`），刷新仍在 | e2e/composer-chips |
+| E11 | E2E | 模型未配置时芯片为 `Agent`；跑完无 usage 的回合后上下文仍为 `—` | e2e/composer-chips |
+| E12 | E2E | 芯片显示设置里的默认模型；菜单切换角色/流水线/默认 Agent，文案与 `GET /conversations/:cid` 一致，刷新保持 | e2e/composer-chips |
+| E13 | E2E | 无对话时点击芯片只提示、不打开菜单；运行中点击提示忙碌且不切换 | e2e/composer-chips |
 
 ## 判定
 全部单元测试通过，并且 `tests/e2e/*.md` 由 QA 在真实服务器上手工通过，才算交付。`*.spec.mjs` 失败仍须修，但不能代替手工清单。测试 Agent 只改测试/契约，不改功能代码。

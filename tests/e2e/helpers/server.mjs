@@ -30,8 +30,14 @@ export async function startServer({ script = 'basic.json', dataDir, port = 0, ex
   return { url, dataDir, proc, kill, logs: () => log, port: Number(new URL(url).port) };
 }
 
-export async function api(url, method, p, body) {
-  const res = await fetch(url + '/api' + p, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+export async function authToken(dataDir) {
+  return (await fs.readFile(path.join(dataDir, 'auth.token'), 'utf8')).trim();
+}
+
+export async function api(url, method, p, body, token) {
+  const headers = { 'content-type': 'application/json' };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch(url + '/api' + p, { method, headers, body: body == null ? undefined : JSON.stringify(body) });
   const text = await res.text();
   return { status: res.status, body: text ? JSON.parse(text) : null };
 }

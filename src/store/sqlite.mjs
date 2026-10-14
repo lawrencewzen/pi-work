@@ -26,6 +26,17 @@ function p(v) {
   try { return JSON.parse(v); } catch { return v; }
 }
 
+function usageToSql(v) {
+  if (v == null) return null;
+  return JSON.stringify(v);
+}
+
+function usageFromSql(v) {
+  const parsed = p(v);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return parsed;
+}
+
 function metaFromMsg(msg = {}, prev = null) {
   const meta = prev && typeof prev === 'object' ? { ...prev } : {};
   for (const k of MESSAGE_META_KEYS) {
@@ -64,6 +75,7 @@ function convFromRow(row) {
     workspacePath: row.workspace_path,
     lastProgressAt: row.last_progress_at,
     originalText: row.original_text,
+    usage: usageFromSql(row.usage_json),
   };
 }
 
@@ -188,6 +200,11 @@ export function createSqliteStore(dir) {
   }
 
   {
+    const convCols = new Set(db.prepare('PRAGMA table_info(conversations)').all().map((c) => c.name));
+    if (!convCols.has('usage_json')) db.exec('ALTER TABLE conversations ADD COLUMN usage_json TEXT');
+  }
+
+  {
     const row = db.prepare('SELECT version FROM schema_version LIMIT 1').get();
     if (!row) db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
     else if (row.version < SCHEMA_VERSION) db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
@@ -203,15 +220,15 @@ export function createSqliteStore(dir) {
     insConv: db.prepare(`INSERT INTO conversations (
       id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
       current_step, pipeline_step, updated_at, created_at, role_id, pipeline_id,
-      workspace_path, last_progress_at, original_text
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+      workspace_path, last_progress_at, original_text, usage_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
     getConv: db.prepare('SELECT * FROM conversations WHERE id = ?'),
     listConv: db.prepare('SELECT * FROM conversations WHERE workspace_id = ? ORDER BY updated_at DESC'),
     listRecoverable: db.prepare("SELECT * FROM conversations WHERE status IN ('running','recovering')"),
     updConv: db.prepare(`UPDATE conversations SET
       workspace_id=?, title=?, status=?, auto_continues=?, retries=?, last_checkpoint_at=?,
       current_step=?, pipeline_step=?, updated_at=?, role_id=?, pipeline_id=?,
-      workspace_path=?, last_progress_at=?, original_text=?
+      workspace_path=?, last_progress_at=?, original_text=?, usage_json=?
       WHERE id=?`),
     insMsg: db.prepare('INSERT INTO messages (id, conversation_id, role, text, tool_json, seq, meta_json) VALUES (?,?,?,?,?,?,?)'),
     getMsg: db.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq ASC, rowid ASC'),
@@ -345,11 +362,13 @@ export function createSqliteStore(dir) {
         workspacePath: workspacePath ?? null,
         lastProgressAt: now,
         originalText: null,
+        usage: null,
       };
       q.insConv.run(
         conv.id, conv.workspaceId, conv.title, conv.status, conv.autoContinues, conv.retries,
         conv.lastCheckpointAt, conv.currentStep, conv.pipelineStep, conv.updatedAt, conv.createdAt,
         conv.roleId, conv.pipelineId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
+        usageToSql(conv.usage),
       );
       return conv;
     },
@@ -388,18 +407,20 @@ export function createSqliteStore(dir) {
           workspacePath: null,
           lastProgressAt: now,
           originalText: null,
+          usage: null,
         };
         q.insConv.run(
           conv.id, conv.workspaceId, conv.title, conv.status, conv.autoContinues, conv.retries,
           conv.lastCheckpointAt, conv.currentStep, conv.pipelineStep, conv.updatedAt, conv.createdAt,
           conv.roleId, conv.pipelineId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
+          usageToSql(conv.usage),
         );
       }
       const next = { ...conv, ...patch, updatedAt: Date.now() };
       q.updConv.run(
         next.workspaceId, next.title, next.status, next.autoContinues, next.retries, next.lastCheckpointAt,
         next.currentStep, next.pipelineStep, next.updatedAt, next.roleId, next.pipelineId,
-        next.workspacePath, next.lastProgressAt, next.originalText, id,
+        next.workspacePath, next.lastProgressAt, next.originalText, usageToSql(next.usage), id,
       );
       return next;
     },

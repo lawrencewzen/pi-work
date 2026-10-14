@@ -1190,19 +1190,26 @@ a:hover {
   gap: 6px;
 }
 
+.chip-selector-wrap {
+  position: relative;
+}
+
 .chip-selector {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  margin: 0;
   padding: 2.5px 7px;
   border-radius: var(--radius-md);
   background-color: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   font-size: 11px;
   font-family: var(--font-mono);
+  line-height: 1.2;
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
+  appearance: none;
   transition: all 0.12s;
 }
 .chip-selector:hover {
@@ -1216,6 +1223,66 @@ a:hover {
   height: 5.5px;
   border-radius: 50%;
   background-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.chip-menu {
+  display: none;
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.chip-menu.is-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.chip-menu-label {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.chip-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chip-menu-item:hover,
+.chip-menu-item[aria-selected="true"] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.chip-menu-model {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .chip-runtime-meta {

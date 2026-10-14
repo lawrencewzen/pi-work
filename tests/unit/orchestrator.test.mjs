@@ -100,6 +100,93 @@ test('message after stop starts a new run in the same conversation', async () =>
   assert.ok(msgs.some((m) => m.role === 'assistant' && m.text === 'resumed-reply'));
 });
 
+test('model usage is stored from the latest call and emitted on SSE', async () => {
+  const prevWindow = process.env.LLM_CONTEXT_WINDOW;
+  process.env.LLM_CONTEXT_WINDOW = '128000';
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  let n = 0;
+  const llm = {
+    async next() {
+      n += 1;
+      if (n === 1) {
+        return {
+          type: 'text',
+          text: 'first',
+          usage: { prompt_tokens: 1000, completion_tokens: 10, total_tokens: 1010 },
+        };
+      }
+      if (n === 2) {
+        return {
+          type: 'text',
+          text: 'second',
+          usage: { prompt_tokens: 1500, completion_tokens: 20, total_tokens: 1520 },
+        };
+      }
+      return { type: 'end' };
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({ llm, store });
+  const events = [];
+  orch.subscribe('U', (ev) => events.push(ev));
+  try {
+    await orch.start('U', { workspacePath: w, text: 'go' });
+    await waitFor(() => orch.status('U').status === 'done');
+    const conv = await store.getConversation('U');
+    assert.equal(conv.usage.total, 1520);
+    assert.equal(conv.usage.input, 1500);
+    assert.notEqual(conv.usage.total, 1010 + 1520);
+    const usageEvents = events.filter((ev) => ev.event === 'usage');
+    assert.equal(usageEvents.length, 2);
+    assert.equal(usageEvents[0].data.contextLabel, '1k / 128k');
+    assert.equal(usageEvents[1].data.contextLabel, '1.5k / 128k');
+    assert.equal(usageEvents[1].data.contextWindow, 128000);
+    assert.equal(usageEvents[1].data.usage.total, 1520);
+    assert.equal(orch.status('U').usage.total, 1520);
+  } finally {
+    if (prevWindow == null) delete process.env.LLM_CONTEXT_WINDOW;
+    else process.env.LLM_CONTEXT_WINDOW = prevWindow;
+  }
+});
+
+test('a run with no provider usage does not invent token counts', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  let n = 0;
+  const llm = {
+    async next() {
+      n += 1;
+      if (n === 1) return { type: 'text', text: 'hi' };
+      return { type: 'end' };
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({ llm, store });
+  const events = [];
+  orch.subscribe('N', (ev) => events.push(ev));
+  await orch.start('N', { workspacePath: w, text: 'go' });
+  await waitFor(() => orch.status('N').status === 'done');
+  const conv = await store.getConversation('N');
+  assert.equal(conv.usage ?? null, null);
+  assert.equal(events.some((ev) => ev.event === 'usage'), false);
+  assert.equal(orch.status('N').usage ?? null, null);
+});
+
+test('a later run can clear a conversation role', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  const store = createMemoryStore();
+  await store.createRole({ id: 'coder', name: 'Coder', systemPrompt: 'code', tools: ['read'] });
+  const llm = { async next() { return { type: 'end' }; } };
+  const orch = createOrchestrator({ llm, store });
+  await orch.start('C', { workspacePath: w, text: 'a', roleId: 'coder', pipelineId: null });
+  await waitFor(() => orch.status('C').status === 'done');
+  assert.equal((await store.getConversation('C')).roleId, 'coder');
+  await orch.start('C', { workspacePath: w, text: 'b', roleId: null, pipelineId: null });
+  await waitFor(() => orch.status('C').status === 'done');
+  const conv = await store.getConversation('C');
+  assert.equal(conv.roleId, null);
+  assert.equal(conv.pipelineId ?? null, null);
+});
+
 test('stream cut is retried and run completes', async () => {
   const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
   const llm = createFauxLLM({ turns: [{ text: 'part1' }, { cut: true }, { text: 'final' }] });

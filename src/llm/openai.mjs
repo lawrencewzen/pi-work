@@ -1,4 +1,5 @@
 import { actionFromGrokResponses, redactAuthText, toGrokResponsesBody } from '../core/grok-auth.mjs';
+import { attachUsage } from '../core/usage.mjs';
 
 const TOOL_DEFS = [
   {
@@ -245,11 +246,11 @@ export function createOpenAILLM({
         const tc = toolCalls[0];
         const name = tc.function?.name || tc.name;
         const args = parseArgs(tc.function?.arguments ?? tc.arguments);
-        return { type: 'tool', name, args };
+        return attachUsage({ type: 'tool', name, args }, json?.usage);
       }
       const text = msg?.content;
       if (text == null || String(text).trim() === '') throw emptyOutput();
-      return { type: 'text', text: String(text) };
+      return attachUsage({ type: 'text', text: String(text) }, json?.usage);
     },
   };
 }
