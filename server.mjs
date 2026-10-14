@@ -10,7 +10,25 @@ import { validateRole, validatePipeline, TOOLS as BUILTIN_TOOLS } from './src/co
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
 import { diffStats, liveDiff } from './src/core/diff.mjs';
-import { publicSettings } from './src/core/settings.mjs';
+import { publicSettings, isMaskedOrEmptyApiKey } from './src/core/settings.mjs';
+import {
+  VENDOR_PRESETS,
+  publicSource,
+  migrateLegacySettings,
+  resolveRoleTarget,
+  hasAvailableSource,
+  validateRoleModels,
+  createApiSource,
+  applySourcePatch,
+  grokSourceTemplate,
+  sourceFromEnv,
+  probeModels,
+  effectiveBaseUrl,
+  vendorPreset,
+  sourceNeedsKey,
+  normalizeHttpUrl,
+  GROK_SOURCE_ID,
+} from './src/core/model-sources.mjs';
 import { cloneGitRepo, stripGitUrlCredentials } from './src/core/git-import.mjs';
 import { createExtensionHost } from './src/core/extensions.mjs';
 import { describePlugins, installPlugin, PLUGIN_ID } from './src/core/plugins.mjs';
@@ -141,29 +159,65 @@ function envRequestsFaux() {
   }) === 'faux';
 }
 
+function emptyGrokStatus() {
+  return { signedIn: false, account: null, email: null, expiresAt: null, authMode: null, source: null, pending: null };
+}
+
+async function currentGrok() {
+  try {
+    return await grokAuth.status();
+  } catch {
+    return emptyGrokStatus();
+  }
+}
+
+let droppedLegacySettingsFields = false;
+
+async function ensureSettings() {
+  const current = await store.getSettings();
+  if (current.version === 2) {
+    if (!droppedLegacySettingsFields) {
+      await store.putSettings({});
+      droppedLegacySettingsFields = true;
+      return store.getSettings();
+    }
+    return current;
+  }
+  const grok = await currentGrok();
+  const migrated = migrateLegacySettings(current, { grokSignedIn: Boolean(grok?.signedIn) });
+  await store.putSettings(migrated);
+  droppedLegacySettingsFields = true;
+  const saved = await store.getSettings();
+  return saved.version === 2 ? saved : migrated;
+}
+
 async function resolveChatKind() {
   if (envRequestsFaux()) return 'faux';
   if (String(process.env.PI_WORK_LLM || '').trim().toLowerCase() === 'openai') return 'openai';
-  const [grok, settings] = await Promise.all([
-    grokAuth.status().catch(() => ({ signedIn: false })),
-    store.getSettings(),
-  ]);
-  return selectChatRuntime('', {
-    hasSession: Boolean(grok?.signedIn),
-    hasApiKey: Boolean(String(settings?.apiKey || process.env.LLM_API_KEY || '').trim()),
-    hasBaseUrl: Boolean(String(settings?.baseUrl || process.env.LLM_BASE_URL || '').trim()),
-  });
+  const [grok, settings] = await Promise.all([currentGrok(), ensureSettings()]);
+  const available = hasAvailableSource(settings, { grokSignedIn: Boolean(grok?.signedIn) });
+  return selectChatRuntime('', { hasApiKey: available });
 }
 
 async function settingsResponse(stored) {
+  const grok = await currentGrok();
   const body = publicSettings(stored);
-  try {
-    body.grok = await grokAuth.status();
-  } catch {
-    body.grok = { signedIn: false, account: null, email: null, expiresAt: null, authMode: null, source: null, pending: null };
-  }
+  body.vendors = VENDOR_PRESETS.map((item) => ({ ...item }));
+  body.sources = (stored?.version === 2 ? (stored.sources || []) : []).map((source) => publicSource(source, grok));
+  body.grok = grok;
   body.runtime = await resolveChatKind();
   return body;
+}
+
+function presentProbe(result) {
+  if (result?.ok) return { ok: true, models: result.models || [] };
+  return { ok: false, error: result?.error || 'request failed' };
+}
+
+function lastTestFrom(result) {
+  const lastTest = { ok: result?.ok === true, at: new Date().toISOString() };
+  if (!lastTest.ok) lastTest.error = result?.error || 'request failed';
+  return lastTest;
 }
 
 async function lastLlmError(cid, status) {
@@ -292,52 +346,68 @@ await loadRoleTemplates(store, path.join(ROOT, 'roles'));
 await loadPipelineTemplates(store, path.join(ROOT, 'pipelines'));
 await loadPipelineTemplates(store, path.join(ROOT, 'examples', 'pipelines'));
 
-{
-  const cur = await store.getSettings();
-  const seed = {};
-  if (!cur.baseUrl && process.env.LLM_BASE_URL) seed.baseUrl = process.env.LLM_BASE_URL;
-  if (!cur.apiKey && process.env.LLM_API_KEY) seed.apiKey = process.env.LLM_API_KEY;
-  if (!cur.models?.default && process.env.LLM_MODEL) seed.models = { default: process.env.LLM_MODEL };
-  if (Object.keys(seed).length) await store.putSettings(seed);
-}
-
 const grokAuth = createGrokAuth();
 
-async function llmConfig({ roleId, model: modelOverride } = {}) {
-  const s = await store.getSettings();
-  const models = s.models || {};
-  const configured = modelOverride || (roleId && models[roleId]) || models.default || process.env.LLM_MODEL;
-  let session = null;
-  try {
-    session = await grokAuth.resolveAccessToken();
-  } catch {
-    session = null;
+await ensureSettings();
+{
+  const baseUrl = String(process.env.LLM_BASE_URL || '').trim();
+  const apiKey = String(process.env.LLM_API_KEY || '').trim();
+  const model = String(process.env.LLM_MODEL || '').trim();
+  if (baseUrl || apiKey || model) {
+    const cur = await ensureSettings();
+    const hasApi = (cur.sources || []).some((source) => source.kind === 'api');
+    if (!hasApi) {
+      const seeded = sourceFromEnv({ baseUrl, apiKey, model });
+      if (seeded?.source) {
+        await store.putSettings({
+          sources: [...(cur.sources || []), seeded.source],
+          models: { ...(cur.models || {}), ...seeded.models },
+        });
+      }
+    }
   }
-  if (session?.accessToken) {
-    const model = configured || GROK_SESSION_MODEL;
-    return {
-      api: 'grok-responses',
-      baseUrl: grokProxyBase(),
-      apiKey: session.accessToken,
-      model,
-      headers: grokProxyHeaders(session.accessToken, model),
-      onUnauthorized: async () => {
-        try {
-          const next = await grokAuth.forceRefresh();
-          if (!next?.accessToken) return null;
-          return { apiKey: next.accessToken, headers: grokProxyHeaders(next.accessToken, model) };
-        } catch {
-          return null;
-        }
-      },
-    };
-  }
+}
+
+function chatSourceConfig(target) {
   return {
     api: 'chat',
-    baseUrl: s.baseUrl || process.env.LLM_BASE_URL,
-    apiKey: s.apiKey || process.env.LLM_API_KEY,
-    model: configured,
+    baseUrl: effectiveBaseUrl(target.source),
+    apiKey: target.source.apiKey || '',
+    model: target.model,
   };
+}
+
+async function llmConfig({ roleId, model: modelOverride } = {}) {
+  const [grok, settings] = await Promise.all([currentGrok(), ensureSettings()]);
+  const signedIn = Boolean(grok?.signedIn);
+  let target = resolveRoleTarget(settings, { roleId, model: modelOverride, grokSignedIn: signedIn });
+  if (target?.source?.kind === 'grok') {
+    let session = null;
+    try { session = await grokAuth.resolveAccessToken(); } catch { session = null; }
+    if (!session?.accessToken) {
+      target = resolveRoleTarget(settings, { roleId, model: modelOverride, grokSignedIn: false });
+    } else {
+      const model = target.model || GROK_SESSION_MODEL;
+      return {
+        api: 'grok-responses',
+        baseUrl: grokProxyBase(),
+        apiKey: session.accessToken,
+        model,
+        headers: grokProxyHeaders(session.accessToken, model),
+        onUnauthorized: async () => {
+          try {
+            const next = await grokAuth.forceRefresh();
+            if (!next?.accessToken) return null;
+            return { apiKey: next.accessToken, headers: grokProxyHeaders(next.accessToken, model) };
+          } catch {
+            return null;
+          }
+        },
+      };
+    }
+  }
+  if (!target || target.source?.kind === 'grok') throw unconfiguredModelError();
+  return chatSourceConfig(target);
 }
 
 const openaiLlm = createOpenAILLM({ getConfig: llmConfig });
@@ -350,7 +420,19 @@ const llm = {
   async next(req) {
     const kind = await resolveChatKind();
     if (kind === 'faux' && fauxLlm) return fauxLlm.next(req);
-    if (kind === 'openai') return openaiLlm.next(req);
+    if (kind === 'openai') {
+      const explicit = String(process.env.PI_WORK_LLM || '').trim().toLowerCase() === 'openai';
+      if (!explicit) {
+        const [grok, settings] = await Promise.all([currentGrok(), ensureSettings()]);
+        const target = resolveRoleTarget(settings, {
+          roleId: req?.roleId,
+          model: req?.model,
+          grokSignedIn: Boolean(grok?.signedIn),
+        });
+        if (!target) throw unconfiguredModelError();
+      }
+      return openaiLlm.next(req);
+    }
     throw unconfiguredModelError();
   },
 };
@@ -439,6 +521,139 @@ const server = createServer(async (req, res) => {
     }
   }
 });
+
+function parseSourceId(raw) {
+  let id = raw;
+  try { id = decodeURIComponent(raw); } catch { return null; }
+  if (id === GROK_SOURCE_ID) return id;
+  if (!/^[a-f0-9]{8}$/.test(id) && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(id)) return null;
+  return id;
+}
+
+async function ensureGrokSource() {
+  const settings = await ensureSettings();
+  if ((settings.sources || []).some((source) => source.kind === 'grok' || source.id === GROK_SOURCE_ID)) return settings;
+  await store.putSettings({ sources: [...(settings.sources || []), grokSourceTemplate()] });
+  return ensureSettings();
+}
+
+async function handleSources(req, res, p, m) {
+  if (p === '/api/sources' && m === 'POST') {
+    const body = await readBody(req);
+    const created = createApiSource(body || {});
+    if (!created.source) {
+      sendJson(res, 400, { error: created.error || 'invalid source' });
+      return true;
+    }
+    const settings = await ensureSettings();
+    if (settings.sources.some((source) => source.id === created.source.id)) {
+      sendJson(res, 409, { error: 'exists' });
+      return true;
+    }
+    await store.putSettings({ sources: [...settings.sources, created.source] });
+    const grok = await currentGrok();
+    sendJson(res, 201, publicSource(created.source, grok));
+    return true;
+  }
+
+  if (p === '/api/sources/test' && m === 'POST') {
+    const body = await readBody(req);
+    const settings = await ensureSettings();
+    const grok = await currentGrok();
+    if (body?.sourceId != null && String(body.sourceId).trim()) {
+      const id = parseSourceId(String(body.sourceId));
+      const source = id && settings.sources.find((item) => item.id === id);
+      if (!source) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      const override = {};
+      for (const key of ['vendor', 'baseUrl', 'apiKey']) {
+        if (body[key] != null) override[key] = body[key];
+      }
+      const hasOverride = Object.keys(override).length > 0;
+      let probeSource = source;
+      if (hasOverride) {
+        const patched = applySourcePatch(source, override);
+        if (!patched.source) {
+          sendJson(res, 400, { error: patched.error || 'invalid source' });
+          return true;
+        }
+        probeSource = patched.source;
+      }
+      const result = probeSource.kind === 'grok'
+        ? { ok: Boolean(grok.signedIn), models: [GROK_SESSION_MODEL], error: grok.signedIn ? undefined : 'signed out' }
+        : await probeModels({ baseUrl: effectiveBaseUrl(probeSource), apiKey: probeSource.apiKey });
+      if (!hasOverride) {
+        const sources = settings.sources.map((item) => (item.id === source.id ? { ...item, lastTest: lastTestFrom(result) } : item));
+        await store.putSettings({ sources });
+      }
+      sendJson(res, 200, probeSource.kind === 'grok' ? { ok: result.ok, models: result.models } : presentProbe(result));
+      return true;
+    }
+    const preset = vendorPreset(body?.vendor);
+    if (!preset) {
+      sendJson(res, 400, { error: 'unknown vendor' });
+      return true;
+    }
+    const baseUrl = body?.baseUrl != null && String(body.baseUrl).trim()
+      ? normalizeHttpUrl(body.baseUrl)
+      : (preset.id !== 'custom' ? preset.baseUrl : '');
+    const apiKey = isMaskedOrEmptyApiKey(body?.apiKey) ? '' : String(body.apiKey);
+    if (!baseUrl) {
+      sendJson(res, 400, { error: 'base url required' });
+      return true;
+    }
+    if (sourceNeedsKey({ kind: 'api', vendor: preset.id }) && !apiKey) {
+      sendJson(res, 400, { error: 'api key required' });
+      return true;
+    }
+    const result = await probeModels({ baseUrl, apiKey });
+    sendJson(res, 200, presentProbe(result));
+    return true;
+  }
+
+  const match = p.match(/^\/api\/sources\/([^/]+)$/);
+  if (!match) return false;
+  const id = parseSourceId(match[1]);
+  const settings = await ensureSettings();
+  const index = id ? settings.sources.findIndex((source) => source.id === id) : -1;
+  if (index < 0) {
+    sendJson(res, 404, { error: 'not found' });
+    return true;
+  }
+  const current = settings.sources[index];
+  if (m === 'DELETE') {
+    if (current.kind === 'grok') {
+      try { await grokAuth.logout(); } catch (err) {
+        sendGrokError(res, err);
+        return true;
+      }
+    }
+    const sources = settings.sources.filter((source) => source.id !== current.id);
+    const models = { ...(settings.models || {}) };
+    for (const [roleId, binding] of Object.entries(models)) {
+      if (binding?.sourceId === current.id) models[roleId] = null;
+    }
+    await store.putSettings({ sources, models });
+    sendJson(res, 200, { ok: true, id: current.id });
+    return true;
+  }
+  if (m === 'PUT') {
+    const body = await readBody(req);
+    const patched = applySourcePatch(current, body || {});
+    if (!patched.source) {
+      sendJson(res, 400, { error: patched.error || 'invalid source' });
+      return true;
+    }
+    const sources = settings.sources.slice();
+    sources[index] = patched.source;
+    await store.putSettings({ sources });
+    sendJson(res, 200, publicSource(patched.source, await currentGrok()));
+    return true;
+  }
+  return false;
+}
 
 async function routeApi(req, res, url) {
   const p = url.pathname.replace(/\/$/, '') || '/';
@@ -894,13 +1109,33 @@ async function routeApi(req, res, url) {
     return;
   }
 
+  if (p === '/api/sources' || p === '/api/sources/test' || /^\/api\/sources\/[^/]+$/.test(p)) {
+    if (await handleSources(req, res, p, m)) return;
+  }
+
   if (p === '/api/settings' && m === 'GET') {
-    sendJson(res, 200, await settingsResponse(await store.getSettings()));
+    sendJson(res, 200, await settingsResponse(await ensureSettings()));
     return;
   }
   if (p === '/api/settings' && m === 'PUT') {
-    const body = await readBody(req);
-    const saved = await store.putSettings(body || {});
+    const body = await readBody(req) || {};
+    const current = await ensureSettings();
+    if (body.models && typeof body.models === 'object' && !Array.isArray(body.models)) {
+      const invalid = validateRoleModels(current, body.models);
+      if (invalid) { sendJson(res, 400, { error: invalid }); return; }
+    } else if (body.models != null) {
+      sendJson(res, 400, { error: 'invalid model binding' });
+      return;
+    }
+    const patch = { ...body };
+    delete patch.sources;
+    delete patch.version;
+    delete patch.grok;
+    delete patch.provider;
+    delete patch.baseUrl;
+    delete patch.apiKey;
+    delete patch.hasApiKey;
+    const saved = await store.putSettings(patch);
     sendJson(res, 200, await settingsResponse(saved));
     return;
   }
@@ -920,7 +1155,9 @@ async function routeApi(req, res, url) {
   if (p === '/api/grok/login/poll' && m === 'POST') {
     const body = await readBody(req);
     try {
-      sendJson(res, 200, await grokAuth.pollLogin(body?.loginId));
+      const result = await grokAuth.pollLogin(body?.loginId);
+      if (result?.status === 'done') await ensureGrokSource();
+      sendJson(res, 200, result);
     } catch (err) {
       sendGrokError(res, err);
     }
