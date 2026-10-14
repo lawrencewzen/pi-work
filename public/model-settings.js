@@ -66,6 +66,7 @@ function defaultUi() {
     pickerQuery: '',
     tick: null,
     savingRoles: false,
+    rowProbes: {},
   };
 }
 
@@ -182,16 +183,6 @@ function probeResultText(test, t) {
   return formatProbeFailure(test, t) || t('src_test_failed');
 }
 
-function usableCount(state) {
-  const options = { grokSignedIn: grokSignedIn(state) };
-  let models = 0;
-  for (const source of sourcesOf(state)) {
-    if (!sourceUsable(source, options)) continue;
-    models += (source.models || []).filter((name) => typeof name === 'string' && name.trim()).length;
-  }
-  return models;
-}
-
 function bindingUsable(binding, state) {
   if (!binding) return false;
   const source = sourcesOf(state).find((item) => item.id === binding.sourceId);
@@ -273,8 +264,16 @@ function prepareEditForm(state, ui, source) {
   ui.form.maskedKey = source.apiKey || '';
   ui.form.name = source.name || '';
   ui.form.nameTouched = true;
-  ui.form.models = [...(source.models || [])];
-  ui.form.checked = Object.fromEntries((source.models || []).map((name) => [name, true]));
+  const enabled = (source.models || []).filter((name) => typeof name === 'string' && name.trim());
+  const catalog = Array.isArray(source.catalog)
+    ? source.catalog.filter((name) => typeof name === 'string' && name.trim())
+    : [];
+  const names = catalog.length ? [...catalog] : [...enabled];
+  for (const name of enabled) {
+    if (!names.includes(name)) names.push(name);
+  }
+  ui.form.models = names;
+  ui.form.checked = Object.fromEntries(names.map((name) => [name, enabled.includes(name)]));
 }
 
 function prepareGrokEdit(ui, source) {
@@ -372,7 +371,7 @@ function positionModelPop(roleId) {
   if (!pop || !btn) return;
   pop.classList.add('open');
   const rect = btn.getBoundingClientRect();
-  const modal = document.querySelector('.sm.is-models')?.getBoundingClientRect();
+  const modal = document.querySelector('.sm')?.getBoundingClientRect();
   const width = Math.min(360, Math.max(220, window.innerWidth - 16));
   pop.style.width = `${width}px`;
   let left = rect.right - width;
@@ -394,12 +393,37 @@ function dotClass(reason) {
   return 'off';
 }
 
+function rowProbeOf(state, sourceId) {
+  return ensureModelsUi(state).rowProbes?.[sourceId] || null;
+}
+
+function probeMarkHtml(probe, t, escapeHtml) {
+  if (!probe || probe.phase === 'testing') return '';
+  if (probe.ok) {
+    return `<span class="ms-probe ok" data-testid="model-row-result"><span class="ms-mark" aria-hidden="true">✓</span>${escapeHtml(t('src_row_passed'))}</span>`;
+  }
+  const text = probe.text || formatProbeFailure(probe, t) || t('src_test_failed');
+  return `<span class="ms-probe bad" data-testid="model-row-result"><span class="ms-mark" aria-hidden="true">✗</span>${escapeHtml(text)}</span>`;
+}
+
+function sourceTestButton(source, ctx, { usable, isGrok }) {
+  const { t, escapeHtml, state } = ctx;
+  const testing = rowProbeOf(state, source.id)?.phase === 'testing';
+  const label = testing
+    ? t('src_testing')
+    : (isGrok ? t('src_refresh_models') : (usable ? t('src_test') : t('src_retry')));
+  const spin = testing ? '<span class="ms-spin" aria-hidden="true"></span>' : '';
+  return `<button type="button" class="btn g btn-sm" data-action="ms-test-source" data-source-id="${escapeHtml(source.id)}" data-testid="model-row-test"${testing ? ' disabled aria-busy="true"' : ''}>${spin}${escapeHtml(label)}</button>`;
+}
+
 function renderSourceRow(source, ctx) {
   const { t, escapeHtml, state } = ctx;
   const options = { grokSignedIn: grokSignedIn(state) };
   const reason = sourceBlockReason(source, options);
   const usable = !reason;
   const isGrok = source.kind === 'grok';
+  const fresh = rowProbeOf(state, source.id);
+  const settled = fresh && fresh.phase !== 'testing' ? fresh : null;
   const bits = [];
   if (isGrok && usable) {
     const email = source.session?.email || state.settings?.grok?.email || '';
@@ -407,15 +431,18 @@ function renderSourceRow(source, ctx) {
     const exp = formatStamp(source.session?.expiresAt || state.settings?.grok?.expiresAt);
     if (exp) bits.push(`<span>${escapeHtml(t('src_token_renews', { time: exp }))}</span>`);
     bits.push(`<span>${escapeHtml(t('src_not_metered'))}</span>`);
+    if (settled) bits.push(probeMarkHtml(settled, t, escapeHtml));
   } else if (!usable) {
     const why = reasonText(source, reason, t);
     if (!isGrok && source.baseUrl) bits.push(`<span class="mono">${escapeHtml(hostLabel(source.baseUrl))}</span>`);
     else if (!isGrok && source.apiKey) bits.push(`<span class="mono">${escapeHtml(source.apiKey)}</span>`);
-    bits.push(`<span class="why">${escapeHtml(why)}</span>`);
+    if (settled && !settled.ok) bits.push(probeMarkHtml(settled, t, escapeHtml));
+    else if (why) bits.push(`<span class="why">${escapeHtml(why)}</span>`);
   } else {
     if (source.apiKey) bits.push(`<span class="mono">${escapeHtml(source.apiKey)}</span>`);
     if (source.baseUrl) bits.push(`<span class="mono">${escapeHtml(hostLabel(source.baseUrl))}</span>`);
-    if (source.lastTest?.ok) {
+    if (settled?.ok) bits.push(probeMarkHtml(settled, t, escapeHtml));
+    else if (source.lastTest?.ok) {
       const when = testedWhen(source.lastTest.at, t);
       if (when) bits.push(`<span>${escapeHtml(t('src_tested_ok', { when }))}</span>`);
     } else if (kindKey(source, state) === 'src_kind_api') {
@@ -423,13 +450,17 @@ function renderSourceRow(source, ctx) {
     }
   }
   const meta = bits.filter(Boolean).join('<span class="sep">·</span>');
-  const tags = usable
-    ? (source.models || []).map((name) => `<span class="ms-tag mono">${escapeHtml(name)}</span>`).join('')
-    : '';
+  const enabledNames = (source.models || []).filter((name) => typeof name === 'string' && name.trim());
+  const tags = !usable
+    ? ''
+    : (enabledNames.length
+      ? enabledNames.map((name) => `<span class="ms-tag mono">${escapeHtml(name)}</span>`).join('')
+      : `<span class="ms-none" data-testid="model-none-enabled">${escapeHtml(t('src_models_none'))}</span>`);
+  const testBtn = sourceTestButton(source, ctx, { usable, isGrok });
   const actions = isGrok
-    ? `<button type="button" class="btn g btn-sm" data-action="ms-test-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_refresh_models'))}</button>` +
+    ? testBtn +
       `<button type="button" class="btn g btn-sm" data-action="ms-edit-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_edit'))}</button>`
-    : `<button type="button" class="btn g btn-sm" data-action="ms-test-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(usable ? t('src_test') : t('src_retry'))}</button>` +
+    : testBtn +
       `<button type="button" class="btn g btn-sm" data-action="ms-edit-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_edit'))}</button>` +
       `<button type="button" class="btn g btn-sm" data-action="ms-delete-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('btn_delete'))}</button>`;
   return (
@@ -516,6 +547,15 @@ function renderPop(ctx) {
     parts.push(
       `<div class="ms-grp"><span class="ms-dot ${dotClass(reason)}"></span>${escapeHtml(source.name || source.id)}${note ? ` · ${escapeHtml(note)}` : ''}</div>`
     );
+    if (!reason && !names.length) {
+      parts.push(
+        `<div class="ms-pop-empty" data-testid="model-pop-empty">` +
+        `<span>${escapeHtml(t('src_no_enabled_models'))}</span>` +
+        `<button type="button" data-action="ms-edit-source" data-source-id="${escapeHtml(source.id)}" data-testid="model-choose-models">${escapeHtml(t('src_choose_models'))}</button>` +
+        `</div>`
+      );
+      continue;
+    }
     for (const name of (query ? visible : names)) {
       const selected = held && held.sourceId === source.id && held.model === name;
       const dis = reason ? ' dis' : '';
@@ -556,10 +596,10 @@ function renderKeyDrawer(ctx) {
   const test = ui.form.test;
   const result = test
     ? (test.ok
-      ? `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-dot ok"></span>${escapeHtml(t('src_test_found', { n: ui.form.models.length }))}</div>` +
+      ? `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-mark ok" aria-hidden="true">✓</span>${escapeHtml(t('src_test_found', { n: ui.form.models.length }))}</div>` +
         `<div class="ms-checks">${renderCheckboxes(ui.form.models, ui.form.checked, escapeHtml)}</div>` +
         `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn btn-sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`
-      : `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-dot bad"></span>${escapeHtml(probeResultText(test, t))}</div>` +
+      : `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-mark bad" aria-hidden="true">✗</span>${escapeHtml(probeResultText(test, t))}</div>` +
         (ui.form.models.length ? `<div class="ms-checks">${renderCheckboxes(ui.form.models, ui.form.checked, escapeHtml)}</div>` : '') +
         `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn btn-sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`)
     : (editing && ui.form.models.length
@@ -578,7 +618,7 @@ function renderKeyDrawer(ctx) {
     (hideKey ? '' : `<div class="ms-field" id="ms-key-field"><label>${escapeHtml(t('src_api_key'))}</label><div class="ms-keywrap"><input class="ms-in mono" id="ms-key" data-testid="model-key" type="${ui.form.showKey ? 'text' : 'password'}" value="${escapeHtml(ui.form.apiKey || '')}" autocomplete="off"><button type="button" class="btn g btn-sm ms-eye" id="ms-key-eye" data-action="ms-toggle-key">${escapeHtml(t(ui.form.showKey ? 'src_hide' : 'src_show'))}</button></div><div class="ms-hint">${escapeHtml(editing ? t('src_key_keep_hint') : t('src_key_hint'))}</div></div>`) +
     `<div class="ms-field"><label>${escapeHtml(t('src_name'))}</label><input class="ms-in" id="ms-name" data-testid="model-name" value="${escapeHtml(ui.form.name || '')}" autocomplete="off"><div class="ms-hint">${escapeHtml(t('src_name_hint'))}</div></div>` +
     (warn ? `<div class="ms-warn" id="ms-host-warn" data-testid="model-host-warn">${escapeHtml(warn)}</div>` : `<div class="ms-warn" id="ms-host-warn" data-testid="model-host-warn" hidden></div>`) +
-    `<div class="ms-test-row"><button type="button" class="btn" data-action="ms-test-form" data-testid="model-test"${ui.form.testing ? ' disabled' : ''}>${escapeHtml(ui.form.testing ? t('src_testing') : t('src_test_models'))}</button></div>` +
+    `<div class="ms-test-row"><button type="button" class="btn" data-action="ms-test-form" data-testid="model-test"${ui.form.testing ? ' disabled aria-busy="true"' : ''}>${ui.form.testing ? '<span class="ms-spin" aria-hidden="true"></span>' : ''}${escapeHtml(ui.form.testing ? t('src_testing') : t('src_test_models'))}</button></div>` +
     result +
     `</div>` +
     `<div class="ms-dr-foot">` +
@@ -726,7 +766,7 @@ export function renderModelsPane(ctx) {
     `<button type="button" class="sm-x ms-x" data-action="close-settings" aria-label="${escapeHtml(t('btn_cancel'))}">×</button>` +
     `<div class="ms-head"><div><h2>${escapeHtml(t('settings_tab_models'))}</h2><p>${escapeHtml(t('src_page_desc'))}</p></div></div>` +
     `<div class="ms-scroll" id="ms-scroll">` +
-    `<div class="ms-section"><div><b>${escapeHtml(t('src_sources'))}</b><span>${escapeHtml(t('src_count', { sources: sources.length, models: usableCount(state) }))}</span></div>` +
+    `<div class="ms-section"><div><b>${escapeHtml(t('src_sources'))}</b><span>${escapeHtml(t('src_count'))}</span></div>` +
     `<button type="button" class="btn btn-sm" data-action="ms-open-add" data-testid="model-add">${escapeHtml(t('src_add'))}</button></div>` +
     `<div class="ms-src" data-testid="model-source-list">${rows}</div>` +
     `<div class="ms-section ms-section-roles"><div><b>${escapeHtml(t('src_role_models'))}</b><span>${escapeHtml(t('src_role_hint'))}</span></div></div>` +
@@ -962,14 +1002,30 @@ async function testForm(ctx) {
 }
 
 async function testSourceRow(ctx, id) {
+  if (!id) return;
+  const ui = ensureModelsUi(ctx.state);
+  ui.rowProbes = ui.rowProbes || {};
+  if (ui.rowProbes[id]?.phase === 'testing') return;
+  ui.rowProbes[id] = { phase: 'testing' };
+  ctx.render();
   try {
     const result = await ctx.api('/api/sources/test', 'POST', { sourceId: id });
     await reloadSettings(ctx);
-    ctx.showToast(result?.ok ? 'src_test_ok' : (formatProbeFailure(result, ctx.t) || 'src_test_failed'));
-    ctx.render();
+    if (result?.ok) {
+      ui.rowProbes[id] = { phase: 'done', ok: true };
+    } else {
+      ui.rowProbes[id] = {
+        phase: 'done',
+        ok: false,
+        error: typeof result?.error === 'string' ? result.error : '',
+        code: typeof result?.code === 'string' ? result.code : '',
+        ...(Number.isInteger(result?.status) ? { status: result.status } : {}),
+      };
+    }
   } catch (err) {
-    ctx.showToast(knownError(err, ctx.t));
+    ui.rowProbes[id] = { phase: 'done', ok: false, text: knownError(err, ctx.t) };
   }
+  ctx.render();
 }
 
 async function saveRoles(ctx) {
@@ -1061,6 +1117,7 @@ export async function handleModelsAction(action, el, ctx) {
     return true;
   }
   if (action === 'ms-edit-source') {
+    closeModelPop(ctx.state);
     const source = sourcesOf(ctx.state).find((item) => item.id === sourceId);
     if (!source) return true;
     if (source.kind === 'grok') {
