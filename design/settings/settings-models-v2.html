@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="white-dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440, initial-scale=1">
+<title>pi-work 模型设置 v2</title>
+<style>
+[data-theme="white-dark"]{color-scheme:dark;
+--bg-app:#141414;--bg-sidebar:#111111;--bg-surface:#141414;--bg-surface-subtle:#1b1b1b;--bg-hover:#222222;--bg-active:#2a2a2a;
+--border-subtle:#262626;--border-strong:#333333;--border-focus:#6e6e6e;--text-primary:#ededed;--text-secondary:#a3a3a3;--text-muted:#6e6e6e;--text-inverse:#141414;
+--accent:#ededed;--accent-subtle:rgba(237,237,237,.06);--accent-border:rgba(237,237,237,.22);
+--ok:#8d9c92;--warn:#a8987e;--bad:#b08484;--scrim:rgba(0,0,0,.55);}
+[data-theme="white-light"]{color-scheme:light;
+--bg-app:#ffffff;--bg-sidebar:#fafafa;--bg-surface:#ffffff;--bg-surface-subtle:#f7f7f7;--bg-hover:#f2f2f2;--bg-active:#ebebeb;
+--border-subtle:#ececec;--border-strong:#dedede;--border-focus:#9a9a9a;--text-primary:#1a1a1a;--text-secondary:#6b6b6b;--text-muted:#9a9a9a;--text-inverse:#ffffff;
+--accent:#1a1a1a;--accent-subtle:rgba(26,26,26,.06);--accent-border:rgba(26,26,26,.22);
+--ok:#9aaa9f;--warn:#b8a68a;--bad:#c08f8f;--scrim:rgba(0,0,0,.25);}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg-app);color:var(--text-primary);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+.mono{font-family:ui-monospace,"SF Mono",Consolas,monospace}
+.muted{color:var(--text-muted)}.sec{color:var(--text-secondary)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}.dot.off{background:var(--text-muted)}
+.btn{height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--bg-hover)}
+.btn.p{background:var(--accent);color:var(--text-inverse);border-color:var(--accent)}
+.btn.p:hover{opacity:.9}
+.btn.g{border-color:transparent;background:transparent;color:var(--text-secondary)}
+.btn.g:hover{background:var(--bg-hover);color:var(--text-primary)}
+.btn.sm{height:24px;padding:0 8px;font-size:12px}
+.btn[disabled]{opacity:.45;cursor:default}
+.in{height:30px;width:100%;padding:0 10px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface-subtle);outline:none}
+.in:focus{border-color:var(--border-focus)}
+.tag{font-size:11px;padding:0 6px;border-radius:4px;border:1px solid var(--border-subtle);color:var(--text-secondary);background:var(--bg-surface-subtle);white-space:nowrap}
+
+/* 背景里的工作台，只做示意 */
+.bg-shell{position:fixed;inset:0;display:flex}
+.bg-side{width:260px;background:var(--bg-sidebar);border-right:1px solid var(--border-subtle)}
+.scrim{position:fixed;inset:0;background:var(--scrim)}
+
+/* 设置弹窗 */
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:1080px;height:760px;display:flex;border:1px solid var(--border-subtle);border-radius:10px;background:var(--bg-surface);overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.nav{width:200px;background:var(--bg-sidebar);border-right:1px solid var(--border-subtle);padding:16px 10px}
+.nav h3{font-size:14px;font-weight:600;padding:2px 8px 14px}
+.nav div{padding:7px 10px;border-radius:6px;color:var(--text-secondary);cursor:default}
+.nav div.on{background:var(--bg-active);color:var(--text-primary);font-weight:500}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.head{padding:22px 32px 14px;display:flex;align-items:flex-start;justify-content:space-between}
+.head h2{font-size:17px;font-weight:600}
+.head p{color:var(--text-muted);margin-top:2px}
+.body{flex:1;overflow-y:auto;padding:0 32px 24px}
+.section-title{display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px}
+.section-title b{font-size:13px;font-weight:600}
+.section-title span{color:var(--text-muted);font-size:12px;margin-left:8px}
+
+/* 模型来源 */
+.src{border:1px solid var(--border-subtle);border-radius:8px;overflow:hidden}
+.src-row{display:grid;grid-template-columns:20px 1fr auto;gap:12px;align-items:center;padding:12px 14px;border-top:1px solid var(--border-subtle)}
+.src-row:first-child{border-top:0}
+.src-row:hover{background:var(--bg-surface-subtle)}
+.src-row .t{display:flex;align-items:center;gap:8px;font-weight:500}
+.src-row .s{color:var(--text-muted);font-size:12px;margin-top:2px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.src-row .s .sep{opacity:.5}
+.src-row .acts{display:flex;gap:4px;opacity:.85}
+.src-row.err .s .why{color:var(--bad)}
+.models-inline{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+
+/* 角色模型 */
+.roles{border:1px solid var(--border-subtle);border-radius:8px}
+.role{display:grid;grid-template-columns:1fr 340px;gap:12px;align-items:center;padding:10px 14px;border-top:1px solid var(--border-subtle)}
+.role:first-child{border-top:0}
+.role .n b{font-weight:500}.role .n span{color:var(--text-muted);font-size:12px;margin-left:6px}
+.role .n div{color:var(--text-muted);font-size:12px}
+.pick{position:relative}
+.pick-btn{width:100%;height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface-subtle);display:flex;align-items:center;gap:8px;cursor:pointer;text-align:left}
+.pick-btn:hover{border-color:var(--border-focus)}
+.pick-btn .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick-btn .from{color:var(--text-muted);font-size:12px}
+.pick-btn.follow .m{color:var(--text-secondary)}
+.pick-btn.dirty{border-color:var(--warn)}
+.caret{width:10px;height:10px;border-right:1.5px solid var(--text-muted);border-bottom:1.5px solid var(--text-muted);transform:rotate(45deg) translate(-2px,-2px)}
+.pop{position:fixed;width:360px;max-height:330px;overflow:auto;background:var(--bg-surface);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.3);z-index:20;padding:6px;display:none}
+.pop.open{display:block}
+.pop .search{margin:2px 2px 6px}
+.pop .grp{font-size:11px;color:var(--text-muted);padding:8px 8px 4px;display:flex;align-items:center;gap:6px}
+.pop .opt{padding:6px 8px;border-radius:5px;display:flex;align-items:center;gap:8px;cursor:pointer}
+.pop .opt:hover{background:var(--bg-hover)}
+.pop .opt.on{background:var(--bg-active)}
+.pop .opt .x{margin-left:auto;font-size:11px;color:var(--text-muted)}
+.pop .opt.dis{opacity:.45;cursor:not-allowed}
+.pop .opt.dis:hover{background:none}
+.pop hr{border:0;border-top:1px solid var(--border-subtle);margin:4px 0}
+
+/* 底部保存条 */
+.savebar{border-top:1px solid var(--border-subtle);padding:10px 32px;display:flex;align-items:center;gap:8px;background:var(--bg-surface)}
+.savebar .msg{flex:1;color:var(--text-muted)}
+.savebar.dirty .msg{color:var(--text-secondary)}
+
+/* 添加来源抽屉 */
+.drawer-scrim{position:absolute;inset:0;background:var(--scrim);display:none}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:440px;background:var(--bg-surface);border-left:1px solid var(--border-strong);display:none;flex-direction:column}
+.show .drawer-scrim{display:block}.show .drawer{display:flex}
+.dr-head{padding:18px 22px 10px;display:flex;align-items:center;gap:8px}
+.dr-head b{font-size:15px;font-weight:600;flex:1}
+.dr-body{flex:1;overflow:auto;padding:4px 22px 22px}
+.dr-foot{border-top:1px solid var(--border-subtle);padding:12px 22px;display:flex;gap:8px;justify-content:flex-end}
+.kind{font-size:12px;color:var(--text-muted);margin:14px 0 6px}
+.card{border:1px solid var(--border-subtle);border-radius:8px;padding:11px 12px;display:flex;gap:10px;align-items:center;cursor:pointer;margin-bottom:6px}
+.card:hover{background:var(--bg-surface-subtle);border-color:var(--border-strong)}
+.card .ic{width:28px;height:28px;border-radius:6px;background:var(--bg-active);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px}
+.card .c{flex:1}.card .c div{color:var(--text-muted);font-size:12px}
+.card .done{font-size:12px;color:var(--text-muted)}
+.card.dis{opacity:.5;cursor:default}.card.dis:hover{background:none;border-color:var(--border-subtle)}
+.field{margin-top:14px}
+.field label{display:block;font-size:12px;color:var(--text-secondary);margin-bottom:5px}
+.field .hint{font-size:12px;color:var(--text-muted);margin-top:4px}
+.keywrap{position:relative}.keywrap .eye{position:absolute;right:6px;top:3px}
+.result{margin-top:14px;border:1px solid var(--border-subtle);border-radius:8px;padding:10px 12px;background:var(--bg-surface-subtle)}
+.result .ok-line{display:flex;align-items:center;gap:8px}
+.chk{display:flex;align-items:center;gap:8px;padding:4px 0}
+.field label.chk{display:flex;font-size:13px;color:var(--text-primary);margin:0}
+.chk input{accent-color:var(--text-secondary)}
+.step{display:flex;gap:12px;margin-top:16px}
+.step .no{width:22px;height:22px;border-radius:50%;border:1px solid var(--border-strong);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text-secondary);flex-shrink:0}
+.code{font-size:24px;letter-spacing:4px;font-weight:600;padding:10px 14px;border:1px dashed var(--border-strong);border-radius:8px;display:inline-block;margin-top:6px}
+.waiting{display:flex;align-items:center;gap:8px;margin-top:18px;color:var(--text-secondary)}
+.spin{width:12px;height:12px;border:1.5px solid var(--border-strong);border-top-color:var(--text-secondary);border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+.hidden{display:none!important}
+.vendors{display:flex;flex-wrap:wrap;gap:6px}
+.vendors span{padding:4px 10px;border:1px solid var(--border-subtle);border-radius:6px;cursor:pointer;color:var(--text-secondary)}
+.vendors span:hover{background:var(--bg-hover)}
+.vendors span.on{border-color:var(--border-focus);color:var(--text-primary);background:var(--bg-active)}
+
+/* 设计说明（不属于界面） */
+.notes{position:fixed;left:12px;top:14px;width:156px;font-size:12px;color:var(--text-secondary);line-height:1.6}
+.notes b{color:var(--text-primary)}
+.notes .demo{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="bg-shell"><div class="bg-side"></div></div>
+<div class="scrim"></div>
+
+<div class="notes">
+  <b>演示（不属于界面）</b><div class="muted">后端目前只接了 Grok 登录，其他账号登录是预留位置</div>
+  <div class="demo">
+    <button class="btn sm" onclick="openDrawer('pick')">添加来源 · 选择</button>
+    <button class="btn sm" onclick="openDrawer('grok')">Grok 授权登录 · 设备码</button>
+    <button class="btn sm" onclick="openDrawer('editlogin')">编辑账号登录</button>
+    <button class="btn sm" onclick="openDrawer('key')">添加 API · 选厂商</button>
+    <button class="btn sm" onclick="openDrawer('key','edit')">编辑 API</button>
+    <button class="btn sm" onclick="togglePop(1)">角色下拉</button>
+    <button class="btn sm" onclick="toggleTheme()">切换浅色 / 深色</button>
+  </div>
+</div>
+
+<div class="modal">
+  <div class="nav">
+    <h3>系统设置</h3>
+    <div>通用</div><div class="on">模型</div><div>插件</div><div>Skills</div><div>流程</div><div>关于</div>
+  </div>
+
+  <div class="main" id="main">
+    <div class="head">
+      <div><h2>模型</h2><p>先接入模型来源，再给每个角色挑一个模型。</p></div>
+    </div>
+
+    <div class="body">
+      <!-- 模型来源 -->
+      <div class="section-title">
+        <div><b>模型来源</b><span>3 个来源 · 5 个可用模型</span></div>
+        <button class="btn sm" onclick="openDrawer('pick')">＋ 添加来源</button>
+      </div>
+      <div class="src">
+        <div class="src-row">
+          <span class="dot ok"></span>
+          <div>
+            <div class="t">Grok 订阅 <span class="tag">Grok Build 账号</span></div>
+            <div class="s">you@example.com <span class="sep">·</span> 令牌到 2026-10-21 05:36 自动续期 <span class="sep">·</span> 不按量计费</div>
+            <div class="models-inline"><span class="tag mono">grok-build</span></div>
+          </div>
+          <div class="acts"><button class="btn g sm">刷新模型</button><button class="btn g sm" onclick="openDrawer('editlogin')">编辑</button></div>
+        </div>
+        <div class="src-row">
+          <span class="dot ok"></span>
+          <div>
+            <div class="t">DeepSeek <span class="tag">API Key</span></div>
+            <div class="s"><span class="mono">sk-••••••3f2a</span> <span class="sep">·</span> api.deepseek.com <span class="sep">·</span> 5 分钟前测试通过</div>
+            <div class="models-inline"><span class="tag mono">deepseek-chat</span><span class="tag mono">deepseek-reasoner</span></div>
+          </div>
+          <div class="acts"><button class="btn g sm">测试</button><button class="btn g sm" onclick="openDrawer('key','edit')">编辑</button><button class="btn g sm">删除</button></div>
+        </div>
+        <div class="src-row">
+          <span class="dot ok"></span>
+          <div>
+            <div class="t">xAI <span class="tag">API Key</span></div>
+            <div class="s"><span class="mono">xai-••••••91c0</span> <span class="sep">·</span> api.x.ai <span class="sep">·</span> 按量计费</div>
+            <div class="models-inline"><span class="tag mono">grok-4</span><span class="tag mono">grok-4-fast</span></div>
+          </div>
+          <div class="acts"><button class="btn g sm">测试</button><button class="btn g sm" onclick="openDrawer('key','edit')">编辑</button><button class="btn g sm">删除</button></div>
+        </div>
+        <div class="src-row err">
+          <span class="dot bad"></span>
+          <div>
+            <div class="t sec">本地 Ollama <span class="tag">本地</span></div>
+            <div class="s"><span class="mono">127.0.0.1:11434</span> <span class="sep">·</span> <span class="why">连不上，Ollama 可能没启动</span></div>
+          </div>
+          <div class="acts"><button class="btn g sm">重试</button><button class="btn g sm">编辑</button><button class="btn g sm">删除</button></div>
+        </div>
+      </div>
+
+      <!-- 角色模型 -->
+      <div class="section-title" style="margin-top:22px">
+        <div><b>角色模型</b><span>只能选上面可用来源里的模型；不选就跟随「默认」</span></div>
+      </div>
+      <div class="roles">
+        <div class="role">
+          <div class="n"><b>默认</b><span class="mono">default</span><div>主 Agent 和没单独设置的角色都用它</div></div>
+          <div class="pick"><button class="pick-btn" onclick="togglePop(0)"><span class="dot ok"></span><span class="m mono">grok-build</span><span class="from">Grok 订阅</span><span class="caret"></span></button><div class="pop" id="pop0"></div></div>
+        </div>
+        <div class="role">
+          <div class="n"><b>审计</b><span class="mono">auditor</span></div>
+          <div class="pick"><button class="pick-btn dirty" onclick="togglePop(1)"><span class="dot ok"></span><span class="m mono">deepseek-reasoner</span><span class="from">DeepSeek</span><span class="caret"></span></button><div class="pop" id="pop1"></div></div>
+        </div>
+        <div class="role">
+          <div class="n"><b>编码</b><span class="mono">coder</span></div>
+          <div class="pick"><button class="pick-btn follow" onclick="togglePop(2)"><span class="dot off"></span><span class="m">跟随默认 · <span class="mono">grok-build</span></span><span class="caret"></span></button><div class="pop" id="pop2"></div></div>
+        </div>
+        <div class="role">
+          <div class="n"><b>规划</b><span class="mono">planner</span></div>
+          <div class="pick"><button class="pick-btn" onclick="togglePop(3)"><span class="dot ok"></span><span class="m mono">grok-4</span><span class="from">xAI</span><span class="caret"></span></button><div class="pop" id="pop3"></div></div>
+        </div>
+        <div class="role">
+          <div class="n"><b>测试</b><span class="mono">tester</span><div style="color:var(--bad)">之前选的 llama3.2 现在不可用（Ollama 连不上），先改用默认</div></div>
+          <div class="pick"><button class="pick-btn follow" onclick="togglePop(4)"><span class="dot warn"></span><span class="m">跟随默认 · <span class="mono">grok-build</span></span><span class="caret"></span></button><div class="pop" id="pop4"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="savebar dirty">
+      <span class="msg">1 处改动未保存：审计 → deepseek-reasoner</span>
+      <button class="btn g">放弃</button><button class="btn p">保存</button>
+    </div>
+
+    <!-- 添加来源抽屉 -->
+    <div class="drawer-scrim" onclick="closeDrawer()"></div>
+    <div class="drawer">
+      <!-- 选择 -->
+      <div id="dr-pick" class="hidden" style="display:flex;flex-direction:column;height:100%">
+        <div class="dr-head"><b>添加模型来源</b><button class="btn g sm" onclick="closeDrawer()">✕</button></div>
+        <div class="dr-body">
+          <div class="kind">账号登录 · 用订阅额度，不填 Key</div>
+          <div class="card" onclick="openDrawer('grok')"><div class="ic">G</div><div class="c">Grok Build<div>设备码登录，走订阅代理</div></div><span class="done">已登录 1 个</span></div>
+          <div class="card" onclick="openDrawer('grok')"><div class="ic">C</div><div class="c">ChatGPT（Codex）<div>浏览器授权登录</div></div></div>
+          <div class="card" onclick="openDrawer('grok')"><div class="ic">H</div><div class="c">GitHub Copilot<div>设备码登录</div></div></div>
+          <div class="card" onclick="openDrawer('grok')"><div class="ic">A</div><div class="c">Claude<div>浏览器授权登录</div></div></div>
+          <div class="kind">API Key · 按量计费</div>
+          <div class="card" onclick="openDrawer('key')"><div class="ic">K</div><div class="c">添加 API<div>选预置厂商，或者填自定义地址，再填 Key</div></div></div>
+          <div class="kind">本地</div>
+          <div class="card" onclick="openDrawer('key','ollama')"><div class="ic">L</div><div class="c">本地 Ollama<div>127.0.0.1:11434，不用 Key</div></div></div>
+        </div>
+      </div>
+
+      <!-- 编辑账号登录 -->
+      <div id="dr-editlogin" class="hidden" style="display:flex;flex-direction:column;height:100%">
+        <div class="dr-head"><b>编辑 · Grok Build</b><button class="btn g sm" onclick="closeDrawer()">✕</button></div>
+        <div class="dr-body">
+          <div class="field"><label>名称</label><input class="in" value="Grok 订阅"></div>
+          <div class="field"><label>账号</label>
+            <div class="result" style="margin-top:0"><div class="ok-line"><span class="dot ok"></span>you@example.com</div><div class="muted" style="font-size:12px;margin-top:2px">令牌到 2026-10-21 05:36，会自动续期 · 保存在 <span class="mono">~/.grok/auth.json</span></div>
+            <div style="margin-top:8px;display:flex;gap:6px"><button class="btn sm" onclick="openDrawer('grok')">换个账号重新登录</button><button class="btn sm">退出登录</button></div></div>
+          </div>
+          <div class="field"><label>可用模型 <button class="btn g sm" style="margin-left:4px">刷新</button></label>
+            <label class="chk"><input type="checkbox" checked><span class="mono">grok-build</span></label>
+            <div class="hint">勾选的才会出现在角色下拉里</div>
+          </div>
+        </div>
+        <div class="dr-foot"><button class="btn g" style="margin-right:auto;color:var(--bad)">删除这个来源</button><button class="btn g" onclick="closeDrawer()">取消</button><button class="btn p" onclick="closeDrawer()">保存</button></div>
+      </div>
+
+      <!-- Grok 设备码 -->
+      <div id="dr-grok" class="hidden" style="display:flex;flex-direction:column;height:100%">
+        <div class="dr-head"><button class="btn g sm" onclick="openDrawer('pick')">‹</button><b>登录 Grok Build</b><button class="btn g sm" onclick="closeDrawer()">✕</button></div>
+        <div class="dr-body">
+          <p class="sec">和命令行 <span class="mono">grok login --device-auth</span> 一样。登录后令牌保存在本机 <span class="mono">~/.grok/auth.json</span>。</p>
+          <div class="step"><div class="no">1</div><div style="flex:1">打开授权页面<div style="margin-top:6px;display:flex;gap:6px"><input class="in mono" readonly value="https://accounts.x.ai/device"><button class="btn sm" style="height:30px">打开</button></div></div></div>
+          <div class="step"><div class="no">2</div><div>在页面上输入这个代码<div><span class="code mono">KQ7M-4HXP</span> <button class="btn sm">复制</button></div><div class="muted" style="font-size:12px;margin-top:4px">14:32 后过期</div></div></div>
+          <div class="waiting"><span class="spin"></span>等你在浏览器里确认……确认后这里会自动完成</div>
+        </div>
+        <div class="dr-foot"><button class="btn" onclick="openDrawer('pick')">取消</button></div>
+      </div>
+
+      <!-- API Key：添加 / 编辑 -->
+      <div id="dr-key" class="hidden" style="display:flex;flex-direction:column;height:100%">
+        <div class="dr-head"><button class="btn g sm" id="key-back" onclick="openDrawer('pick')">‹</button><b id="key-title">添加 API</b><button class="btn g sm" onclick="closeDrawer()">✕</button></div>
+        <div class="dr-body">
+          <div class="field"><label>厂商</label>
+            <div class="vendors">
+              <span data-v="deepseek" class="on">DeepSeek</span><span data-v="xai">xAI</span><span data-v="openai">OpenAI</span><span data-v="anthropic">Anthropic</span><span data-v="gemini">Gemini</span><span data-v="qwen">通义千问</span><span data-v="moonshot">Kimi</span><span data-v="zhipu">智谱</span><span data-v="openrouter">OpenRouter</span><span data-v="ollama">本地 Ollama</span><span data-v="custom">自定义…</span>
+            </div>
+          </div>
+          <div class="field"><label>API 地址</label><input class="in mono" id="key-url" value="https://api.deepseek.com/v1" readonly><div class="hint" id="url-hint">预置地址，选「自定义」可以改成任意 OpenAI 兼容地址</div></div>
+          <div class="field" id="key-field"><label>API Key</label><div class="keywrap"><input class="in mono" type="password" value="sk-0000000000000003f2a"><button class="btn g sm eye">显示</button></div><div class="hint">只存在本机，保存后只显示后 4 位</div></div>
+          <div class="field"><label>名称</label><input class="in" id="key-name" value="DeepSeek"><div class="hint">同一家可以加多个 Key，用名称区分，比如「DeepSeek 公司」</div></div>
+          <div style="margin-top:16px"><button class="btn">测试并获取模型</button></div>
+          <div class="result">
+            <div class="ok-line"><span class="dot ok"></span>连接成功，找到 2 个模型。勾选的才会出现在角色下拉里：</div>
+            <div style="margin-top:8px">
+              <label class="chk"><input type="checkbox" checked><span class="mono">deepseek-chat</span></label>
+              <label class="chk"><input type="checkbox" checked><span class="mono">deepseek-reasoner</span></label>
+              <div style="display:flex;gap:6px;margin-top:6px"><input class="in mono" placeholder="列表里没有？手动补一个模型名"><button class="btn sm" style="height:30px">加入</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="dr-foot"><button class="btn g hidden" id="key-del" style="margin-right:auto;color:var(--bad)">删除这个来源</button><button class="btn g" onclick="closeDrawer()">取消</button><button class="btn p" id="key-ok" onclick="closeDrawer()">添加</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const groups = [
+  { name: 'Grok 订阅', st: 'ok', models: ['grok-build'] },
+  { name: 'DeepSeek', st: 'ok', models: ['deepseek-chat', 'deepseek-reasoner'] },
+  { name: 'xAI', st: 'ok', models: ['grok-4', 'grok-4-fast'] },
+  { name: '本地 Ollama', st: 'bad', note: '连不上', models: ['llama3.2'] },
+];
+const selected = ['grok-build', 'deepseek-reasoner', null, 'grok-4', null];
+function renderPop(i) {
+  const cur = selected[i];
+  let h = '<input class="in search" placeholder="搜索模型">';
+  if (i !== 0) h += `<div class="opt ${cur ? '' : 'on'}"><span class="dot off"></span>跟随默认<span class="x mono">grok-build</span></div><hr>`;
+  for (const g of groups) {
+    h += `<div class="grp"><span class="dot ${g.st}"></span>${g.name}${g.note ? ' · ' + g.note : ''}</div>`;
+    for (const m of g.models) h += `<div class="opt mono ${g.st === 'bad' ? 'dis' : ''} ${m === cur ? 'on' : ''}">${m}${m === cur ? '<span class="x">✓</span>' : ''}</div>`;
+  }
+  h += '<hr><div class="opt sec" onclick="openDrawer(\'pick\')">＋ 添加来源…</div>';
+  document.getElementById('pop' + i).innerHTML = h;
+}
+function togglePop(i) {
+  document.querySelectorAll('.pop').forEach((p, j) => { if (j !== i) p.classList.remove('open'); });
+  const p = document.getElementById('pop' + i);
+  renderPop(i);
+  p.classList.toggle('open');
+  if (!p.classList.contains('open')) return;
+  // 弹窗有 transform，fixed 以弹窗为参照；放不下就往上翻
+  const m = document.querySelector('.modal').getBoundingClientRect();
+  const r = p.previousElementSibling.getBoundingClientRect();
+  p.style.left = (r.right - m.left - 360) + 'px';
+  const h = p.offsetHeight;
+  p.style.top = (r.bottom + 4 + h > m.bottom - 8 ? r.top - m.top - 4 - h : r.bottom - m.top + 4) + 'px';
+}
+const VENDORS = {
+  deepseek: ['DeepSeek', 'https://api.deepseek.com/v1'], xai: ['xAI', 'https://api.x.ai/v1'],
+  openai: ['OpenAI', 'https://api.openai.com/v1'], anthropic: ['Anthropic', 'https://api.anthropic.com/v1'],
+  gemini: ['Gemini', 'https://generativelanguage.googleapis.com/v1beta/openai'], qwen: ['通义千问', 'https://dashscope.aliyuncs.com/compatible-mode/v1'],
+  moonshot: ['Kimi', 'https://api.moonshot.cn/v1'], zhipu: ['智谱', 'https://open.bigmodel.cn/api/paas/v4'],
+  openrouter: ['OpenRouter', 'https://openrouter.ai/api/v1'], ollama: ['本地 Ollama', 'http://127.0.0.1:11434/v1'], custom: ['', ''],
+};
+function pickVendor(v) {
+  document.querySelectorAll('.vendors span').forEach(s => s.classList.toggle('on', s.dataset.v === v));
+  const [name, url] = VENDORS[v];
+  const u = document.getElementById('key-url');
+  u.value = url; u.readOnly = v !== 'custom'; u.placeholder = 'https://your-gateway.example.com/v1';
+  document.getElementById('url-hint').textContent = v === 'custom' ? '填任意 OpenAI 兼容地址，比如公司内网网关' : '预置地址，选「自定义」可以改成任意 OpenAI 兼容地址';
+  document.getElementById('key-name').value = name || '自定义 API';
+  document.getElementById('key-field').classList.toggle('hidden', v === 'ollama');
+}
+document.querySelectorAll('.vendors span').forEach(s => s.onclick = () => pickVendor(s.dataset.v));
+function openDrawer(which, mode) {
+  document.querySelectorAll('.pop').forEach(p => p.classList.remove('open'));
+  document.getElementById('main').classList.add('show');
+  for (const k of ['pick', 'grok', 'key', 'editlogin']) document.getElementById('dr-' + k).classList.toggle('hidden', k !== which);
+  if (which === 'key') {
+    const edit = mode === 'edit';
+    pickVendor(mode === 'ollama' ? 'ollama' : 'deepseek');
+    document.getElementById('key-title').textContent = edit ? '编辑 · DeepSeek' : '添加 API';
+    document.getElementById('key-ok').textContent = edit ? '保存' : '添加';
+    document.getElementById('key-del').classList.toggle('hidden', !edit);
+    document.getElementById('key-back').classList.toggle('hidden', edit);
+  }
+}
+function closeDrawer() { document.getElementById('main').classList.remove('show'); }
+function toggleTheme() {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === 'white-dark' ? 'white-light' : 'white-dark';
+}
+document.querySelector('.body').addEventListener('scroll', () => document.querySelectorAll('.pop').forEach(p => p.classList.remove('open')));
+document.addEventListener('click', e => { if (!e.target.closest('.pick') && !e.target.closest('.notes')) document.querySelectorAll('.pop').forEach(p => p.classList.remove('open')); });
+const q = new URLSearchParams(location.search);
+if (q.get('theme')) document.documentElement.dataset.theme = q.get('theme');
+if (q.get('state') === 'pop') togglePop(1);
+if (['pick', 'grok', 'key', 'editlogin'].includes(q.get('state'))) openDrawer(q.get('state'), q.get('mode'));
+if (q.get('vendor')) pickVendor(q.get('vendor'));
+</script>
+</body>
+</html>
