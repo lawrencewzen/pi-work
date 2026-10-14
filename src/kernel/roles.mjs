@@ -22,6 +22,15 @@ const FALLBACK_ROLE = {
 
 const LOOSE_PARAMS = Type.Object({}, { additionalProperties: true });
 
+const DEFAULT_TITLE = 'New conversation';
+
+/** First user text names a conversation that still has the placeholder title. */
+export function autoTitleFromText(currentTitle, text) {
+  const cur = currentTitle == null ? '' : String(currentTitle);
+  if (cur !== '' && cur !== DEFAULT_TITLE) return undefined;
+  return String(text ?? '').slice(0, 48);
+}
+
 /**
  * Text of a pipeline handoff. `previous` is the prior step's assistant text.
  * Anything else, including `user` and a missing input, is the original user text.
@@ -431,9 +440,11 @@ export function createRoleHost({
     },
     async prepareSend(conv, text) {
       let next = conv;
-      if (text && !next.originalText) {
-        next = await store.updateConversation(next.id, { originalText: text });
-      }
+      const patch = {};
+      if (text && !next.originalText) patch.originalText = text;
+      const title = autoTitleFromText(next.title, text);
+      if (title !== undefined) patch.title = title;
+      if (Object.keys(patch).length) next = await store.updateConversation(next.id, patch);
       if (next.pipelineId) {
         const pipe = await store.getPipeline(next.pipelineId);
         const step = pipe?.steps?.[Number(next.pipelineStep) || 0] || pipe?.steps?.[0];

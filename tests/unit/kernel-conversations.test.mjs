@@ -379,7 +379,7 @@ test('kernel path: a busy conversation is 409, and a killed run resumes to done'
 test('kernel path without a demo model fails the turn as E_NO_MODEL', { timeout: 20000 }, async () => {
   const srv = await startServer({ PI_WORK_KERNEL: 'durable' });
   try {
-    const { conv } = await openConversation(srv.base, 'bare');
+    const { conv } = await openConversation(srv.base, 'New conversation');
     const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: '你好' });
     assert.equal(sent.status, 202);
     let body;
@@ -392,6 +392,7 @@ test('kernel path without a demo model fails the turn as E_NO_MODEL', { timeout:
     assert.equal(body.status, 'failed');
     assert.equal(body.llmError?.code, 'E_NO_MODEL');
     assert.equal(body.messages.some((m) => m.role === 'user' && m.text === '你好'), true);
+    assert.equal(body.title, '你好');
   } finally {
     await stopProcess(srv.proc);
     await rm(srv.dataDir, { recursive: true, force: true });

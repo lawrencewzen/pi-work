@@ -176,53 +176,94 @@ test('visible history keeps user and assistant text and drops tool rows', () => 
   assert.deepEqual(archivedMutation(), { status: 409, body: { error: 'err_archived', status: 'archived' } });
 });
 
+function seedArchived(dataDir, row) {
+  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'));
+  const now = Date.now();
+  db.prepare(`INSERT INTO conversations (
+    id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
+    current_step, pipeline_step, updated_at, created_at, role_id, pipeline_id,
+    workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    row.id,
+    row.workspaceId,
+    row.title || 'old',
+    row.status,
+    row.autoContinues || 0,
+    0,
+    null,
+    0,
+    0,
+    now,
+    now,
+    null,
+    null,
+    row.workspacePath,
+    now,
+    row.originalText || '',
+    null,
+    null,
+    null,
+  );
+  const ins = db.prepare('INSERT INTO messages (id, conversation_id, role, text, tool_json, seq, meta_json) VALUES (?,?,?,?,?,?,?)');
+  (row.messages || []).forEach((msg, index) => {
+    ins.run(msg.id, row.id, msg.role, msg.text ?? null, msg.tool ? JSON.stringify(msg.tool) : null, index + 1, null);
+  });
+  const change = db.prepare('INSERT INTO changes (conversation_id, path, before_text, after_text, added, removed, tool_call_id) VALUES (?,?,?,?,?,?,?)');
+  for (const item of row.changes || []) {
+    change.run(row.id, item.path, item.before, item.after, item.added, item.removed, item.toolCallId);
+  }
+  db.close();
+}
+
 test('kernel path: an old conversation is readable, read-only, and can open a new one', { timeout: 60000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-karch-'));
-  const script = path.join(dataDir, 'write.json');
   const record = path.join(dataDir, 'requests.jsonl');
-  await writeFile(script, JSON.stringify({
-    turns: [
-      { text: '开始写' },
-      { tool: 'write', args: { path: 'notes.txt', content: 'alpha\n' } },
-      { text: '写好了' },
-    ],
-  }));
-  const legacy = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script }, { dataDir });
-  let oldId;
+  const setup = await startServer({}, { dataDir });
   let workspaceId;
-  let legacyMessages;
-  let legacyChanges;
-  let legacyDiff;
-  let legacyContinues;
+  let workspacePath;
   try {
-    const ws = await request(legacy.base, 'POST', '/api/workspaces', { name: 'archive' });
+    const ws = await request(setup.base, 'POST', '/api/workspaces', { name: 'archive' });
     assert.equal(ws.status, 201, JSON.stringify(ws.body));
     workspaceId = ws.body.id;
-    const conv = await request(legacy.base, 'POST', `/api/workspaces/${workspaceId}/conversations`, { title: 'old' });
-    assert.equal(conv.status, 201, JSON.stringify(conv.body));
-    oldId = conv.body.id;
-    const missing = await request(legacy.base, 'POST', `/api/conversations/${oldId}/from-history`, {});
+    workspacePath = ws.body.path;
+    const live = await request(setup.base, 'POST', `/api/workspaces/${workspaceId}/conversations`, { title: 'live' });
+    assert.equal(live.status, 201, JSON.stringify(live.body));
+    const notOld = await request(setup.base, 'POST', `/api/conversations/${live.body.id}/from-history`, {});
+    assert.equal(notOld.status, 409);
+    assert.equal(notOld.body.error, 'err_not_archived');
+    const missing = await request(setup.base, 'POST', '/api/conversations/missing-old/from-history', {});
     assert.equal(missing.status, 404);
-    assert.equal(missing.body.error, 'not found');
-    const sent = await request(legacy.base, 'POST', `/api/conversations/${oldId}/messages`, { text: 'please keep this sentence' });
-    assert.equal(sent.status, 202, JSON.stringify(sent.body));
-    const done = await waitFinished(legacy.base, oldId);
-    assert.equal(done.status, 'done', JSON.stringify(done.messages));
-    assert.equal(Object.hasOwn(done, 'archived'), false);
-    assert.equal(done.messages.some((message) => message.role === 'tool'), true);
-    assert.equal(done.messages.some((message) => message.text === '写好了'), true);
-    legacyMessages = done.messages;
-    legacyContinues = done.autoContinues;
-    const changes = await request(legacy.base, 'GET', `/api/conversations/${oldId}/changes`);
-    const diff = await request(legacy.base, 'GET', `/api/conversations/${oldId}/diff?path=${encodeURIComponent('notes.txt')}`);
-    assert.equal(changes.status, 200, JSON.stringify(changes.body));
-    assert.equal(diff.status, 200, JSON.stringify(diff.body));
-    assert.equal(diff.body.after, 'alpha\n');
-    legacyChanges = changes.body;
-    legacyDiff = diff.body;
   } finally {
-    await stopProcess(legacy.proc);
+    await stopProcess(setup.proc);
   }
+
+  const oldId = 'old-archive';
+  const tool = {
+    id: 'tc-write',
+    name: 'write',
+    path: 'notes.txt',
+    status: 'completed',
+    input: { path: 'notes.txt', content: 'alpha\n' },
+    output: 'wrote notes.txt',
+  };
+  const legacyMessages = [
+    { id: 'm-user', role: 'user', text: 'please keep this sentence' },
+    { id: 'm-a1', role: 'assistant', text: '开始写' },
+    { id: 'm-tool', role: 'tool', text: 'wrote notes.txt (+1 −0)', tool },
+    { id: 'm-a2', role: 'assistant', text: '写好了' },
+  ];
+  seedArchived(dataDir, {
+    id: oldId,
+    workspaceId,
+    workspacePath,
+    status: 'done',
+    autoContinues: 2,
+    originalText: 'please keep this sentence',
+    messages: legacyMessages,
+    changes: [{ path: 'notes.txt', before: '', after: 'alpha\n', added: 1, removed: 0, toolCallId: 'tc-write' }],
+  });
+  await writeFile(path.join(workspacePath, 'notes.txt'), 'alpha\n');
+  const legacyContinues = 2;
 
   const kernel = await startServer({
     PI_WORK_KERNEL: 'durable',
@@ -264,8 +305,15 @@ test('kernel path: an old conversation is readable, read-only, and can open a ne
     assert.deepEqual(still.body.messages, legacyMessages);
     const changes = await request(kernel.base, 'GET', `/api/conversations/${oldId}/changes`);
     const diff = await request(kernel.base, 'GET', `/api/conversations/${oldId}/diff?path=${encodeURIComponent('notes.txt')}`);
-    assert.deepEqual(changes.body, legacyChanges);
-    assert.deepEqual(diff.body, legacyDiff);
+    assert.equal(changes.status, 200, JSON.stringify(changes.body));
+    assert.equal(changes.body.length, 1);
+    assert.equal(changes.body[0].path, 'notes.txt');
+    assert.equal(changes.body[0].toolCallId, 'tc-write');
+    assert.equal(typeof changes.body[0].added, 'number');
+    assert.equal(diff.status, 200, JSON.stringify(diff.body));
+    assert.equal(diff.body.before, '');
+    assert.equal(diff.body.after, 'alpha\n');
+    assert.equal(diff.body.added > 0, true);
 
     const opened = await request(kernel.base, 'POST', `/api/conversations/${oldId}/from-history`, { title: 'forked' });
     assert.equal(opened.status, 201, JSON.stringify(opened.body));
@@ -314,7 +362,8 @@ test('kernel path: an old conversation is readable, read-only, and can open a ne
     assert.equal(old.body.status, 'archived');
     assert.deepEqual(old.body.messages, legacyMessages);
     const diff = await request(again.base, 'GET', `/api/conversations/${oldId}/diff?path=${encodeURIComponent('notes.txt')}`);
-    assert.deepEqual(diff.body, legacyDiff);
+    assert.equal(diff.body.after, 'alpha\n');
+    assert.equal(diff.body.before, '');
     const kept = await request(again.base, 'GET', `/api/conversations/${newId}`);
     assert.equal(kept.body.status, 'done');
     assert.equal(kept.body.messages.some((message) => message.role === 'user' && message.text === 'hello-new'), true);
@@ -336,35 +385,33 @@ test('kernel path: an old conversation is readable, read-only, and can open a ne
 
 test('kernel path: a running old conversation is not resumed', { timeout: 40000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-karch-run-'));
-  const script = path.join(dataDir, 'hold.json');
-  await writeFile(script, JSON.stringify({
-    turns: [
-      { delayMs: 60000 },
-      { text: 'should-not-run' },
-    ],
-  }));
-  const legacy = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script }, { dataDir });
+  const setup = await startServer({}, { dataDir });
   let id;
+  let workspaceId;
+  let workspacePath;
   try {
-    const ws = await request(legacy.base, 'POST', '/api/workspaces', { name: 'running' });
+    const ws = await request(setup.base, 'POST', '/api/workspaces', { name: 'running' });
     assert.equal(ws.status, 201);
-    const conv = await request(legacy.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'running' });
-    assert.equal(conv.status, 201);
-    id = conv.body.id;
-    const sent = await request(legacy.base, 'POST', `/api/conversations/${id}/messages`, { text: 'do-not-resume' });
-    assert.equal(sent.status, 202, JSON.stringify(sent.body));
-    const live = await request(legacy.base, 'GET', `/api/conversations/${id}`);
-    assert.equal(live.body.status, 'running');
-    assert.equal(live.body.autoContinues, 0);
+    workspaceId = ws.body.id;
+    workspacePath = ws.body.path;
   } finally {
-    killChild(legacy.proc);
-    await waitExit(legacy.proc);
+    await stopProcess(setup.proc);
   }
+  id = 'old-running';
+  seedArchived(dataDir, {
+    id,
+    workspaceId,
+    workspacePath,
+    status: 'running',
+    autoContinues: 0,
+    originalText: 'do-not-resume',
+    messages: [{ id: 'm-user', role: 'user', text: 'do-not-resume' }],
+  });
 
   const kernel = await startServer({
     PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_TEXT: 'continued',
+    PI_WORK_FAUX_TEXT: 'should-not-run',
   }, { dataDir });
   try {
     await new Promise((resolve) => setTimeout(resolve, 400));

@@ -359,19 +359,22 @@ async function bindScout(base, fake) {
   assert.equal(settings.status, 200, JSON.stringify(settings.body));
 }
 
-test('kernel off keeps the subagent messages path unknown', { timeout: 30000 }, async () => {
-  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'still-orchestrator' });
+test('subagent messages 404 for an unknown conversation or agent', { timeout: 30000 }, async () => {
+  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'still-here' });
   try {
     const missing = await request(srv.base, 'GET', '/api/conversations/none/agents/none/messages');
     assert.equal(missing.status, 404);
-    assert.equal(missing.body.error, 'not found');
+    assert.equal(missing.body.error, 'conversation not found');
     const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'off' });
     assert.equal(ws.status, 201);
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'off' });
     assert.equal(conv.status, 201);
+    const unknownAgent = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/none/messages`);
+    assert.equal(unknownAgent.status, 404);
+    assert.equal(unknownAgent.body.error, 'agent not found');
     const sent = await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'hi' });
     assert.equal(sent.status, 202);
-    const done = await waitFor(srv.base, conv.body.id, (body) => assistantTexts(body).includes('still-orchestrator'));
+    const done = await waitFor(srv.base, conv.body.id, (body) => assistantTexts(body).includes('still-here'));
     assert.equal(done.status, 'done');
     assert.equal(subagentsOf(done).length, 0);
   } finally {
@@ -710,6 +713,60 @@ test('a background subagent continues after restart and reports once', { timeout
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('a killed foreground subagent writes the file once after restart', { timeout: 90_000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-write-'));
+  const ready = path.join(dataDir, 'ready');
+  const script = await writeScript(dataDir, 'write-child.json', [
+    { tool: 'delegate', args: { agent: 'coder', task: 'WRITE_ONCE the output file' } },
+    { text: 'parent-done' },
+    { when: 'WRITE_ONCE', delayMs: 2500, tool: 'write', args: { path: 'child-out.txt', content: 'once\n' } },
+    { when: 'WRITE_ONCE', text: 'child-wrote' },
+  ]);
+  const env = {
+    PI_WORK_LLM: 'faux',
+    PI_WORK_FAUX_SCRIPT: script,
+    PI_WORK_FAUX_HOLD_READY: ready,
+    PI_WORK_STALL_MS: '30000',
+  };
+  let proc = null;
+  let wsPath;
+  let convId;
+  try {
+    const first = await startServer(env, { dataDir });
+    proc = first.proc;
+    const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'write-child' });
+    assert.equal(ws.status, 201, JSON.stringify(ws.body));
+    wsPath = ws.body.path;
+    const conv = await request(first.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'write-child' });
+    assert.equal(conv.status, 201);
+    convId = conv.body.id;
+    assert.equal((await request(first.base, 'POST', `/api/conversations/${convId}/messages`, { text: 'dispatch child' })).status, 202);
+    await waitForFile(ready);
+    const death = await killed(proc);
+    proc = null;
+    assert.ok(death.signal === 'SIGKILL' || death.code !== 0 || process.platform === 'win32');
+    await rm(ready, { force: true });
+    const second = await startServer(env, { dataDir });
+    proc = second.proc;
+    const done = await waitFor(second.base, convId, (body) => (
+      body.status === 'done' && assistantTexts(body).includes('parent-done')
+    ), 200);
+    assert.equal(done.status, 'done', second.logs());
+    assert.equal(await readFile(path.join(wsPath, 'child-out.txt'), 'utf8'), 'once\n');
+    assert.equal(assistantTexts(done).filter((text) => text === 'parent-done').length, 1, JSON.stringify(done.messages));
+    const children = subagentsOf(done).filter((agent) => agent.roleId === 'coder');
+    assert.equal(children.length, 1, JSON.stringify(done.agents));
+    const messages = await request(second.base, 'GET', `/api/conversations/${convId}/agents/${encodeURIComponent(children[0].id)}/messages`);
+    assert.equal(messages.status, 200, JSON.stringify(messages.body));
+    const writes = (messages.body.messages || []).filter((message) => message.role === 'tool' && message.tool?.name === 'write');
+    assert.equal(writes.length, 1, JSON.stringify(messages.body.messages));
+    console.log(`KERNEL_SUBAGENTS_WRITE_RESUME ${JSON.stringify({ file: 'once', children: children.length, writes: writes.length })}`);
+  } finally {
+    if (proc) await stopProcess(proc);
     await rm(dataDir, { recursive: true, force: true });
   }
 });

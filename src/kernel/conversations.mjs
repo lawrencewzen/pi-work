@@ -40,10 +40,6 @@ import { installUsageExtension } from './usage.mjs';
 
 const DEMO_RESPONSE_COUNT = 100;
 
-export function kernelRequested(env = process.env) {
-  return String(env.PI_WORK_KERNEL || '').trim() === 'durable';
-}
-
 function parseFauxPlan(raw) {
   const text = String(raw || '').trim();
   if (!text) return null;
@@ -81,16 +77,16 @@ function requestSnapshot(context) {
   };
 }
 
-function installDemo(models, env) {
+function installDemo(models, env, hooks) {
   const faux = registerFaux(models);
-  const text = String(env.PI_WORK_FAUX_TEXT || 'ok');
+  const text = String(env.PI_WORK_FAUX_TEXT || '');
   const holdAll = String(env.PI_WORK_FAUX_HOLD || '').trim() === '1';
   const ready = String(env.PI_WORK_FAUX_HOLD_READY || '').trim();
   const scriptPath = String(env.PI_WORK_FAUX_SCRIPT || '').trim();
   const recordPath = String(env.PI_WORK_FAUX_RECORD || '').trim();
   const plan = holdAll ? null : parseFauxPlan(env.PI_WORK_FAUX_PLAN);
   // Hold still wins: a script or plan must not replace the in-flight model call used by recovery tests.
-  const scripted = !holdAll && !plan && scriptPath ? scriptedDemoStep(scriptPath, env) : null;
+  const scripted = !holdAll && !plan && scriptPath ? scriptedDemoStep(scriptPath, env, hooks) : null;
   let cursor = 0;
   const step = async (context, streamOptions) => {
     if (recordPath) await appendFile(recordPath, `${JSON.stringify(requestSnapshot(context))}\n`);
@@ -134,7 +130,8 @@ export async function openConversationKernel({
   if (!store) throw new Error('store is required');
   const faux = demo === true || explicitDemo(env);
   const models = createModels();
-  if (faux) installDemo(models, env);
+  const demoHooks = { tick() {} };
+  if (faux) installDemo(models, env, demoHooks);
   const modelRoutes = createKernelModels({ models, getSettings, grokAuth, env });
   const routes = faux ? null : modelRoutes;
   const registry = createRegistry();
@@ -371,6 +368,9 @@ export async function openConversationKernel({
     isBusy: submissionBlocked,
     env,
   });
+  demoHooks.tick = () => {
+    for (const cid of watches.keys()) control.touch(cid);
+  };
 
   roles = createRoleHost({
     store,

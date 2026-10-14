@@ -2,7 +2,9 @@
 
 网页版多 Agent 编码工作台：断点恢复、自动续跑、多角色并行、流水线编排。
 
-当前 `src/` 运行时使用**自定义 SQLite 日志**（`src/store/sqlite.mjs` + `src/core/orchestrator.mjs`），**不是** `@earendil-works/pi-durable`。`pi-durable` 仍作为依赖保留，仅由 `legacy/` 与 `lib/` 使用。耐久性设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，安全修复见 [SECURITY.md](SECURITY.md)。
+对话运行时是 **Pi Durable Harness**（`src/kernel/`，`@earendil-works/pi-durable`）。工作区、角色、流水线和变更记录在应用库 `src/store/sqlite.mjs`。`legacy/` 仍保留上游助手入口。耐久性设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，安全修复见 [SECURITY.md](SECURITY.md)。
+
+启动：`node server.mjs`（Node >= 22.19）。演示模型只在显式设置 `PI_WORK_LLM=faux`、`LLM_API=faux` 或 `PI_WORK_FAUX_SCRIPT` 时使用。没有可用模型时发消息以 `E_NO_MODEL` 失败，不会自动改走演示剧本。
 
 > 本项目 fork 自 [xiaomoBoy/pi-durable-assistant](https://github.com/xiaomoBoy/pi-durable-assistant)（MIT），感谢原作者。原 README 见 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)。
 

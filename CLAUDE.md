@@ -1,8 +1,6 @@
 # pi-work
 
-Web 编码工作台，内核必须是 Pi Durable（`@earendil-works/pi-durable`），目标运行环境是内网 Windows + Node 22。项目规则、核心模型和文档索引见 `AGENTS.md`。
-
-> 现状：`server.mjs` 目前跑的是自写编排器 `src/core/orchestrator.mjs`，不是 Pi Durable，正在评估迁移（T5）。给 cloud agent 写任务单时不要再说「基于 Pi Durable」，审 PR 时检查有没有新增自写的运行时机制。
+Web 编码工作台，内核是 Pi Durable（`@earendil-works/pi-durable` 的 Harness，`src/kernel/`），目标运行环境是内网 Windows + Node 22。项目规则、核心模型和文档索引见 `AGENTS.md`。审 PR 时检查有没有新的自写运行时、调度或检查点。
 
 - 仓库：`lawrencewzen/pi-work`，基准分支 `main`，PR 用 squash 合并。
 - 入口 `server.mjs`；代码在 `src/`（core / llm / store / tools）、`lib/`、`public/`（前端）；插件在 `plugins/`、`examples/plugins/`。

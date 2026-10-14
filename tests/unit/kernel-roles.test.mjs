@@ -6,9 +6,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { parseSSE } from '../../src/core/sse.mjs';
-import { buildAgents } from '../../src/core/agents.mjs';
-import { createOrchestrator } from '../../src/core/orchestrator.mjs';
-import { createMemoryStore } from '../../src/store/memory.mjs';
 import { handoffInput } from '../../src/kernel/roles.mjs';
 import { ROOT } from './_root.mjs';
 
@@ -205,53 +202,6 @@ const BETA = {
   pluginTools: false,
 };
 
-function legacyScript(lines) {
-  return lines.flatMap((text) => [{ text }, { end: true }]);
-}
-
-async function legacyPipeline({ steps, text, lines }) {
-  const store = createMemoryStore();
-  await store.createRole(ALPHA);
-  await store.createRole(BETA);
-  await store.createPipeline({ id: 'handoff', name: 'Handoff', steps });
-  let cursor = 0;
-  const turns = legacyScript(lines);
-  const llm = {
-    async next() {
-      const turn = turns[cursor] || { end: true };
-      cursor += 1;
-      if (turn.end) return { type: 'end', consumed: true };
-      return { type: 'text', text: turn.text };
-    },
-  };
-  const orch = createOrchestrator({ llm, store, toolNudgeAfter: 100, maxToolCalls: 15 });
-  const dir = await mkdtemp(path.join(tmpdir(), 'piw-krole-legacy-'));
-  await orch.start('legacy', { workspacePath: dir, text, roleId: 'alpha', pipelineId: 'handoff' });
-  const started = Date.now();
-  while (orch.status('legacy').status !== 'done' && Date.now() - started < 5000) {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  const conv = await store.getConversation('legacy');
-  const messages = await store.getMessages('legacy');
-  const pipeline = await store.getPipeline('handoff');
-  const roles = await store.listRoles();
-  const agents = buildAgents({
-    conv: { ...conv, status: orch.status('legacy').status, pipelineStep: orch.status('legacy').pipelineStep },
-    pipeline,
-    role: roles.find((role) => role.id === conv.roleId),
-    roles,
-    messages,
-  });
-  const events = await store.getEvents('legacy');
-  return {
-    pipelineStep: orch.status('legacy').pipelineStep,
-    status: orch.status('legacy').status,
-    messages,
-    agents,
-    events,
-  };
-}
-
 function projected(body) {
   return {
     pipelineStep: body.pipelineStep,
@@ -272,14 +222,6 @@ function projected(body) {
       toAgent: msg.toAgent,
     })),
   };
-}
-
-function projectedLegacy(result) {
-  return projected({
-    pipelineStep: result.pipelineStep,
-    agents: result.agents,
-    messages: result.messages,
-  });
 }
 
 function agentTrace(events) {
@@ -347,6 +289,11 @@ test('kernel path: switching role changes the system prompt, skills, and tool li
     assert.match(sectionText(shutCall, 'instructions'), /SHUT PROMPT/);
     assert.equal(shutCall.sections.some((item) => item.key === 'skills'), false);
     assert.deepEqual(shutCall.tools, ['bash', 'delegate', 'subagent']);
+    const cleared = await request(srv.base, 'PATCH', `/api/conversations/${conv.body.id}`, { roleId: null });
+    assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
+    assert.equal(cleared.body.roleId, null);
+    assert.equal(cleared.body.pipelineId, null);
+    assert.equal(cleared.body.pipelineStep, 0);
   } finally {
     await stopProcess(srv.proc);
     await rm(dataDir, { recursive: true, force: true });
@@ -362,20 +309,26 @@ test('kernel path: a two-step pipeline matches the legacy handoff', { timeout: 4
     { role: 'alpha', input: 'user' },
     { role: 'beta', input: 'user' },
   ];
-  const legacyPrevious = await legacyPipeline({
-    steps: previousSteps,
-    text: 'ship it',
-    lines: ['plan-done', 'tests-pass'],
-  });
-  const legacyOriginal = await legacyPipeline({
-    steps: originalSteps,
-    text: 'ship it',
-    lines: ['plan-done', 'tests-pass'],
-  });
-  assert.equal(legacyPrevious.status, 'done');
-  assert.equal(legacyPrevious.pipelineStep, 1);
-  assert.equal(legacyPrevious.messages.find((msg) => msg.kind === 'handoff')?.text, 'plan-done');
-  assert.equal(legacyOriginal.messages.find((msg) => msg.kind === 'handoff')?.text, 'ship it');
+  const agents = [
+    { roleId: 'alpha', name: 'Alpha', status: 'done', step: 1, totalSteps: 1, toolCalls: 0, lastText: 'plan-done' },
+    { roleId: 'beta', name: 'Beta', status: 'done', step: 1, totalSteps: 1, toolCalls: 0, lastText: 'tests-pass' },
+  ];
+  const trace = [
+    { roleId: 'alpha', name: 'Alpha', status: 'running', step: 0, toolCalls: undefined, lastText: '' },
+    { roleId: 'alpha', name: 'Alpha', status: 'done', step: 1, toolCalls: undefined, lastText: 'plan-done' },
+    { roleId: 'beta', name: 'Beta', status: 'running', step: 0, toolCalls: undefined, lastText: '' },
+    { roleId: 'beta', name: 'Beta', status: 'done', step: 1, toolCalls: undefined, lastText: 'tests-pass' },
+  ];
+  const previousExpected = {
+    pipelineStep: 1,
+    agents,
+    handoffs: [{ role: 'user', text: 'plan-done', kind: 'handoff', fromAgent: 'alpha', toAgent: 'beta' }],
+  };
+  const originalExpected = {
+    pipelineStep: 1,
+    agents,
+    handoffs: [{ role: 'user', text: 'ship it', kind: 'handoff', fromAgent: 'alpha', toAgent: 'beta' }],
+  };
 
   const srv = await startServer({
     PI_WORK_KERNEL: 'durable',
@@ -407,12 +360,12 @@ test('kernel path: a two-step pipeline matches the legacy handoff', { timeout: 4
       body.status === 'done' && body.messages?.some((msg) => msg.text === 'tests-pass')
     ));
     assert.equal(previousBody.status, 'done', srv.logs());
-    assert.deepEqual(projected(previousBody), projectedLegacy(legacyPrevious));
+    assert.deepEqual(projected(previousBody), previousExpected);
     assert.match(previousBody.messages.find((msg) => msg.kind === 'handoff').id, /:u:p1$/);
     const previousEvents = await collectSse(srv.base, previous.body.id, {
       ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
     });
-    assert.deepEqual(agentTrace(previousEvents), agentTrace(legacyPrevious.events));
+    assert.deepEqual(agentTrace(previousEvents), trace);
 
     const original = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, {
       title: 'original',
@@ -423,11 +376,11 @@ test('kernel path: a two-step pipeline matches the legacy handoff', { timeout: 4
       body.status === 'done' && body.messages?.some((msg) => msg.text === 'tests-pass')
     ));
     assert.equal(originalBody.status, 'done', srv.logs());
-    assert.deepEqual(projected(originalBody), projectedLegacy(legacyOriginal));
+    assert.deepEqual(projected(originalBody), originalExpected);
     const originalEvents = await collectSse(srv.base, original.body.id, {
       ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
     });
-    assert.deepEqual(agentTrace(originalEvents), agentTrace(legacyOriginal.events));
+    assert.deepEqual(agentTrace(originalEvents), trace);
   } finally {
     await stopProcess(srv.proc);
     await rm(srv.dataDir, { recursive: true, force: true });

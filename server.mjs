@@ -3,9 +3,6 @@ import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createOrchestrator } from './src/core/orchestrator.mjs';
-import { createRetryPolicy } from './src/core/retry.mjs';
-import { formatSSE } from './src/core/sse.mjs';
 import { validateRole, validatePipeline, allocateRoleId, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
@@ -40,14 +37,9 @@ import { listSkills, listSkillRecords, createSkill, updateSkill, deleteSkill, SK
 import { loadRoleTemplates, loadPipelineTemplates, readRoleTemplateMap, attachBuiltinPrompts, BUILTIN_ROLE_IDS } from './src/core/roles-load.mjs';
 import { buildAgents } from './src/core/agents.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
-import { loadFauxLLM, createFauxLLM } from './src/llm/faux.mjs';
-import { createOpenAILLM } from './src/llm/openai.mjs';
 import {
   createGrokAuth,
   selectChatRuntime,
-  unconfiguredModelError,
-  grokProxyBase,
-  grokProxyHeaders,
   GROK_SESSION_MODEL,
   GrokAuthError,
 } from './src/core/grok-auth.mjs';
@@ -68,7 +60,7 @@ import {
 import { resolveAllowedWorkspacePath, defaultWorkspaceRoot } from './src/core/workspace-guard.mjs';
 import { acquireDataDirLock } from './src/core/lock.mjs';
 import { presentContext } from './src/core/usage.mjs';
-import { kernelRequested, openConversationKernel } from './src/kernel/conversations.mjs';
+import { openConversationKernel } from './src/kernel/conversations.mjs';
 import { archivedMutation, isArchivedConversation } from './src/kernel/archive.mjs';
 import fs from 'node:fs/promises';
 
@@ -259,23 +251,6 @@ function publicConversation(conv) {
   return out;
 }
 
-function liveStatus(orch, conv) {
-  const s = orch.status(conv.id);
-  if (s && s.status && s.status !== 'idle') {
-    return {
-      ...conv,
-      status: s.status,
-      autoContinues: s.autoContinues,
-      retries: s.retries,
-      currentStep: s.currentStep,
-      lastCheckpointAt: s.lastCheckpointAt,
-      pipelineStep: s.pipelineStep ?? conv.pipelineStep,
-      usage: s.usage || conv.usage || null,
-    };
-  }
-  return conv;
-}
-
 async function agentsFor(conv, messages) {
   const pipeline = conv.pipelineId ? await store.getPipeline(conv.pipelineId) : undefined;
   const roles = await store.listRoles();
@@ -430,111 +405,26 @@ async function presentRoles(roles) {
   });
 }
 
-function chatSourceConfig(target) {
-  return {
-    api: 'chat',
-    baseUrl: effectiveBaseUrl(target.source),
-    apiKey: target.source.apiKey || '',
-    model: target.model,
-  };
-}
-
-async function llmConfig({ roleId, model: modelOverride } = {}) {
-  const [grok, settings] = await Promise.all([currentGrok(), ensureSettings()]);
-  const signedIn = Boolean(grok?.signedIn);
-  let target = resolveRoleTarget(settings, { roleId, model: modelOverride, grokSignedIn: signedIn });
-  if (target?.source?.kind === 'grok') {
-    let session = null;
-    try { session = await grokAuth.resolveAccessToken(); } catch { session = null; }
-    if (!session?.accessToken) {
-      target = resolveRoleTarget(settings, { roleId, model: modelOverride, grokSignedIn: false });
-    } else {
-      const model = target.model || GROK_SESSION_MODEL;
-      return {
-        api: 'grok-responses',
-        baseUrl: grokProxyBase(),
-        apiKey: session.accessToken,
-        model,
-        headers: grokProxyHeaders(session.accessToken, model),
-        onUnauthorized: async () => {
-          try {
-            const next = await grokAuth.forceRefresh();
-            if (!next?.accessToken) return null;
-            return { apiKey: next.accessToken, headers: grokProxyHeaders(next.accessToken, model) };
-          } catch {
-            return null;
-          }
-        },
-      };
-    }
-  }
-  if (!target || target.source?.kind === 'grok') throw unconfiguredModelError();
-  return chatSourceConfig(target);
-}
-
-const openaiLlm = createOpenAILLM({ getConfig: llmConfig });
-const fauxScriptPath = String(process.env.PI_WORK_FAUX_SCRIPT || '').trim();
-const fauxLlm = envRequestsFaux()
-  ? (fauxScriptPath ? loadFauxLLM(fauxScriptPath) : createFauxLLM({ turns: [] }))
-  : null;
-
-const llm = {
-  async next(req) {
-    const kind = await resolveChatKind();
-    if (kind === 'faux' && fauxLlm) return fauxLlm.next(req);
-    if (kind === 'openai') {
-      const explicit = String(process.env.PI_WORK_LLM || '').trim().toLowerCase() === 'openai';
-      if (!explicit) {
-        const [grok, settings] = await Promise.all([currentGrok(), ensureSettings()]);
-        const target = resolveRoleTarget(settings, {
-          roleId: req?.roleId,
-          model: req?.model,
-          grokSignedIn: Boolean(grok?.signedIn),
-        });
-        if (!target) throw unconfiguredModelError();
-      }
-      return openaiLlm.next(req);
-    }
-    throw unconfiguredModelError();
-  },
-};
-
 const extensionHost = createExtensionHost({
   skillDirs: SKILL_DIRS,
   pluginDirs: PLUGIN_DIRS,
   getSettings: () => store.getSettings(),
 });
 
-const orch = createOrchestrator({
-  llm,
-  store,
-  extensions: extensionHost,
-  retry: createRetryPolicy({
-    maxAttempts: Number(process.env.PI_WORK_RETRY_MAX) || 5,
-    baseMs: Number(process.env.PI_WORK_RETRY_BASE_MS) || 200,
-    maxMs: 30_000,
-  }),
-  stallMs: Number(process.env.PI_WORK_STALL_MS) || 120_000,
-});
-
-if (kernelRequested()) {
-  try {
-    kernelApi = await openConversationKernel({
-      dataDir: DATA_DIR,
-      store,
-      demo: envRequestsFaux(),
-      describeAgents: agentsFor,
-      extensions: extensionHost,
-      getSettings: () => ensureSettings(),
-      grokAuth,
-    });
-  } catch (err) {
-    console.error(`PI_WORK_KERNEL_OPEN_FAILED ${err instanceof Error ? err.message : err}`);
-    process.exit(1);
-  }
+try {
+  kernelApi = await openConversationKernel({
+    dataDir: DATA_DIR,
+    store,
+    demo: envRequestsFaux(),
+    describeAgents: agentsFor,
+    extensions: extensionHost,
+    getSettings: () => ensureSettings(),
+    grokAuth,
+  });
+} catch (err) {
+  console.error(`PI_WORK_KERNEL_OPEN_FAILED ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
 }
-
-if (!kernelApi) await orch.recover();
 
 const server = createServer(async (req, res) => {
   try {
@@ -844,19 +734,7 @@ async function routeApi(req, res, url) {
       const pipe = await store.getPipeline(body.pipelineId);
       if (!pipe) { sendJson(res, 400, { errors: ['unknown pipeline'] }); return; }
     }
-    if (kernelApi) {
-      const conv = await kernelApi.createConversation({
-        workspaceId: wid,
-        workspacePath: ws.path,
-        title: body.title || 'New conversation',
-        roleId: body.roleId,
-        pipelineId: body.pipelineId,
-        status: 'idle',
-      });
-      sendJson(res, 201, { id: conv.id, workspaceId: conv.workspaceId, title: conv.title, status: 'idle' });
-      return;
-    }
-    const conv = await store.createConversation({
+    const conv = await kernelApi.createConversation({
       workspaceId: wid,
       workspacePath: ws.path,
       title: body.title || 'New conversation',
@@ -871,13 +749,9 @@ async function routeApi(req, res, url) {
     const wid = decodeURIComponent(match[1]);
     const q = url.searchParams.get('q') || undefined;
     const list = await store.listConversations(wid, { q });
-    if (kernelApi) {
-      const presented = [];
-      for (const item of list) presented.push(publicConversation(await kernelApi.present(item)));
-      sendJson(res, 200, presented);
-      return;
-    }
-    sendJson(res, 200, list.map((c) => publicConversation(liveStatus(orch, c))));
+    const presented = [];
+    for (const item of list) presented.push(publicConversation(await kernelApi.present(item)));
+    sendJson(res, 200, presented);
     return;
   }
 
@@ -936,7 +810,6 @@ async function routeApi(req, res, url) {
 
   match = p.match(/^\/api\/conversations\/([^/]+)\/agents\/([^/]+)\/messages$/);
   if (match && m === 'GET') {
-    if (!kernelApi) { sendJson(res, 404, { error: 'not found' }); return; }
     const cid = decodeURIComponent(match[1]);
     const aid = decodeURIComponent(match[2]);
     const result = await kernelApi.childMessages(cid, aid);
@@ -949,39 +822,12 @@ async function routeApi(req, res, url) {
     const cid = decodeURIComponent(match[1]);
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
-    if (kernelApi) {
-      const live = await kernelApi.present(conv, { includeMessages: true });
-      const messages = live.messages;
-      const agents = [
-        ...(await agentsFor(live, messages)),
-        ...(await kernelApi.listSubagents(live)),
-      ];
-      const context = presentContext(live.usage);
-      const llmError = await lastLlmError(cid, live.status);
-      sendJson(res, 200, {
-        id: live.id,
-        title: live.title,
-        status: live.status,
-        autoContinues: live.autoContinues,
-        retries: live.retries,
-        lastCheckpointAt: live.lastCheckpointAt,
-        currentStep: live.currentStep,
-        roleId: live.roleId || null,
-        pipelineId: live.pipelineId || null,
-        pipelineStep: live.pipelineStep || 0,
-        messages,
-        agents,
-        usage: context.usage,
-        contextWindow: context.contextWindow,
-        contextLabel: context.contextLabel,
-        ...(live.archived ? { archived: true } : {}),
-        ...(llmError ? { llmError } : {}),
-      });
-      return;
-    }
-    const live = liveStatus(orch, conv);
-    const messages = await store.getMessages(cid);
-    const agents = await agentsFor(live, messages);
+    const live = await kernelApi.present(conv, { includeMessages: true });
+    const messages = live.messages;
+    const agents = [
+      ...(await agentsFor(live, messages)),
+      ...(await kernelApi.listSubagents(live)),
+    ];
     const context = presentContext(live.usage);
     const llmError = await lastLlmError(cid, live.status);
     sendJson(res, 200, {
@@ -1000,6 +846,7 @@ async function routeApi(req, res, url) {
       usage: context.usage,
       contextWindow: context.contextWindow,
       contextLabel: context.contextLabel,
+      ...(live.archived ? { archived: true } : {}),
       ...(llmError ? { llmError } : {}),
     });
     return;
@@ -1008,62 +855,14 @@ async function routeApi(req, res, url) {
     const cid = decodeURIComponent(match[1]);
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
-    if (kernelApi) {
-      const body = await readBody(req);
-      const patched = await kernelApi.patchConversation(cid, body);
-      sendJson(res, patched.status, patched.body);
-      return;
-    }
-    const live = liveStatus(orch, conv);
-    if (live.status === 'running' || live.status === 'recovering' || live.status === 'paused') {
-      sendJson(res, 409, { error: 'err_role_busy', status: live.status });
-      return;
-    }
     const body = await readBody(req);
-    const patch = {};
-    if (Object.prototype.hasOwnProperty.call(body, 'roleId')) {
-      if (body.roleId == null || body.roleId === '' || body.roleId === 'default') patch.roleId = null;
-      else {
-        const role = await store.getRole(String(body.roleId));
-        if (!role) { sendJson(res, 400, { errors: ['unknown role'] }); return; }
-        patch.roleId = role.id;
-      }
-    }
-    if (Object.prototype.hasOwnProperty.call(body, 'pipelineId')) {
-      if (body.pipelineId == null || body.pipelineId === '') {
-        patch.pipelineId = null;
-        patch.pipelineStep = 0;
-      } else {
-        const pipe = await store.getPipeline(String(body.pipelineId));
-        if (!pipe) { sendJson(res, 400, { errors: ['unknown pipeline'] }); return; }
-        patch.pipelineId = pipe.id;
-        patch.pipelineStep = 0;
-        if (!Object.prototype.hasOwnProperty.call(patch, 'roleId') && pipe.steps?.[0]?.role) {
-          patch.roleId = pipe.steps[0].role;
-        }
-      }
-    } else if (Object.prototype.hasOwnProperty.call(body, 'roleId')) {
-      patch.pipelineId = null;
-      patch.pipelineStep = 0;
-    }
-    if (!Object.keys(patch).length) { sendJson(res, 400, { error: 'empty patch' }); return; }
-    const next = await store.updateConversation(cid, patch);
-    const messages = await store.getMessages(cid);
-    const agents = await agentsFor(next, messages);
-    sendJson(res, 200, {
-      id: next.id,
-      roleId: next.roleId || null,
-      pipelineId: next.pipelineId || null,
-      pipelineStep: next.pipelineStep || 0,
-      status: next.status,
-      agents,
-    });
+    const patched = await kernelApi.patchConversation(cid, body);
+    sendJson(res, patched.status, patched.body);
     return;
   }
 
   match = p.match(/^\/api\/conversations\/([^/]+)\/from-history$/);
   if (match && m === 'POST') {
-    if (!kernelApi) { sendJson(res, 404, { error: 'not found' }); return; }
     const cid = decodeURIComponent(match[1]);
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
@@ -1079,28 +878,8 @@ async function routeApi(req, res, url) {
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
     const body = await readBody(req);
-    if (kernelApi) {
-      const posted = await kernelApi.postMessage(conv, body.text || '');
-      sendJson(res, posted.status, posted.body);
-      return;
-    }
-    const runId = randomUUID();
-    const ws = conv.workspaceId ? await store.getWorkspace(conv.workspaceId) : null;
-    const result = await orch.start(cid, {
-      workspacePath: conv.workspacePath || ws?.path,
-      text: body.text || '',
-      roleId: conv.roleId,
-      pipelineId: conv.pipelineId,
-      runId,
-    });
-    if (result?.status !== 'running' && result?.status !== 'recovering') {
-      sendJson(res, 409, {
-        error: 'err_send_blocked',
-        status: result?.status || 'stopped',
-      });
-      return;
-    }
-    sendJson(res, 202, { runId, status: result.status });
+    const posted = await kernelApi.postMessage(conv, body.text || '');
+    sendJson(res, posted.status, posted.body);
     return;
   }
 
@@ -1110,27 +889,22 @@ async function routeApi(req, res, url) {
     const action = match[2];
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
-    if (kernelApi && isArchivedConversation(conv)) {
+    if (isArchivedConversation(conv)) {
       const blocked = archivedMutation();
       sendJson(res, blocked.status, blocked.body);
       return;
     }
-    if (kernelApi && action === 'stop') {
+    if (action === 'stop') {
       const stopped = await kernelApi.stopConversation(cid);
       sendJson(res, stopped.status, stopped.body);
       return;
     }
-    if (kernelApi && (action === 'pause' || action === 'resume') && typeof kernelApi[action] === 'function') {
-      const result = await kernelApi[action](cid);
-      if (result?.body) {
-        sendJson(res, result.status || 200, result.body);
-        return;
-      }
-      sendJson(res, 200, { status: result?.status || 'stopped' });
+    const result = await kernelApi[action](cid);
+    if (result?.body) {
+      sendJson(res, result.status || 200, result.body);
       return;
     }
-    const result = await orch[action](cid);
-    sendJson(res, 200, { status: result.status });
+    sendJson(res, 200, { status: result?.status || 'stopped' });
     return;
   }
 
@@ -1173,48 +947,7 @@ async function routeApi(req, res, url) {
     const cid = decodeURIComponent(match[1]);
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
-    if (kernelApi) {
-      await kernelApi.streamEvents(req, res, cid, { headers: SECURITY_HEADERS });
-      return;
-    }
-    const last = req.headers['last-event-id'];
-    const afterId = last != null && last !== '' ? Number(last) : 0;
-    res.writeHead(200, {
-      ...SECURITY_HEADERS,
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    });
-    res.write(':\n\n');
-    const pending = [];
-    let replaying = true;
-    const unsub = orch.subscribe(cid, (ev) => {
-      if (replaying) pending.push(ev);
-      else {
-        res.write(formatSSE({ id: ev.id, event: ev.event, data: ev.data }));
-      }
-    });
-    const past = await store.getEvents(cid, { afterId: Number.isFinite(afterId) ? afterId : 0 });
-    const seen = new Set();
-    for (const ev of past) {
-      seen.add(ev.id);
-      res.write(formatSSE({ id: ev.id, event: ev.event, data: ev.data }));
-    }
-    replaying = false;
-    for (const ev of pending) {
-      if (seen.has(ev.id)) continue;
-      seen.add(ev.id);
-      res.write(formatSSE({ id: ev.id, event: ev.event, data: ev.data }));
-    }
-    const ping = setInterval(() => {
-      try { res.write(':\n\n'); } catch { /* ignore */ }
-    }, 15000);
-    ping.unref?.();
-    req.on('close', () => {
-      clearInterval(ping);
-      unsub();
-    });
+    await kernelApi.streamEvents(req, res, cid, { headers: SECURITY_HEADERS });
     return;
   }
 

@@ -2,10 +2,10 @@
   "name": "pi-work",
   "version": "0.1.0",
   "private": true,
-  "description": "网页版个人 Agent。当前 src/ 运行时使用自定义 SQLite 日志（不是 pi-durable）；pi-durable 仍可通过 legacy/ 使用。断点恢复、多角色并行、流水线编排。",
+  "description": "网页版个人 Agent。对话运行时是 Pi Durable Harness；应用数据在 SQLite。断点恢复、多角色并行、流水线编排。",
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.19"
   },
   "scripts": {
     "start": "node server.mjs",
@@ -13,7 +13,7 @@
     "dev": "sh scripts/dev.sh",
     "test": "node --test tests/unit/*.test.mjs",
     "test:legacy": "node --test tests/*.test.mjs",
-    "check": "node --check server.mjs && node --check src/core/grok-auth.mjs && node --check src/core/model-sources.mjs && node --check src/core/catalog.mjs && node --check src/core/skills.mjs && node --check src/core/plugins.mjs && node --check src/core/extensions.mjs && node --check src/core/orchestrator.mjs && node --check src/core/usage.mjs && node --check src/llm/openai.mjs && node --check src/llm/faux.mjs && node --check src/kernel/index.mjs && node --check src/kernel/events.mjs && node --check src/kernel/conversations.mjs && node --check src/kernel/tools.mjs && node --check src/kernel/models.mjs && node --check src/kernel/roles.mjs && node --check src/kernel/archive.mjs && node --check src/kernel/usage.mjs && node --check src/kernel/plugins.mjs && node --check src/kernel/subagents.mjs && node --check src/kernel/control.mjs && node --check tests/unit/kernel-subagents.test.mjs && node --check tests/unit/kernel-control.test.mjs && node --check tests/unit/kernel-models-fake.mjs && node --check tests/unit/kernel-models-token-hook.mjs && node --check tests/unit/kernel-recover-worker.mjs && node --check tests/unit/kernel-roles.test.mjs && node --check tests/unit/kernel-archive.test.mjs && node --check tests/unit/kernel-usage-plugins.test.mjs && node --check plugins/echo/index.mjs && node --check examples/plugins/word-count/index.mjs && node --check examples/plugins/broken/index.mjs && node --check lib/agent.mjs && node --check lib/attachments.mjs && node --check lib/v3.mjs && node --check lib/v3-utils.mjs && node --check lib/wechat.mjs && node --check public/usage.js && node --check public/agent-chip.js && node --check public/model-settings.js && node --check public/probe-error.js && node --check public/app.js && node --check public/i18n.js && node --check public/workflow-settings.js && node --check public/agent-settings.js"
+    "check": "node --check server.mjs && node --check src/core/grok-auth.mjs && node --check src/core/model-sources.mjs && node --check src/core/catalog.mjs && node --check src/core/skills.mjs && node --check src/core/plugins.mjs && node --check src/core/extensions.mjs && node --check src/core/explore.mjs && node --check src/core/usage.mjs && node --check tests/unit/explore.test.mjs && node --check src/kernel/index.mjs && node --check src/kernel/events.mjs && node --check src/kernel/conversations.mjs && node --check src/kernel/tools.mjs && node --check src/kernel/models.mjs && node --check src/kernel/roles.mjs && node --check src/kernel/archive.mjs && node --check src/kernel/usage.mjs && node --check src/kernel/plugins.mjs && node --check src/kernel/subagents.mjs && node --check src/kernel/control.mjs && node --check tests/unit/kernel-subagents.test.mjs && node --check tests/unit/kernel-control.test.mjs && node --check tests/unit/kernel-models-fake.mjs && node --check tests/unit/kernel-models-token-hook.mjs && node --check tests/unit/kernel-recover-worker.mjs && node --check tests/unit/kernel-roles.test.mjs && node --check tests/unit/kernel-archive.test.mjs && node --check tests/unit/kernel-usage-plugins.test.mjs && node --check plugins/echo/index.mjs && node --check examples/plugins/word-count/index.mjs && node --check examples/plugins/broken/index.mjs && node --check lib/agent.mjs && node --check lib/attachments.mjs && node --check lib/v3.mjs && node --check lib/v3-utils.mjs && node --check lib/wechat.mjs && node --check public/usage.js && node --check public/agent-chip.js && node --check public/model-settings.js && node --check public/probe-error.js && node --check public/app.js && node --check public/i18n.js && node --check public/workflow-settings.js && node --check public/agent-settings.js"
   },
   "dependencies": {
     "@earendil-works/chord": "1.1.0",
