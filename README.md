@@ -20,5 +20,19 @@
 - 任意 OpenAI 兼容模型接口（xAI、DeepSeek、内网）
 - Windows 内网可直接 `node server.mjs` 运行，无需 Docker
 
+## 插件
+
+设置 → 插件 → 导入插件，填写运行 pi-work 的机器上的目录。相对路径先按启动时的工作目录解析，找不到再按安装目录（`server.mjs` 所在目录）解析。只填名称不会安装。
+
+目录里要有 `plugin.json`，以及它的 `main` 指向的 `.mjs`：
+
+- `id`：小写字母、数字、连字符，最长 64 个字符。
+- `name`、`description`、`version`。
+- `main`：插件目录内的相对 `.mjs`，不能是绝对路径，也不能用 `../` 跳出目录。
+- `tools`：至少一项。`name` 以小写字母开头，后面只能是小写字母、数字和下划线；另有 `description` 和 JSON Schema `parameters`。
+- 模块按工具名导出函数 `(args, ctx) => ({ output, status })`。`ctx.workspacePath` 是当前工作区根目录。`status` 为 `error` 表示失败，`output` 是给对话看的文本。
+
+`plugins/echo` 会预装。[`examples/plugins/word-count`](examples/plugins/word-count) 不会，导入路径填 `examples/plugins/word-count`。成功后复制到数据目录的 `plugins/<id>/`，开关写在设置里，重启后仍在。清单无效或模块加载失败时，对话框保持打开并说明原因，不新增卡片。插件在进程内执行，没有额外沙箱。
+
 ## License
 MIT，保留原作者版权声明。

@@ -1,0 +1,18 @@
+{
+  "id": "broken",
+  "name": "Broken",
+  "description": "无效示例：plugin.json 声明了 broken_tool，但模块没有导出它。导入应失败。",
+  "version": "0.0.0",
+  "source": "example",
+  "main": "index.mjs",
+  "tools": [
+    {
+      "name": "broken_tool",
+      "description": "Declared on purpose and not exported.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}
