@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const MESSAGE_META_KEYS = ['kind', 'fromAgent', 'toAgent', 'agentId', 'roleId'];
 
 function chmodSecret(p) {
@@ -76,6 +76,8 @@ function convFromRow(row) {
     lastProgressAt: row.last_progress_at,
     originalText: row.original_text,
     usage: usageFromSql(row.usage_json),
+    harnessId: row.harness_id == null ? null : Number(row.harness_id),
+    hostMark: row.host_mark || null,
   };
 }
 
@@ -120,7 +122,9 @@ export function createSqliteStore(dir) {
       pipeline_id TEXT,
       workspace_path TEXT,
       last_progress_at INTEGER,
-      original_text TEXT
+      original_text TEXT,
+      harness_id INTEGER,
+      host_mark TEXT
     );
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
@@ -210,6 +214,8 @@ export function createSqliteStore(dir) {
   {
     const convCols = new Set(db.prepare('PRAGMA table_info(conversations)').all().map((c) => c.name));
     if (!convCols.has('usage_json')) db.exec('ALTER TABLE conversations ADD COLUMN usage_json TEXT');
+    if (!convCols.has('harness_id')) db.exec('ALTER TABLE conversations ADD COLUMN harness_id INTEGER');
+    if (!convCols.has('host_mark')) db.exec('ALTER TABLE conversations ADD COLUMN host_mark TEXT');
   }
 
   {
@@ -235,15 +241,16 @@ export function createSqliteStore(dir) {
     insConv: db.prepare(`INSERT INTO conversations (
       id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
       current_step, pipeline_step, updated_at, created_at, role_id, pipeline_id,
-      workspace_path, last_progress_at, original_text, usage_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+      workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
     getConv: db.prepare('SELECT * FROM conversations WHERE id = ?'),
     listConv: db.prepare('SELECT * FROM conversations WHERE workspace_id = ? ORDER BY updated_at DESC'),
-    listRecoverable: db.prepare("SELECT * FROM conversations WHERE status IN ('running','recovering')"),
+    listRecoverable: db.prepare("SELECT * FROM conversations WHERE status IN ('running','recovering') AND harness_id IS NULL"),
+    listKernel: db.prepare('SELECT * FROM conversations WHERE harness_id IS NOT NULL'),
     updConv: db.prepare(`UPDATE conversations SET
       workspace_id=?, title=?, status=?, auto_continues=?, retries=?, last_checkpoint_at=?,
       current_step=?, pipeline_step=?, updated_at=?, role_id=?, pipeline_id=?,
-      workspace_path=?, last_progress_at=?, original_text=?, usage_json=?
+      workspace_path=?, last_progress_at=?, original_text=?, usage_json=?, harness_id=?, host_mark=?
       WHERE id=?`),
     insMsg: db.prepare('INSERT INTO messages (id, conversation_id, role, text, tool_json, seq, meta_json) VALUES (?,?,?,?,?,?,?)'),
     getMsg: db.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq ASC, rowid ASC'),
@@ -415,12 +422,14 @@ export function createSqliteStore(dir) {
         lastProgressAt: now,
         originalText: null,
         usage: null,
+        harnessId: null,
+        hostMark: null,
       };
       q.insConv.run(
         conv.id, conv.workspaceId, conv.title, conv.status, conv.autoContinues, conv.retries,
         conv.lastCheckpointAt, conv.currentStep, conv.pipelineStep, conv.updatedAt, conv.createdAt,
         conv.roleId, conv.pipelineId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
-        usageToSql(conv.usage),
+        usageToSql(conv.usage), conv.harnessId, conv.hostMark,
       );
       return conv;
     },
@@ -437,6 +446,9 @@ export function createSqliteStore(dir) {
     },
     async listRecoverable() {
       return q.listRecoverable.all().map(convFromRow);
+    },
+    async listKernelConversations() {
+      return q.listKernel.all().map(convFromRow);
     },
     async updateConversation(id, patch = {}) {
       let conv = convFromRow(q.getConv.get(id));
@@ -460,19 +472,22 @@ export function createSqliteStore(dir) {
           lastProgressAt: now,
           originalText: null,
           usage: null,
+          harnessId: null,
+          hostMark: null,
         };
         q.insConv.run(
           conv.id, conv.workspaceId, conv.title, conv.status, conv.autoContinues, conv.retries,
           conv.lastCheckpointAt, conv.currentStep, conv.pipelineStep, conv.updatedAt, conv.createdAt,
           conv.roleId, conv.pipelineId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
-          usageToSql(conv.usage),
+          usageToSql(conv.usage), conv.harnessId, conv.hostMark,
         );
       }
       const next = { ...conv, ...patch, updatedAt: Date.now() };
       q.updConv.run(
         next.workspaceId, next.title, next.status, next.autoContinues, next.retries, next.lastCheckpointAt,
         next.currentStep, next.pipelineStep, next.updatedAt, next.roleId, next.pipelineId,
-        next.workspacePath, next.lastProgressAt, next.originalText, usageToSql(next.usage), id,
+        next.workspacePath, next.lastProgressAt, next.originalText, usageToSql(next.usage),
+        next.harnessId ?? null, next.hostMark ?? null, id,
       );
       return next;
     },
