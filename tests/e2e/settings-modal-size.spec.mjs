@@ -24,6 +24,7 @@ for (const viewport of [
     for (const tab of TABS) {
       await page.locator(`.sm-nav [data-action=set-settings-tab][data-tab=${tab}]`).click();
       await expect(page.locator('.sm-nav div.on')).toHaveAttribute('data-tab', tab);
+      await expect(modal).toBeVisible();
       const box = await modal.boundingBox();
       expect(box).toBeTruthy();
       const size = {

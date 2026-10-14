@@ -196,7 +196,6 @@ async function waitFor(base, id, pred, timeoutMs = 20000) {
 }
 
 function nodeScript(name) {
-  if (process.platform === 'win32') return `node ${name}`;
   return `"${process.execPath}" ${name}`;
 }
 

@@ -34,6 +34,12 @@ function errorResult(code, message) {
  * cwd is the conversation workspace. HOME, USERPROFILE, TEMP, and TMP point at
  * that same directory, matching the unix tool's HOME lock. The product bash in
  * src/tools/workspace.mjs is unchanged and still uses /bin/sh.
+ *
+ * cmd.exe /s strips one leading quote and the last quote of the /c string.
+ * Node's default spawn quoting then eats the quotes around an executable path
+ * that contains spaces (for example "C:\Program Files\nodejs\node.exe").
+ * windowsVerbatimArguments skips that quoting, and the extra quote pair around
+ * the whole command is what /s removes, so inner quotes survive.
  */
 function bashWindows({ command, timeout }, workspacePath, signal) {
   const limit = timeout ?? 60_000;
@@ -50,10 +56,11 @@ function bashWindows({ command, timeout }, workspacePath, signal) {
     LANG: 'C.UTF-8',
   };
   return new Promise((resolve, reject) => {
-    const child = spawn(comspec, ['/d', '/s', '/c', command], {
+    const child = spawn(comspec, ['/d', '/s', '/c', `"${command}"`], {
       cwd: workspacePath,
       env,
       windowsHide: true,
+      windowsVerbatimArguments: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
