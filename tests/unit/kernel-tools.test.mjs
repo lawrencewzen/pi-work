@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -285,6 +285,37 @@ test('kernel path: path escape is E_SANDBOX and bash stays in the workspace', { 
     assert.equal(escape?.data?.tool?.status, 'error');
     const started = events.find((ev) => ev.event === 'tool.start' && ev.data?.tool?.id === 'bash-1');
     assert.equal(started?.data?.tool?.status, 'running');
+  } finally {
+    await stopProcess(srv.proc);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('kernel path: bash runs a quoted node path and a script in a directory with spaces', { timeout: 40_000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kquote-'));
+  const nodeBin = process.execPath;
+  const printOne = `"${nodeBin}" -e "console.log(1)"`;
+  const spaced = `"${nodeBin}" "dir with spaces/hi.cjs"`;
+  const script = await writeScript(dataDir, 'quoted.json', [
+    { tool: 'bash', args: { command: printOne }, id: 'quote-eval' },
+    { tool: 'bash', args: { command: spaced }, id: 'quote-space' },
+    { text: 'quoted-done' },
+  ]);
+  const srv = await startServer(durableEnv(script), { dataDir });
+  try {
+    const { ws, conv } = await openConversation(srv.base, { title: 'quoted' });
+    const dir = path.join(ws.path, 'dir with spaces');
+    await mkdir(dir);
+    await writeFile(path.join(dir, 'hi.cjs'), "console.log('space-ok');\n");
+    const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'go' });
+    assert.equal(sent.status, 202);
+    const done = await waitFinished(srv.base, conv.id);
+    assert.equal(done.status, 'done', `${JSON.stringify(done)}\n${srv.logs()}`);
+    const tools = done.messages.filter((message) => message.role === 'tool').map((message) => message.text || '');
+    assert.equal(tools.length, 2, JSON.stringify(tools));
+    assert.equal(tools[0].includes('"code":0') && tools[0].includes('1'), true, tools[0]);
+    assert.equal(tools[1].includes('"code":0') && tools[1].includes('space-ok'), true, tools[1]);
+    assert.equal(done.messages.some((message) => message.role === 'assistant' && message.text === 'quoted-done'), true);
   } finally {
     await stopProcess(srv.proc);
     await rm(dataDir, { recursive: true, force: true });

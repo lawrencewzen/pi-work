@@ -33,3 +33,5 @@ jobs:
         run: node --test tests/unit/kernel-usage-plugins.test.mjs
       - name: Pi Durable subagent tests
         run: node --test tests/unit/kernel-subagents.test.mjs
+      - name: Pi Durable pause, stall, retry, and tool limit tests
+        run: node --test tests/unit/kernel-control.test.mjs
