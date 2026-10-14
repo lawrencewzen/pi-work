@@ -18,6 +18,7 @@ import {
   synthesizeStatus,
 } from './events.mjs';
 import { FAUX_MODEL, openKernel, registerFaux } from './index.mjs';
+import { createWorkspaceExtension, scriptedDemoStep, toolsForRole } from './tools.mjs';
 
 const DEMO_RESPONSE_COUNT = 100;
 
@@ -30,13 +31,17 @@ function installDemo(models, env) {
   const text = String(env.PI_WORK_FAUX_TEXT || 'ok');
   const hold = String(env.PI_WORK_FAUX_HOLD || '').trim() === '1';
   const ready = String(env.PI_WORK_FAUX_HOLD_READY || '').trim();
+  const scriptPath = String(env.PI_WORK_FAUX_SCRIPT || '').trim();
+  // Hold still wins: a script must not replace the in-flight model call used by recovery tests.
   const step = hold
     ? async () => {
       if (ready) await writeFile(ready, 'seen');
       await new Promise(() => {});
       return fauxAssistantMessage(text);
     }
-    : () => fauxAssistantMessage(text);
+    : (scriptPath
+      ? scriptedDemoStep(scriptPath, env)
+      : () => fauxAssistantMessage(text));
   faux.setResponses(Array.from({ length: DEMO_RESPONSE_COUNT }, () => step));
   return faux;
 }
@@ -52,11 +57,40 @@ export async function openConversationKernel({ dataDir, store, demo, describeAge
   const models = createModels();
   if (demo) installDemo(models, env);
   const registry = createRegistry();
-  const kernel = await openKernel({ dataDir, models, registry });
-  const { harness, context } = kernel;
   const watches = new Map();
   const tails = new Map();
   const listeners = new Map();
+
+  async function conversationIdFor(harnessId) {
+    const wanted = Number(harnessId);
+    for (const [cid, watch] of watches) {
+      if (Number(watch.harnessId) === wanted) return cid;
+    }
+    const rows = await store.listKernelConversations();
+    return rows.find((row) => Number(row.harnessId) === wanted)?.id ?? null;
+  }
+
+  registry.install(createWorkspaceExtension({
+    onWrote: async (info) => {
+      const cid = await conversationIdFor(info.harnessId);
+      if (!cid) throw new Error(`no conversation for harness ${info.harnessId}`);
+      watches.get(cid)?.mapCtx.toolDiffs.set(info.toolCallId, {
+        added: info.added,
+        removed: info.removed,
+      });
+      await store.addChange({
+        conversationId: cid,
+        path: info.path,
+        before: info.before,
+        after: info.after,
+        added: info.added,
+        removed: info.removed,
+        toolCallId: info.toolCallId,
+      });
+    },
+  }));
+  const kernel = await openKernel({ dataDir, models, registry });
+  const { harness, context } = kernel;
 
   function enqueue(cid, fn) {
     const prev = tails.get(cid) || Promise.resolve();
@@ -214,9 +248,14 @@ export async function openConversationKernel({ dataDir, store, demo, describeAge
     },
     async createConversation(fields) {
       const conv = await store.createConversation({ ...fields, status: 'idle' });
+      const role = (fields.roleId && await store.getRole(fields.roleId)) || await store.getRole('default');
       const created = await harness.createConversation({
         ownership: { kind: 'ownerless' },
-        ...(demo ? { agent: { model: FAUX_MODEL } } : {}),
+        agent: {
+          ...(demo ? { model: FAUX_MODEL } : {}),
+          ...(fields.workspacePath ? { cwd: fields.workspacePath } : {}),
+          tools: toolsForRole(role),
+        },
       }, context);
       const next = await store.updateConversation(conv.id, { harnessId: created.id, status: 'idle' });
       await attach(next);

@@ -2,7 +2,7 @@
 
 > **目标架构**：内核是 Pi Durable Harness（对话、任务、检查点、子 Agent），模型调用走 pi-ai，见 `AGENTS.md`「内核」。
 >
-> **现状（偏离目标，待迁移）**：默认路径仍是 `server.mjs` + `src/core/orchestrator.mjs`。`PI_WORK_KERNEL=durable` 时，对话的创建、读取、发消息和 SSE 走 `src/kernel/` 的 Pi Durable Harness（T5-2，不切默认）。其余能力仍在编排器上。迁回完成前不要在编排器上新增大的运行时能力。
+> **现状（偏离目标，待迁移）**：默认路径仍是 `server.mjs` + `src/core/orchestrator.mjs`。`PI_WORK_KERNEL=durable` 时，对话的创建、读取、发消息和 SSE 走 `src/kernel/` 的 Pi Durable Harness（T5-2），六个工作区工具、按对话的 cwd、以及 changes 记录也走该内核（T5-3）。默认仍不切换。其余能力仍在编排器上。迁回完成前不要在编排器上新增大的运行时能力。
 
 单个 Node 22 进程，浏览器通过 REST + SSE 通信。下面描述的是当前（自写编排器）的实现。
 
