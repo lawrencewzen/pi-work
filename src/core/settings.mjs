@@ -1,7 +1,11 @@
+import { normalizeRoleModels, normalizeSources, publicSource } from './model-sources.mjs';
+
 export const DEFAULT_SETTINGS = {
+  version: 2,
   provider: 'openai',
   baseUrl: '',
   apiKey: '',
+  sources: [],
   models: {},
   language: 'zh',
   theme: 'white',
@@ -36,14 +40,16 @@ export function isMaskedOrEmptyApiKey(value, currentMasked = '') {
 }
 
 export function normalizeSettings(raw = {}) {
-  const out = { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
+  const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const v2 = input.version === 2;
+  const out = { ...DEFAULT_SETTINGS, ...input };
   if (!out.models || typeof out.models !== 'object' || Array.isArray(out.models)) out.models = {};
   out.plugins = normalizeFlagMap(out.plugins);
   out.skills = normalizeFlagMap(out.skills);
   if (typeof out.theme === 'string' && out.theme.includes('-')) {
     const [family, mode] = out.theme.split('-');
     if (THEMES.has(family)) out.theme = family;
-    if (APPEARANCES.has(mode) && !raw.appearance) out.appearance = mode;
+    if (APPEARANCES.has(mode) && !input.appearance) out.appearance = mode;
   }
   if (!THEMES.has(out.theme)) out.theme = 'white';
   if (!APPEARANCES.has(out.appearance)) out.appearance = 'light';
@@ -51,6 +57,14 @@ export function normalizeSettings(raw = {}) {
   if (typeof out.provider !== 'string' || !out.provider) out.provider = 'openai';
   if (typeof out.baseUrl !== 'string') out.baseUrl = '';
   if (typeof out.apiKey !== 'string') out.apiKey = '';
+  if (v2) {
+    out.version = 2;
+    out.sources = normalizeSources(out.sources);
+    out.models = normalizeRoleModels(out.models);
+  } else {
+    delete out.version;
+    if (!Array.isArray(input.sources)) delete out.sources;
+  }
   // Grok session lives in ~/.grok/auth.json, never in the settings row.
   delete out.grok;
   return out;
@@ -58,7 +72,7 @@ export function normalizeSettings(raw = {}) {
 
 export function publicSettings(s) {
   const n = normalizeSettings(s);
-  return {
+  const body = {
     provider: n.provider,
     baseUrl: n.baseUrl,
     apiKey: maskApiKey(n.apiKey),
@@ -70,33 +84,58 @@ export function publicSettings(s) {
     plugins: { ...n.plugins },
     skills: { ...n.skills },
   };
+  if (n.version === 2) {
+    body.version = 2;
+    body.sources = (n.sources || []).map((source) => publicSource(source));
+  }
+  return body;
 }
 
 export function mergeSettings(prev, patch = {}) {
+  const patchObj = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
   const cur = normalizeSettings(prev);
-  const next = { ...cur };
-  if (patch.provider != null) next.provider = String(patch.provider);
-  if (patch.baseUrl != null) next.baseUrl = String(patch.baseUrl);
-  if (patch.language != null) next.language = String(patch.language);
-  if (patch.theme != null) next.theme = String(patch.theme);
-  if (patch.appearance != null) next.appearance = String(patch.appearance);
-  const hasNewKey = Object.prototype.hasOwnProperty.call(patch, 'apiKey')
-    && !isMaskedOrEmptyApiKey(patch.apiKey, maskApiKey(cur.apiKey));
-  if (hasNewKey) next.apiKey = String(patch.apiKey);
-  const baseUrlChanging = patch.baseUrl != null && String(patch.baseUrl) !== String(cur.baseUrl);
-  const providerChanging = patch.provider != null && String(patch.provider) !== String(cur.provider);
-  if ((baseUrlChanging || providerChanging) && !hasNewKey) {
-    next.apiKey = '';
+  const replacingLegacy = cur.version !== 2 && patchObj.version === 2;
+  const next = replacingLegacy
+    ? {
+      ...cur,
+      ...patchObj,
+      version: 2,
+      sources: Array.isArray(patchObj.sources) ? patchObj.sources : [],
+      models: patchObj.models && typeof patchObj.models === 'object' && !Array.isArray(patchObj.models)
+        ? { ...patchObj.models }
+        : {},
+    }
+    : { ...cur };
+  if (!replacingLegacy) {
+    if (patchObj.provider != null) next.provider = String(patchObj.provider);
+    if (patchObj.baseUrl != null) next.baseUrl = String(patchObj.baseUrl);
+    if (patchObj.language != null) next.language = String(patchObj.language);
+    if (patchObj.theme != null) next.theme = String(patchObj.theme);
+    if (patchObj.appearance != null) next.appearance = String(patchObj.appearance);
+    const hasNewKey = Object.prototype.hasOwnProperty.call(patchObj, 'apiKey')
+      && !isMaskedOrEmptyApiKey(patchObj.apiKey, maskApiKey(cur.apiKey));
+    if (hasNewKey) next.apiKey = String(patchObj.apiKey);
+    const baseUrlChanging = patchObj.baseUrl != null && String(patchObj.baseUrl) !== String(cur.baseUrl);
+    const providerChanging = patchObj.provider != null && String(patchObj.provider) !== String(cur.provider);
+    if ((baseUrlChanging || providerChanging) && !hasNewKey) next.apiKey = '';
+    if (patchObj.models && typeof patchObj.models === 'object' && !Array.isArray(patchObj.models)) {
+      const models = { ...(cur.models && typeof cur.models === 'object' ? cur.models : {}) };
+      for (const [key, value] of Object.entries(patchObj.models)) {
+        if (value == null) delete models[key];
+        else models[key] = value;
+      }
+      next.models = models;
+    }
+    if (Array.isArray(patchObj.sources)) next.sources = patchObj.sources;
+    if (patchObj.version === 2) next.version = 2;
   }
-  if (patch.models && typeof patch.models === 'object' && !Array.isArray(patch.models)) {
-    next.models = { ...cur.models, ...patch.models };
+  if (patchObj.plugins && typeof patchObj.plugins === 'object' && !Array.isArray(patchObj.plugins)) {
+    next.plugins = { ...(cur.plugins || {}), ...patchObj.plugins };
   }
-  if (patch.plugins && typeof patch.plugins === 'object' && !Array.isArray(patch.plugins)) {
-    next.plugins = { ...cur.plugins, ...patch.plugins };
+  if (patchObj.skills && typeof patchObj.skills === 'object' && !Array.isArray(patchObj.skills)) {
+    next.skills = { ...(cur.skills || {}), ...patchObj.skills };
   }
-  if (patch.skills && typeof patch.skills === 'object' && !Array.isArray(patch.skills)) {
-    next.skills = { ...cur.skills, ...patch.skills };
-  }
+  delete next.grok;
   return normalizeSettings(next);
 }
 
