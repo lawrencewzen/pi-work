@@ -4,6 +4,7 @@ import { retryDelayMs } from '@earendil-works/pi-ai/utils/retry';
 import { DEFAULT_RETRY_POLICY } from '@earendil-works/pi-durable';
 import { redactAuthText } from '../core/grok-auth.mjs';
 import { presentContext } from '../core/usage.mjs';
+import { latestCallUsage, reportedUsage } from './usage.mjs';
 
 /** messageId for an assistant partial that has no transcript entry yet. */
 export const LIVE_MESSAGE_ID = 'live';
@@ -48,7 +49,7 @@ function messageDone(entry) {
 
 function usageEvent(entry) {
   if (entry.kind !== 'pi.assistant') return null;
-  const presented = presentContext(entry.model?.[0]?.usage);
+  const presented = presentContext(reportedUsage(entry.model?.[0]));
   if (!presented.usage) return null;
   return { event: 'usage', data: presented };
 }
@@ -260,15 +261,13 @@ export function snapshotGap(snapshot, existing, ctx) {
   return events;
 }
 
-/** Transcript entries to the contract message list, plus the latest assistant usage. */
+/** Transcript entries to the contract message list, plus the latest reported call usage. */
 export function messagesFromEntries(entries) {
   const calls = new Map();
-  let usage = null;
+  const usage = latestCallUsage(entries);
   for (const entry of entries || []) {
     if (entry?.kind !== 'pi.assistant') continue;
-    const message = entry.model?.[0];
-    if (message?.usage) usage = message.usage;
-    const content = message?.content;
+    const content = entry.model?.[0]?.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       if (block?.type === 'toolCall' && block.id) calls.set(block.id, block.arguments || {});

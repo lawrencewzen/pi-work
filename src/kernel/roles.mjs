@@ -10,6 +10,7 @@ import { ConversationBusy, defineExtension, defineTool, section } from '@earendi
 import { agentEventData, mapConvStatusToAgent } from '../core/agents.mjs';
 import { TOOLS } from '../core/config.mjs';
 import { synthesizeStatus } from './events.mjs';
+import { createPluginHost } from './plugins.mjs';
 import { toolsForRole } from './tools.mjs';
 
 const FALLBACK_ROLE = {
@@ -81,41 +82,10 @@ function builtinTool(name) {
   });
 }
 
-function pluginTool(spec, store, byHarness) {
-  return defineTool({
-    name: spec.name,
-    description: spec.description || spec.name,
-    parameters: LOOSE_PARAMS,
-    replay: 'unsafe',
-    async execute(args, api, context) {
-      const cid = byHarness.get(api.conversationId);
-      const conv = cid ? await store.getConversation(cid) : null;
-      let result;
-      try {
-        result = await spec.handler(args || {}, {
-          workspacePath: conv?.workspacePath,
-          conversationId: cid,
-          signal: context?.abortSignal,
-        });
-      } catch (err) {
-        return {
-          content: [{ type: 'text', text: String(err?.message || 'plugin tool failed').slice(0, 32_000) }],
-          isError: true,
-        };
-      }
-      const output = typeof result === 'string' ? result : result?.output ?? '';
-      const text = typeof output === 'string' ? output : JSON.stringify(output ?? '');
-      return {
-        content: [{ type: 'text', text: text.slice(0, 32_000) }],
-        isError: result?.status === 'error',
-      };
-    },
-  });
-}
-
 /**
  * Host glue around configure / submit. `bridge` is the same object passed to
  * installRoleExtensions, so the skills section can see the current role.
+ * `bridge.afterTools` reloads plugins at a generation boundary.
  */
 export function createRoleHost({
   store,
@@ -136,7 +106,7 @@ export function createRoleHost({
   const byHarness = new Map();
   const lastAgent = new Map();
   const locks = new Map();
-  let pluginSpecs = [];
+  const plugins = createPluginHost({ registry, extensions, store, byHarness });
 
   function remember(conv) {
     if (conv?.harnessId != null) byHarness.set(conv.harnessId, conv.id);
@@ -175,51 +145,47 @@ export function createRoleHost({
     return role;
   }
 
-  async function refreshPlugins() {
-    let list = [];
-    try {
-      if (extensions && typeof extensions.pluginTools === 'function') {
-        list = await extensions.pluginTools();
-      }
-    } catch (err) {
-      console.error(`PI_WORK_KERNEL_ROLE ${err instanceof Error ? err.message : err}`);
-      list = [];
-    }
-    pluginSpecs = (Array.isArray(list) ? list : []).filter((tool) => (
-      tool && typeof tool.name === 'string' && typeof tool.handler === 'function'
-    ));
-    registry.install(defineExtension({
-      name: 'pi-work-plugin-tools',
-      tools: pluginSpecs.map((spec) => pluginTool(spec, store, byHarness)),
-    }));
-  }
-
   function toolsFor(role) {
-    const tools = toolsForRole(role);
-    if (role?.pluginTools === false) return tools;
-    const have = new Set(tools.map((tool) => tool.name));
-    const byName = new Map();
-    for (const item of registry.snapshot().tools()) byName.set(item.tool.name, item.tool);
-    for (const spec of pluginSpecs) {
-      if (have.has(spec.name)) continue;
-      const tool = byName.get(spec.name);
-      if (!tool) continue;
-      tools.push(tool);
-      have.add(spec.name);
-    }
-    return tools;
+    return plugins.toolsFor(role, toolsForRole(role));
   }
 
   async function configure(conv, role) {
     if (!conv?.harnessId) return;
     const conversation = await harness.conversation(conv.harnessId, context);
     if (!conversation) return;
-    await refreshPlugins();
+    await plugins.refresh();
     await conversation.configure({
       instructions: String(role?.systemPrompt || ''),
       tools: toolsFor(role),
     }, context);
     if (typeof resolveModel === 'function') await resolveModel(conv, role);
+  }
+
+  if (bridge) {
+    bridge.afterTools = async (harnessId) => {
+      const changed = await plugins.refresh();
+      if (!changed) return;
+      const cid = byHarness.get(harnessId);
+      if (!cid) return;
+      const conv = await store.getConversation(cid);
+      if (!conv) return;
+      await configure(conv, await loadEffectiveRole(conv));
+    };
+  }
+
+  async function reloadPlugins() {
+    const changed = await plugins.refresh();
+    if (!changed) return;
+    const rows = await store.listKernelConversations();
+    for (const conv of rows || []) {
+      if (!conv?.harnessId) continue;
+      remember(conv);
+      try {
+        await configure(conv, await loadEffectiveRole(conv));
+      } catch (err) {
+        console.error(`PI_WORK_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
+      }
+    }
   }
 
   async function submissionFor(conv, step) {
@@ -440,6 +406,7 @@ export function createRoleHost({
 
   return {
     remember,
+    reloadPlugins,
     resolveRole,
     annotate,
     emitAgent,
