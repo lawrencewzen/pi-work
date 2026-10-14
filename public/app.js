@@ -340,6 +340,33 @@ export function isAddedFileDiff(diffText) {
   return hunks.length > 0 && hunks.every((m) => m[1] === '0');
 }
 
+/** +0 −0 against the baseline: identical content, so it is not a Diff entry. */
+export function changeHasDiff(ch) {
+  if (!ch) return false;
+  const added = Number(ch.added);
+  const removed = Number(ch.removed);
+  if (Number.isFinite(added) || Number.isFinite(removed)) {
+    return added !== 0 || removed !== 0;
+  }
+  return true;
+}
+
+export function changesWithDiff(list) {
+  return (Array.isArray(list) ? list : []).filter(changeHasDiff);
+}
+
+/** Loaded diff whose working copy matches the baseline (blank side-by-side columns). */
+export function diffIsUnchanged(diff) {
+  if (!diff) return false;
+  const added = Number(diff.added);
+  const removed = Number(diff.removed);
+  if (Number.isFinite(added) && Number.isFinite(removed)) {
+    return added === 0 && removed === 0;
+  }
+  const unified = typeof diff.unified === 'string' ? diff.unified : '';
+  return unified.length > 0 && !/^@@/m.test(unified);
+}
+
 // Unified Diff renderer
 export function renderDiffHtml(diffText) {
   if (!diffText) return `<div class="empty-placeholder">${escapeHtml(t('no_diff_available'))}</div>`;
@@ -743,11 +770,13 @@ function workspaceTreeRowsHtml() {
     const depth = String(ent.path || '').split('/').length - 1;
     const name = String(ent.path || '').split('/').pop();
     const pad = 8 + depth * 12;
+    const label = ent.type === 'dir' ? `${name}/` : name;
+    const title = escapeHtml(name);
     if (ent.type === 'dir') {
-      return `<div class="file-tree-row is-dir" style="padding-left:${pad}px">${escapeHtml(name)}/</div>`;
+      return `<div class="file-tree-row is-dir" style="padding-left:${pad}px" title="${title}"><span class="file-tree-name">${escapeHtml(label)}</span></div>`;
     }
     const active = ent.path === state.activeFilePath ? ' active' : '';
-    return `<button type="button" class="file-tree-row${active}" style="padding-left:${pad}px" data-testid="workspace-file" data-action="load-workspace-file" data-path="${escapeHtml(ent.path)}">${escapeHtml(name)}</button>`;
+    return `<button type="button" class="file-tree-row${active}" style="padding-left:${pad}px" title="${title}" data-testid="workspace-file" data-action="load-workspace-file" data-path="${escapeHtml(ent.path)}"><span class="file-tree-name">${escapeHtml(label)}</span></button>`;
   }).join('');
 }
 
@@ -830,8 +859,9 @@ export async function selectConversation(cid) {
   state.activeRightTab = savedTab;
   state.userPickedFile = false;
 
-  if (state.changes.length > 0) {
-    state.activeFilePath = state.changes[state.changes.length - 1].path;
+  const visibleChanges = changesWithDiff(state.changes);
+  if (visibleChanges.length > 0) {
+    state.activeFilePath = visibleChanges[visibleChanges.length - 1].path;
   } else {
     state.activeFilePath = null;
   }
@@ -1097,11 +1127,12 @@ export function connectSSE(cid) {
       api(`/api/conversations/${encodeURIComponent(cid)}/changes`)
         .then((changes) => {
           state.changes = Array.isArray(changes) ? changes : [];
-          const newest = state.changes.length ? state.changes[state.changes.length - 1].path : null;
+          const visible = changesWithDiff(state.changes);
+          const newest = visible.length ? visible[visible.length - 1].path : null;
           const toolPath = tool?.path || tool?.input?.path || null;
           const stillExists = state.activeFilePath && state.changes.some((c) => c.path === state.activeFilePath);
           if (!state.userPickedFile) {
-            const pick = (toolPath && state.changes.some((c) => c.path === toolPath)) ? toolPath : newest;
+            const pick = (toolPath && visible.some((c) => c.path === toolPath)) ? toolPath : newest;
             if (pick) {
               loadFileOrDiff(pick);
               return;
@@ -1398,6 +1429,7 @@ export async function saveEditorFile() {
         state.changes = Array.isArray(changes) ? changes : state.changes;
       } catch { /* diff refresh is best-effort */ }
     }
+    renderRightPanel();
   } catch (err) {
     showToast(err.message || 'err_save');
   }
@@ -2133,12 +2165,13 @@ export function renderRightPanel() {
   const panel = document.getElementById('right-panel');
   if (!panel) return;
 
+  const visibleChanges = changesWithDiff(state.changes);
   const changesBar = document.getElementById('changed-files-bar');
   if (changesBar) {
-    if (state.changes.length === 0) {
+    if (visibleChanges.length === 0) {
       changesBar.innerHTML = `<span style="font-size:11px;color:var(--text-muted);">${escapeHtml(t('no_changed_files'))}</span>`;
     } else {
-      changesBar.innerHTML = state.changes
+      changesBar.innerHTML = visibleChanges
         .map((ch) => {
           const isActive = ch.path === state.activeFilePath;
           const display = truncatePath(ch.path, 30);
@@ -2155,7 +2188,7 @@ export function renderRightPanel() {
   }
 
   const badge = document.getElementById('diff-tab-badge');
-  if (badge) badge.textContent = state.changes.length || 0;
+  if (badge) badge.textContent = visibleChanges.length || 0;
 
   const viewport = document.getElementById('right-viewport');
   if (!viewport) return;
@@ -2178,10 +2211,16 @@ export function renderRightPanel() {
     viewport.innerHTML = renderFileBrowserHtml();
   } else {
     if (!state.activeDiff) {
-      const emptyKey = state.changes.length === 0 ? 'no_changes_yet' : 'select_file_for_diff';
+      const emptyKey = visibleChanges.length === 0 ? 'no_changes_yet' : 'select_file_for_diff';
       viewport.innerHTML = `
         <div class="diff-viewport" data-testid="diff-view">
           <div class="empty-placeholder">${escapeHtml(t(emptyKey))}</div>
+        </div>
+      `;
+    } else if (diffIsUnchanged(state.activeDiff)) {
+      viewport.innerHTML = `
+        <div class="diff-viewport" data-testid="diff-view">
+          <div class="empty-placeholder" data-testid="diff-unchanged">${escapeHtml(t('diff_no_change'))}</div>
         </div>
       `;
     } else {

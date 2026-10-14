@@ -1,9 +1,11 @@
-/** Split into lines; trailing newline and CRLF are not counted as extra lines. */
+/** Split into lines; trailing newline and CRLF are not counted as extra lines.
+ * A file that is only a newline (what an emptied editor often saves) matches an empty baseline. */
 export function splitLines(text) {
   if (text == null || text === '') return [];
   const s = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = s.split('\n');
   if (lines[lines.length - 1] === '') lines.pop();
+  if (lines.length === 1 && lines[0] === '') return [];
   return lines;
 }
 
