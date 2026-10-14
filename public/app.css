@@ -1743,7 +1743,8 @@ a:hover {
   width: 210px;
   min-width: 180px;
   max-width: 240px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border-right: 1px solid var(--border-subtle);
   background: var(--bg-surface-subtle);
   padding: 6px 0;
@@ -1753,6 +1754,8 @@ a:hover {
   display: flex;
   align-items: center;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -1762,6 +1765,14 @@ a:hover {
   text-align: left;
   padding: 3px 8px;
   cursor: pointer;
+  overflow: hidden;
+}
+.file-tree-name {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .file-tree-row.is-dir {
