@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { startServer, prepareWorkspaces, api, authToken } from './helpers/server.mjs';
 import { openApp, createWorkspace, newConversation, send } from './helpers/ui.mjs';
 
@@ -52,17 +53,6 @@ function startChildModel(text) {
       });
     });
   });
-}
-
-async function waitStatus(url, token, cid, ready, attempts = 80) {
-  let body = null;
-  for (let i = 0; i < attempts; i += 1) {
-    const got = await api(url, 'GET', `/conversations/${cid}`, null, token);
-    body = got.body;
-    if (ready(body)) return body;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  return body;
 }
 
 async function shot(page, name) {
@@ -231,27 +221,63 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
   }
 });
 
+function seedArchived(dataDir, row) {
+  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'));
+  const now = Date.now();
+  db.prepare(`INSERT INTO conversations (
+    id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
+    current_step, pipeline_step, updated_at, created_at, role_id, pipeline_id,
+    workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    row.id,
+    row.workspaceId,
+    row.title,
+    'done',
+    0,
+    0,
+    null,
+    0,
+    0,
+    now,
+    now,
+    null,
+    null,
+    row.workspacePath,
+    now,
+    row.originalText || '',
+    null,
+    null,
+    null,
+  );
+  const ins = db.prepare('INSERT INTO messages (id, conversation_id, role, text, tool_json, seq, meta_json) VALUES (?,?,?,?,?,?,?)');
+  row.messages.forEach((msg, index) => {
+    ins.run(msg.id, row.id, msg.role, msg.text, null, index + 1, null);
+  });
+  db.close();
+}
+
 test('an old conversation is archived and can open a new chat from its history', async ({ page }) => {
   const prepared = await prepareWorkspaces(['repo']);
-  const legacy = await startServer({
-    script: 'basic.json',
+  const setup = await startServer({
     extraEnv: { PI_WORK_WORKSPACE_ROOT: prepared.root },
   });
-  const token = await authToken(legacy.dataDir);
-  const ws = await api(legacy.url, 'POST', '/workspaces', { name: 'old-ws', path: prepared.dirs[0] }, token);
+  const token = await authToken(setup.dataDir);
+  const ws = await api(setup.url, 'POST', '/workspaces', { name: 'old-ws', path: prepared.dirs[0] }, token);
   expect(ws.status).toBe(201);
-  const conv = await api(legacy.url, 'POST', `/workspaces/${ws.body.id}/conversations`, { title: '旧对话' }, token);
-  expect(conv.status).toBe(201);
-  const sent = await api(legacy.url, 'POST', `/conversations/${conv.body.id}/messages`, { text: '请保留这句话' }, token);
-  expect(sent.status).toBe(202);
-  const done = await waitStatus(legacy.url, token, conv.body.id, (body) => body?.status === 'done');
-  expect(done?.status).toBe('done');
-  await legacy.kill();
+  await setup.kill();
+  // Pre-kernel rows have no harness id. The old run loop is gone, so the row is seeded.
+  seedArchived(setup.dataDir, {
+    id: 'old-archive-e2e',
+    workspaceId: ws.body.id,
+    workspacePath: ws.body.path || prepared.dirs[0],
+    title: '旧对话',
+    originalText: '请保留这句话',
+    messages: [{ id: 'm-user', role: 'user', text: '请保留这句话' }],
+  });
 
   const kernel = await startServer({
-    dataDir: legacy.dataDir,
+    dataDir: setup.dataDir,
     extraEnv: {
-      PI_WORK_KERNEL: 'durable',
       PI_WORK_FAUX_TEXT: 'continued',
       PI_WORK_WORKSPACE_ROOT: prepared.root,
     },
