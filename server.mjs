@@ -15,7 +15,7 @@ import { cloneGitRepo, stripGitUrlCredentials } from './src/core/git-import.mjs'
 import { createExtensionHost } from './src/core/extensions.mjs';
 import { describePlugins, installPlugin, PLUGIN_ID } from './src/core/plugins.mjs';
 import { listSkills, listSkillRecords, createSkill, updateSkill, SKILL_ID } from './src/core/skills.mjs';
-import { loadRoleTemplates, loadPipelineTemplates } from './src/core/roles-load.mjs';
+import { loadRoleTemplates, loadPipelineTemplates, readRoleTemplateMap, attachBuiltinPrompts } from './src/core/roles-load.mjs';
 import { buildAgents } from './src/core/agents.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
 import { loadFauxLLM, createFauxLLM } from './src/llm/faux.mjs';
@@ -736,7 +736,8 @@ async function routeApi(req, res, url) {
   }
 
   if (p === '/api/roles' && m === 'GET') {
-    sendJson(res, 200, await store.listRoles());
+    const templates = await readRoleTemplateMap(path.join(ROOT, 'roles'));
+    sendJson(res, 200, attachBuiltinPrompts(await store.listRoles(), templates));
     return;
   }
   if (p === '/api/roles' && m === 'POST') {

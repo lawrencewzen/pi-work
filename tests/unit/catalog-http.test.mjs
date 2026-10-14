@@ -29,8 +29,17 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
   try {
     const roles = await api(srv.url, 'GET', '/roles');
     assert.equal(roles.status, 200);
-    assert.ok(roles.body.some((role) => role.id === 'planner'));
-    assert.ok(roles.body.some((role) => role.id === 'coder'));
+    const planner = roles.body.find((role) => role.id === 'planner');
+    assert.equal(planner?.builtin, true);
+    assert.match(planner?.defaultPrompt || '', /## 交接/);
+    assert.match(planner?.defaultPrompt || '', /角色：规划/);
+    assert.equal(planner?.systemPrompt, planner?.defaultPrompt);
+    for (const id of ['coder', 'tester', 'auditor']) {
+      const role = roles.body.find((item) => item.id === id);
+      assert.equal(role?.builtin, true);
+      assert.match(role?.defaultPrompt || '', new RegExp(`角色：${{ coder: '编码', tester: '测试', auditor: '审计' }[id]}`));
+    }
+    assert.equal(roles.body.find((role) => role.id === 'default')?.builtin, undefined);
 
     const pipes = await api(srv.url, 'GET', '/pipelines');
     assert.equal(pipes.status, 200);
