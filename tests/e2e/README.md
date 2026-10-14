@@ -26,10 +26,11 @@
 | [running-overview.md](running-overview.md) | 运行中概览 |
 | [grok-login.md](grok-login.md) | Grok 设备码登录、退出登录 |
 | [model-connection.md](model-connection.md) | 未连接模型时报错，登录后真实回复，演示模式有徽章 |
-| [model-sources.md](model-sources.md) | 模型来源增删改测、角色下拉、跟随默认、保存条、换主机重填 Key |
+| [model-sources.md](model-sources.md) | 模型来源增删改测、默认模型、跟随默认、保存条、换主机重填 Key |
 | [skills.md](skills.md) | 新建 Skill、开关、启用后影响回复 |
 | [plugins.md](plugins.md) | Echo 列表、开关、调用工具、空导入被拒绝、导入 word-count、重启后仍在、无效插件报错 |
-| [workflow.md](workflow.md) | 角色与流水线：新建、编辑、删除、占用拒绝、功能交付 |
+| [agents.md](agents.md) | Agent 页：主 Agent / 子 Agent 的新建、编辑、复制、恢复默认、删除、模型、Skills |
+| [workflow.md](workflow.md) | 流水线：新建、编辑、删除、功能交付 |
 | [appearance.md](appearance.md) | 语言与主题 |
 
 ## 记录

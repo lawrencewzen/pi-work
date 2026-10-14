@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { startServer, authToken } from './helpers/server.mjs';
 import { login } from './helpers/ui.mjs';
 
-const TABS = ['general', 'models', 'plugins', 'skills', 'workflow', 'about'];
+const TABS = ['general', 'models', 'agents', 'plugins', 'skills', 'workflow', 'about'];
 
 let srv;
 
@@ -22,7 +22,7 @@ for (const viewport of [
     await expect(modal).toBeVisible();
     let first = null;
     for (const tab of TABS) {
-      await page.locator(`[data-action=set-settings-tab][data-tab=${tab}]`).click();
+      await page.locator(`.sm-nav [data-action=set-settings-tab][data-tab=${tab}]`).click();
       await expect(page.locator('.sm-nav div.on')).toHaveAttribute('data-tab', tab);
       const box = await modal.boundingBox();
       expect(box).toBeTruthy();

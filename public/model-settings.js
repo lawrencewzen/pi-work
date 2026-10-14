@@ -93,6 +93,53 @@ function sameBinding(a, b) {
   return a.sourceId === b.sourceId && a.model === b.model;
 }
 
+export const AGENT_DRAFT_ROLE = '__agent_new__';
+
+export function sameModelBinding(a, b) {
+  return sameBinding(a, b);
+}
+
+export function ensureRoleBindings(state) {
+  const ui = ensureModelsUi(state);
+  if (!ui.ready) {
+    ui.roleDraft = cloneBindings(state.settings?.models);
+    ui.roleSaved = cloneBindings(state.settings?.models);
+    ui.ready = true;
+  }
+  return ui;
+}
+
+function readBinding(state, roleId) {
+  if (roleId === AGENT_DRAFT_ROLE) {
+    const binding = state.agentsUi?.draft?.modelBinding || null;
+    if (!binding?.sourceId || !binding?.model) return null;
+    return { sourceId: binding.sourceId, model: binding.model };
+  }
+  return ensureRoleBindings(state).roleDraft?.[roleId] || null;
+}
+
+function writeBinding(state, roleId, binding) {
+  if (roleId === AGENT_DRAFT_ROLE) {
+    const draft = state.agentsUi?.draft;
+    if (!draft) return;
+    draft.modelBinding = binding?.sourceId && binding?.model
+      ? { sourceId: binding.sourceId, model: binding.model }
+      : null;
+    return;
+  }
+  const ui = ensureRoleBindings(state);
+  if (binding?.sourceId && binding?.model) ui.roleDraft[roleId] = { sourceId: binding.sourceId, model: binding.model };
+  else delete ui.roleDraft[roleId];
+}
+
+export function revertRoleBinding(state, roleId) {
+  if (!roleId || roleId === AGENT_DRAFT_ROLE) return;
+  const ui = ensureRoleBindings(state);
+  const saved = ui.roleSaved?.[roleId] || null;
+  if (saved) ui.roleDraft[roleId] = { sourceId: saved.sourceId, model: saved.model };
+  else delete ui.roleDraft[roleId];
+}
+
 export function noteSettingsReloaded(state) {
   const ui = state.modelsUi;
   if (!ui?.ready) return;
@@ -131,13 +178,6 @@ function sourcesOf(state) {
 
 function grokSignedIn(state) {
   return Boolean(state.settings?.grok?.signedIn);
-}
-
-function orderedRoles(state) {
-  const roles = Array.isArray(state.roles) ? state.roles.filter((role) => role && role.id) : [];
-  const rest = roles.filter((role) => role.id !== 'default');
-  const def = roles.find((role) => role.id === 'default');
-  return def ? [def, ...rest] : rest;
 }
 
 function kindKey(source, state) {
@@ -205,7 +245,7 @@ function effectiveModel(state, roleId) {
 }
 
 function roleChanges(state) {
-  const ui = ensureModelsUi(state);
+  const ui = ensureRoleBindings(state);
   const ids = new Set([...Object.keys(ui.roleDraft || {}), ...Object.keys(ui.roleSaved || {})]);
   const changes = [];
   for (const roleId of ids) {
@@ -214,6 +254,10 @@ function roleChanges(state) {
     if (!sameBinding(next, prev)) changes.push({ roleId, next, prev });
   }
   return changes;
+}
+
+function defaultChanges(state) {
+  return roleChanges(state).filter((change) => change.roleId === 'default');
 }
 
 function safeHttps(url) {
@@ -337,11 +381,7 @@ export function mountModelsPane(state, t) {
       el.textContent = remainText(pending.expiresAt, t);
     }, 1000);
   }
-  if (ui.pickerRole) {
-    positionModelPop(ui.pickerRole);
-    const search = document.getElementById('ms-search');
-    if (search && document.activeElement !== search) search.focus({ preventScroll: true });
-  }
+  syncModelPop(state);
   const scroller = document.getElementById('ms-scroll');
   if (scroller) {
     const start = scroller.scrollTop;
@@ -365,6 +405,14 @@ export function closeModelPop(state) {
   document.getElementById('model-pop')?.classList.remove('open');
 }
 
+export function syncModelPop(state) {
+  const ui = ensureModelsUi(state);
+  if (!ui.pickerRole) return;
+  positionModelPop(ui.pickerRole);
+  const search = document.getElementById('ms-search');
+  if (search && document.activeElement !== search) search.focus({ preventScroll: true });
+}
+
 function positionModelPop(roleId) {
   const pop = document.getElementById('model-pop');
   const btn = document.querySelector(`[data-action="toggle-model-pick"][data-role-id="${CSS.escape(roleId)}"]`);
@@ -372,17 +420,25 @@ function positionModelPop(roleId) {
   pop.classList.add('open');
   const rect = btn.getBoundingClientRect();
   const modal = document.querySelector('.sm')?.getBoundingClientRect();
-  const width = Math.min(360, Math.max(220, window.innerWidth - 16));
-  pop.style.width = `${width}px`;
-  let left = rect.right - width;
-  left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
-  pop.style.left = `${left}px`;
-  const height = pop.offsetHeight;
   const limitBottom = (modal?.bottom ?? window.innerHeight) - 8;
   const limitTop = (modal?.top ?? 0) + 8;
+  const limitLeft = (modal?.left ?? 0) + 8;
+  const limitRight = (modal?.right ?? window.innerWidth) - 8;
+  const width = Math.min(360, Math.max(220, limitRight - limitLeft));
+  pop.style.width = `${width}px`;
+  let left = rect.right - width;
+  left = Math.max(limitLeft, Math.min(left, limitRight - width));
+  pop.style.left = `${left}px`;
+  pop.style.maxHeight = '';
+  let height = pop.offsetHeight;
   let top = rect.bottom + 4;
   if (top + height > limitBottom) top = rect.top - 4 - height;
-  if (top < limitTop) top = Math.max(8, limitTop);
+  if (top < limitTop) {
+    const available = Math.max(160, limitBottom - limitTop);
+    pop.style.maxHeight = `${available}px`;
+    height = pop.offsetHeight;
+    top = Math.max(limitTop, Math.min(rect.bottom + 4, limitBottom - height));
+  }
   pop.style.top = `${top}px`;
 }
 
@@ -476,45 +532,71 @@ function renderSourceRow(source, ctx) {
   );
 }
 
-function renderRoleRow(role, ctx) {
-  const { t, escapeHtml, state, localizeRoleLabel } = ctx;
-  const ui = ensureModelsUi(state);
-  const binding = ui.roleDraft[role.id] || null;
-  const saved = ui.roleSaved[role.id] || null;
-  const dirty = !sameBinding(binding, saved);
+function pickVisual(ctx, roleId) {
+  const { t, escapeHtml, state } = ctx;
+  const binding = readBinding(state, roleId);
   const held = bindingUsable(binding, state) ? binding : null;
-  const broken = binding && !held;
-  const effective = effectiveModel(state, role.id);
+  const broken = Boolean(binding && !held);
+  const isDefault = roleId === 'default';
+  const followId = roleId === AGENT_DRAFT_ROLE ? 'default' : roleId;
+  const effective = isDefault ? effectiveModel(state, 'default') : effectiveModel(state, followId);
   const source = held ? sourcesOf(state).find((item) => item.id === held.sourceId) : null;
-  const isDefault = role.id === 'default';
-  let buttonClass = 'ms-pick-btn';
-  if (!held) buttonClass += ' follow';
-  if (dirty) buttonClass += ' dirty';
   const dot = broken ? 'warn' : (held ? 'ok' : 'off');
   let label;
   if (held) {
     label = `<span class="m mono">${escapeHtml(held.model)}</span>` +
       (source ? `<span class="from">${escapeHtml(source.name || '')}</span>` : '');
   } else if (!isDefault) {
-    label = `<span class="m">${escapeHtml(t('src_follow_default'))}${effective ? ` · <span class="mono">${escapeHtml(effective)}</span>` : ''}</span>`;
+    const fallback = effectiveModel(state, 'default');
+    label = `<span class="m">${escapeHtml(t('src_follow_default'))}${fallback ? ` · <span class="mono">${escapeHtml(fallback)}</span>` : ''}</span>`;
   } else if (effective) {
     label = `<span class="m mono">${escapeHtml(effective)}</span><span class="from">${escapeHtml(t('src_auto'))}</span>`;
   } else {
     label = `<span class="m">${escapeHtml(t('src_pick_model'))}</span>`;
   }
-  const brokenSource = broken ? sourcesOf(state).find((item) => item.id === binding.sourceId) : null;
-  const brokenReason = brokenSource ? reasonText(brokenSource, sourceBlockReason(brokenSource, { grokSignedIn: grokSignedIn(state) }), t) : t('src_why_missing');
-  const warn = broken
-    ? `<div class="ms-role-warn">${escapeHtml(isDefault ? t('src_was_unavailable_default', { model: binding.model, reason: brokenReason, fallback: effective || t('src_none') }) : t('src_was_unavailable', { model: binding.model, reason: brokenReason }))}</div>`
-    : '';
-  const desc = isDefault ? `<div>${escapeHtml(t('src_default_hint'))}</div>` : warn;
+  let warn = '';
+  if (broken) {
+    const brokenSource = sourcesOf(state).find((item) => item.id === binding.sourceId);
+    const brokenReason = brokenSource
+      ? reasonText(brokenSource, sourceBlockReason(brokenSource, { grokSignedIn: grokSignedIn(state) }), t)
+      : t('src_why_missing');
+    const text = isDefault
+      ? t('src_was_unavailable_default', { model: binding.model, reason: brokenReason, fallback: effective || t('src_none') })
+      : t('src_was_unavailable', { model: binding.model, reason: brokenReason });
+    warn = `<div class="ms-role-warn">${escapeHtml(text)}</div>`;
+  }
+  return { held, dot, label, warn, follow: !held && !isDefault };
+}
+
+export function renderModelPickButton(ctx, roleId, { testId = 'model-pick' } = {}) {
+  const { escapeHtml, state } = ctx;
+  const ui = ensureModelsUi(state);
+  const visual = pickVisual(ctx, roleId);
+  const saved = roleId === AGENT_DRAFT_ROLE ? (state.agentsUi?.baseline?.modelBinding || null) : (ui.roleSaved?.[roleId] || null);
+  const binding = readBinding(state, roleId);
+  const dirty = !sameBinding(binding, saved);
+  let buttonClass = 'ms-pick-btn';
+  if (visual.follow) buttonClass += ' follow';
+  if (dirty) buttonClass += ' dirty';
   return (
-    `<div class="ms-role" data-testid="model-role" data-role-id="${escapeHtml(role.id)}">` +
-    `<div class="ms-role-name"><b>${escapeHtml(localizeRoleLabel(role.id || role.name))}</b><span class="mono">${escapeHtml(role.id)}</span>${desc}</div>` +
-    `<div class="ms-pick">` +
-    `<button type="button" class="${buttonClass}" data-action="toggle-model-pick" data-role-id="${escapeHtml(role.id)}" data-testid="model-pick" aria-expanded="${ui.pickerRole === role.id ? 'true' : 'false'}">` +
-    `<span class="ms-dot ${dot}"></span>${label}<span class="ms-caret"></span>` +
-    `</button></div></div>`
+    `<button type="button" class="${buttonClass}" data-action="toggle-model-pick" data-role-id="${escapeHtml(roleId)}" data-testid="${escapeHtml(testId)}" aria-expanded="${ui.pickerRole === roleId ? 'true' : 'false'}">` +
+    `<span class="ms-dot ${visual.dot}"></span>${visual.label}<span class="ms-caret"></span>` +
+    `</button>${visual.warn}`
+  );
+}
+
+function renderDefaultRow(ctx) {
+  const { t, escapeHtml, localizeRoleLabel } = ctx;
+  const role = (ctx.state.roles || []).find((item) => item?.id === 'default') || { id: 'default', name: 'Default' };
+  const link = (
+    `<div class="ms-default-hint">${escapeHtml(t('src_default_link_before'))}` +
+    `<button type="button" class="ms-link" data-action="set-settings-tab" data-tab="agents" data-testid="model-agents-link">${escapeHtml(t('src_agents_page_link'))}</button>` +
+    `${escapeHtml(t('src_default_link_after'))}</div>`
+  );
+  return (
+    `<div class="ms-role" data-testid="model-role" data-role-id="default">` +
+    `<div class="ms-role-name"><b>${escapeHtml(localizeRoleLabel(role.id))}</b><span class="mono">${escapeHtml(role.id)}</span>${link}</div>` +
+    `<div class="ms-pick">${renderModelPickButton(ctx, 'default')}</div></div>`
   );
 }
 
@@ -524,7 +606,7 @@ function renderPop(ctx) {
   const roleId = ui.pickerRole;
   if (!roleId) return '';
   const query = String(ui.pickerQuery || '').trim().toLowerCase();
-  const binding = ui.roleDraft[roleId] || null;
+  const binding = readBinding(state, roleId);
   const held = bindingUsable(binding, state) ? binding : null;
   const options = { grokSignedIn: grokSignedIn(state) };
   const parts = [`<input class="ms-in ms-search" id="ms-search" data-testid="model-search" placeholder="${escapeHtml(t('src_search_models'))}" value="${escapeHtml(ui.pickerQuery || '')}" autocomplete="off">`];
@@ -566,7 +648,8 @@ function renderPop(ctx) {
       );
     }
   }
-  parts.push(`<hr><button type="button" class="ms-opt sec" data-action="ms-pop-add">${escapeHtml(t('src_add_from_pop'))}</button>`);
+  const addKey = state.activeSettingsTab === 'agents' ? 'ag_goto_models' : 'src_add_from_pop';
+  parts.push(`<hr><button type="button" class="ms-opt sec" data-action="ms-pop-add">${escapeHtml(t(addKey))}</button>`);
   return parts.join('');
 }
 
@@ -728,7 +811,7 @@ function renderDrawer(ctx) {
 function renderSaveBar(ctx) {
   const { t, escapeHtml, state, localizeRoleLabel } = ctx;
   const ui = ensureModelsUi(state);
-  const changes = roleChanges(state);
+  const changes = defaultChanges(state);
   const n = changes.length;
   let msg = t('src_no_changes');
   if (n) {
@@ -750,17 +833,11 @@ function renderSaveBar(ctx) {
 
 export function renderModelsPane(ctx) {
   const { t, escapeHtml, state } = ctx;
-  const ui = ensureModelsUi(state);
-  if (!ui.ready) {
-    ui.roleDraft = cloneBindings(state.settings?.models);
-    ui.roleSaved = cloneBindings(state.settings?.models);
-    ui.ready = true;
-  }
+  const ui = ensureRoleBindings(state);
   const sources = sourcesOf(state);
   const rows = sources.length
     ? sources.map((source) => renderSourceRow(source, ctx)).join('')
     : `<div class="ms-empty">${escapeHtml(t('src_empty'))}</div>`;
-  const roles = orderedRoles(state).map((role) => renderRoleRow(role, ctx)).join('');
   return (
     `<div class="sm-models${ui.drawer ? ' show' : ''}" data-testid="models-page">` +
     `<button type="button" class="sm-x ms-x" data-action="close-settings" aria-label="${escapeHtml(t('btn_cancel'))}">×</button>` +
@@ -769,8 +846,8 @@ export function renderModelsPane(ctx) {
     `<div class="ms-section"><div><b>${escapeHtml(t('src_sources'))}</b><span>${escapeHtml(t('src_count'))}</span></div>` +
     `<button type="button" class="btn btn-sm" data-action="ms-open-add" data-testid="model-add">${escapeHtml(t('src_add'))}</button></div>` +
     `<div class="ms-src" data-testid="model-source-list">${rows}</div>` +
-    `<div class="ms-section ms-section-roles"><div><b>${escapeHtml(t('src_role_models'))}</b><span>${escapeHtml(t('src_role_hint'))}</span></div></div>` +
-    `<div class="ms-roles">${roles}</div>` +
+    `<div class="ms-section ms-section-roles"><div><b>${escapeHtml(t('src_default_title'))}</b><span>${escapeHtml(t('src_default_hint'))}</span></div></div>` +
+    `<div class="ms-roles">${renderDefaultRow(ctx)}</div>` +
     `</div>` +
     renderSaveBar(ctx) +
     renderDrawer(ctx) +
@@ -1030,7 +1107,7 @@ async function testSourceRow(ctx, id) {
 
 async function saveRoles(ctx) {
   const ui = ensureModelsUi(ctx.state);
-  const changes = roleChanges(ctx.state);
+  const changes = defaultChanges(ctx.state);
   if (!changes.length) return;
   const models = {};
   for (const change of changes) models[change.roleId] = change.next;
@@ -1039,8 +1116,7 @@ async function saveRoles(ctx) {
   try {
     ctx.state.settings = await ctx.api('/api/settings', 'PUT', { models });
     noteSettingsReloaded(ctx.state);
-    ui.roleDraft = cloneBindings(ctx.state.settings?.models);
-    ui.roleSaved = cloneBindings(ctx.state.settings?.models);
+    revertRoleBinding(ctx.state, 'default');
     ui.savingRoles = false;
     ctx.showToast('msg_settings_saved');
     ctx.render();
@@ -1053,10 +1129,9 @@ async function saveRoles(ctx) {
 }
 
 function chooseModel(ctx, roleId, sourceId, model) {
-  const ui = ensureModelsUi(ctx.state);
   const source = sourcesOf(ctx.state).find((item) => item.id === sourceId);
   if (!source || sourceBlockReason(source, { grokSignedIn: grokSignedIn(ctx.state) })) return;
-  if (roleId === 'default' || sourceId) ui.roleDraft[roleId] = { sourceId, model };
+  if (roleId === 'default' || sourceId) writeBinding(ctx.state, roleId, { sourceId, model });
   closeModelPop(ctx.state);
   ctx.render();
 }
@@ -1066,6 +1141,7 @@ export async function handleModelsAction(action, el, ctx) {
   const sourceId = el?.getAttribute?.('data-source-id') || '';
   if (action === 'toggle-model-pick') {
     const roleId = el.getAttribute('data-role-id') || '';
+    if (ctx.state.agentsUi) ctx.state.agentsUi.skillsOpen = false;
     if (ui.pickerRole === roleId) closeModelPop(ctx.state);
     else {
       ui.pickerRole = roleId;
@@ -1078,6 +1154,9 @@ export async function handleModelsAction(action, el, ctx) {
     ui.drawer = 'pick';
     ui.editId = null;
     closeModelPop(ctx.state);
+    if (action === 'ms-pop-add' && ctx.state.activeSettingsTab === 'agents') {
+      ctx.state.activeSettingsTab = 'models';
+    }
     ctx.render();
     return true;
   }
@@ -1221,7 +1300,7 @@ export async function handleModelsAction(action, el, ctx) {
   }
   if (action === 'ms-choose-follow') {
     const roleId = el.getAttribute('data-role-id') || '';
-    if (roleId) delete ui.roleDraft[roleId];
+    if (roleId) writeBinding(ctx.state, roleId, null);
     closeModelPop(ctx.state);
     ctx.render();
     return true;
@@ -1231,7 +1310,7 @@ export async function handleModelsAction(action, el, ctx) {
     return true;
   }
   if (action === 'ms-discard-roles') {
-    ui.roleDraft = cloneBindings(ui.roleSaved);
+    revertRoleBinding(ctx.state, 'default');
     closeModelPop(ctx.state);
     ctx.render();
     return true;
