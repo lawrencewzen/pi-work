@@ -12,6 +12,17 @@ import {
   noteSettingsReloaded,
 } from './model-settings.js';
 import { renderWorkflowTab, handleWorkflowAction, filterWorkflow, pipelineTitle, captureWorkflowDraft } from './workflow-settings.js';
+import {
+  renderAgentsPane,
+  renderAgentSkillsPop,
+  mountAgentsPane,
+  handleAgentAction,
+  onAgentField,
+  onAgentToolChange,
+  onAgentSkillChange,
+  filterAgents,
+  captureAgentDraft,
+} from './agent-settings.js';
 
 // Application State
 const state = {
@@ -44,7 +55,7 @@ const state = {
   appearance: localStorage.getItem('piwork_appearance') || 'light',
   fontSize: localStorage.getItem('piwork_font_size') || 'md',
   activeSettingsTab: 'general',
-  workflowSection: 'roles',
+  workflowSection: 'pipelines',
   workflowEditor: null,
   workflowQuery: '',
   expandedTools: new Set(),
@@ -2498,8 +2509,13 @@ export function closeSettings() {
   if (ov) ov.style.display = 'none';
 }
 
+function agentCtx() {
+  return { state, t, escapeHtml, api, showToast, localizeRoleLabel, render: renderSettingsModal, confirm: confirmDialog };
+}
+
 export function renderSettingsModal() {
   captureWorkflowDraft(workflowCtx());
+  captureAgentDraft(agentCtx());
   let ov = document.getElementById('settings-overlay');
   if (!ov) {
     ov = document.createElement('div');
@@ -2512,23 +2528,32 @@ export function renderSettingsModal() {
   const tTab = state.activeSettingsTab;
 
   const models = tTab === 'models';
-  const ctx = models ? modelsCtx() : null;
+  const agents = tTab === 'agents';
+  const ctx = models || agents ? modelsCtx() : null;
+  const pane = models
+    ? renderModelsPane(ctx)
+    : agents
+      ? renderAgentsPane(agentCtx())
+      : `<div class="sm-body"><span class="sm-x" data-action="close-settings">×</span>${renderSettingsTabContent(tTab)}</div>`;
   ov.innerHTML = `
     <div class="sm">
       <div class="sm-nav">
         <h3>${escapeHtml(t('settings_title'))}</h3>
         <div class="${tTab === 'general' ? 'on' : ''}" data-action="set-settings-tab" data-tab="general">${escapeHtml(t('settings_tab_general'))}</div>
         <div class="${tTab === 'models' ? 'on' : ''}" data-action="set-settings-tab" data-tab="models">${escapeHtml(t('settings_tab_models'))}</div>
+        <div class="${tTab === 'agents' ? 'on' : ''}" data-action="set-settings-tab" data-tab="agents" data-testid="settings-tab-agents">${escapeHtml(t('settings_tab_agents'))}<span class="sm-nav-new">${escapeHtml(t('settings_tab_new'))}</span></div>
         <div class="${tTab === 'plugins' ? 'on' : ''}" data-action="set-settings-tab" data-tab="plugins">${escapeHtml(t('settings_tab_plugins'))}</div>
         <div class="${tTab === 'skills' ? 'on' : ''}" data-action="set-settings-tab" data-tab="skills">${escapeHtml(t('settings_tab_skills'))}</div>
         <div class="${tTab === 'workflow' ? 'on' : ''}" data-action="set-settings-tab" data-tab="workflow" data-testid="settings-tab-workflow">${escapeHtml(t('settings_tab_workflow'))}</div>
         <div class="${tTab === 'about' ? 'on' : ''}" data-action="set-settings-tab" data-tab="about">${escapeHtml(t('settings_tab_about'))}</div>
       </div>
-      ${models ? renderModelsPane(ctx) : `<div class="sm-body"><span class="sm-x" data-action="close-settings">×</span>${renderSettingsTabContent(tTab)}</div>`}
+      ${pane}
     </div>
-    ${models ? renderModelPop(ctx) : ''}
+    ${models || agents ? renderModelPop(ctx) : ''}
+    ${agents ? renderAgentSkillsPop(agentCtx()) : ''}
   `;
   if (models) mountModelsPane(state, t);
+  if (agents) mountAgentsPane(state);
 }
 
 function renderSettingsTabContent(tab) {
@@ -2720,10 +2745,38 @@ function renderSkillsListHtml(list, searching = false) {
 }
 
 export function setSettingsTab(tab) {
+  closeModelPop(state);
+  if (state.agentsUi) state.agentsUi.skillsOpen = false;
   state.activeSettingsTab = tab;
   renderSettingsModal();
   if (tab === 'models') refreshGrokStatus();
   if (tab === 'workflow') refreshWorkflowLists();
+  if (tab === 'agents') refreshAgentLists();
+}
+
+async function refreshAgentLists() {
+  const stamp = (state.agentRefresh = (state.agentRefresh || 0) + 1);
+  try {
+    const [roles, pipelines, skills, plugins, settings] = await Promise.all([
+      api('/api/roles'),
+      api('/api/pipelines'),
+      api('/api/skills'),
+      api('/api/plugins'),
+      api('/api/settings'),
+    ]);
+    if (stamp !== state.agentRefresh) return;
+    state.roles = roles;
+    state.pipelines = pipelines;
+    state.skills = skills;
+    state.plugins = plugins;
+    state.settings = settings;
+    noteSettingsReloaded(state);
+  } catch { /* keep existing lists */ }
+  if (stamp !== state.agentRefresh) return;
+  if (state.activeSettingsTab !== 'agents') return;
+  const active = document.activeElement;
+  const typing = active && ['ag-name', 'ag-desc', 'ag-prompt', 'ag-search', 'ag-skill-search'].includes(active.id);
+  if (!typing) renderSettingsModal();
 }
 
 async function refreshWorkflowLists() {
@@ -3255,6 +3308,11 @@ document.addEventListener('click', (e) => {
   if (ui?.pickerRole && !e.target.closest?.('.model-pop') && !e.target.closest?.('[data-action="toggle-model-pick"]')) {
     closeModelPop(state);
   }
+  const agentsUi = state.agentsUi;
+  if (agentsUi?.skillsOpen && !e.target.closest?.('.ag-skpop') && !e.target.closest?.('[data-action="ag-skills-open"]')) {
+    agentsUi.skillsOpen = false;
+    document.getElementById('ag-skpop')?.classList.remove('open');
+  }
   const agentMenu = document.getElementById('composer-agent-menu');
   if (agentMenu?.classList.contains('is-open') && !e.target.closest('#composer-agent-wrap')) {
     closeAgentMenu();
@@ -3413,6 +3471,12 @@ document.addEventListener('click', (e) => {
         });
         break;
       }
+      if (action && action.startsWith('ag-')) {
+        void handleAgentAction(action, actionEl, agentCtx()).catch((err) => {
+          showToast(err?.message || 'err_save');
+        });
+        break;
+      }
       handleWorkflowAction(action, actionEl, workflowCtx());
       break;
   }
@@ -3431,11 +3495,17 @@ document.addEventListener('input', (e) => {
     filterWorkflow(e.target.value, workflowCtx());
   } else if (e.target.id === 'ms-name' || e.target.id === 'ms-url' || e.target.id === 'ms-key' || e.target.id === 'ms-manual' || e.target.id === 'ms-grok-name' || e.target.id === 'ms-search') {
     onModelsField(e.target, modelsCtx());
+  } else if (e.target.id === 'ag-search') {
+    filterAgents(e.target.value, agentCtx());
+  } else if (e.target.id === 'ag-name' || e.target.id === 'ag-desc' || e.target.id === 'ag-prompt' || e.target.id === 'ag-skill-search') {
+    onAgentField(e.target, agentCtx());
   }
 });
 
 document.addEventListener('change', (e) => {
   if (e.target?.matches?.('[data-action="ms-toggle-model"]')) onModelsToggle(e.target, modelsCtx());
+  else if (e.target?.matches?.('[data-testid="agent-tool-check"]')) onAgentToolChange(e.target, agentCtx());
+  else if (e.target?.matches?.('[data-testid="agent-skill-check"]')) onAgentSkillChange(e.target, agentCtx());
 });
 
 // ============================================================================
