@@ -1,0 +1,375 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { load, ROOT } from './_root.mjs';
+
+const { buildSkillPrompt, createSkill, listSkills, updateSkill, writeSkillFile } = await load('src/core/skills.mjs');
+const { clearPluginCache, describePlugins, installPlugin, pluginHandlers } = await load('src/core/plugins.mjs');
+const { createExtensionHost } = await load('src/core/extensions.mjs');
+const { createOrchestrator } = await load('src/core/orchestrator.mjs');
+const { createMemoryStore } = await load('src/store/memory.mjs');
+const { mergeSettings, normalizeSettings } = await load('src/core/settings.mjs');
+const { selectToolDefs } = await load('src/llm/openai.mjs');
+
+const bundledSkills = [path.join(ROOT, 'skills')];
+const bundledPlugins = [path.join(ROOT, 'plugins')];
+
+async function tmp() {
+  return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-ext-')));
+}
+
+function pluginFixture(id, toolName) {
+  return {
+    manifest: {
+      id,
+      name: id,
+      description: `${id} tool`,
+      version: '0.1.0',
+      source: 'local',
+      main: 'index.mjs',
+      tools: [{ name: toolName, description: `Run ${toolName}`, parameters: { type: 'object', properties: { text: { type: 'string' } } } }],
+    },
+    source: `export async function ${toolName}(args) {\n  return { output: '${toolName}:' + String(args?.text || ''), status: 'completed' };\n}\n`,
+  };
+}
+
+async function writePlugin(dir, id, toolName, source) {
+  const folder = path.join(dir, id);
+  await fs.mkdir(folder, { recursive: true });
+  const fixture = pluginFixture(id, toolName);
+  if (source) fixture.source = source;
+  await fs.writeFile(path.join(folder, 'plugin.json'), `${JSON.stringify(fixture.manifest, null, 2)}\n`);
+  await fs.writeFile(path.join(folder, 'index.mjs'), fixture.source);
+  return folder;
+}
+
+test('bundled skills render into the prompt and can be disabled', async () => {
+  const enabled = await buildSkillPrompt(bundledSkills, {});
+  assert.match(enabled, /Commit messages/);
+  assert.match(enabled, /imperative/);
+  assert.match(enabled, /Review notes/);
+  assert.match(enabled, /blocker/);
+  const disabled = await buildSkillPrompt(bundledSkills, { 'commit-message': false, 'review-notes': false });
+  assert.equal(disabled, '');
+  const listed = await listSkills(bundledSkills, { 'review-notes': false });
+  assert.equal(listed.find((skill) => skill.id === 'commit-message').enabled, true);
+  assert.equal(listed.find((skill) => skill.id === 'review-notes').enabled, false);
+  assert.equal(listed.some((skill) => Object.hasOwn(skill, 'body')), false);
+});
+
+test('user skills override bundled text and reject duplicates', async () => {
+  const user = await tmp();
+  await writeSkillFile(user, {
+    id: 'commit-message',
+    name: 'Commit messages',
+    description: 'local override',
+    body: 'USER_SKILL_MARK',
+    source: 'local',
+  });
+  const prompt = await buildSkillPrompt([bundledSkills[0], user], {});
+  assert.match(prompt, /USER_SKILL_MARK/);
+  assert.equal(prompt.includes('imperative'), false);
+  await assert.rejects(
+    () => createSkill(user, { name: 'Commit messages', id: 'commit-message', body: 'again' }, new Set(['commit-message'])),
+    (err) => err.catalogCode === 'err_skill_exists',
+  );
+  const created = await createSkill(user, { name: '发布检查', description: '发版前', body: '先看测试再发版。' }, new Set());
+  assert.match(created.id, /^skill-[0-9a-f]{6}$/);
+  const updated = await updateSkill([user], user, created.id, { body: 'UPDATED_SKILL_BODY' });
+  assert.equal(updated.body, 'UPDATED_SKILL_BODY');
+  const again = await buildSkillPrompt([user], { [created.id]: false });
+  assert.equal(again.includes('UPDATED_SKILL_BODY'), false);
+});
+
+test('settings keep skill and plugin toggles', () => {
+  const next = mergeSettings({ plugins: { echo: true }, skills: {} }, { skills: { 'commit-message': false } });
+  assert.equal(next.skills['commit-message'], false);
+  assert.equal(next.plugins.echo, true);
+  const normalized = normalizeSettings({ skills: { 'review-notes': 'false' }, plugins: { echo: 0 } });
+  assert.equal(normalized.skills['review-notes'], false);
+  assert.equal(normalized.plugins.echo, false);
+});
+
+test('bundled echo plugin loads and a disabled plugin contributes no tool', async () => {
+  clearPluginCache();
+  const listed = await describePlugins(bundledPlugins, {});
+  const echo = listed.find((plugin) => plugin.id === 'echo');
+  assert.equal(echo.loaded, true);
+  assert.equal(echo.enabled, true);
+  assert.equal(echo.tools[0].name, 'echo');
+  assert.equal(Object.hasOwn(echo, 'handlers'), false);
+  const tools = await pluginHandlers(bundledPlugins, {});
+  const result = await tools.find((tool) => tool.name === 'echo').handler({ text: 'ping' });
+  assert.equal(result.output, 'ping');
+  const disabled = await pluginHandlers(bundledPlugins, { echo: false });
+  assert.equal(disabled.length, 0);
+});
+
+test('plugin import loads a module and rejects metadata, symlinks, and path escapes', async () => {
+  clearPluginCache();
+  const srcRoot = await tmp();
+  const dest = await tmp();
+  const folder = await writePlugin(srcRoot, 'ping', 'ping');
+  const installed = await installPlugin(folder, dest, { existingIds: new Set(), existingToolNames: new Set(['echo']) });
+  assert.equal(installed.id, 'ping');
+  assert.equal(installed.loaded, true);
+  assert.equal(installed.source, 'imported');
+  await fs.rm(folder, { recursive: true, force: true });
+  const fromCopy = await pluginHandlers([dest], {});
+  const ran = await fromCopy[0].handler({ text: 'ok' });
+  assert.equal(ran.output, 'ping:ok');
+
+  const dead = path.join(srcRoot, 'dead');
+  await fs.mkdir(dead, { recursive: true });
+  await fs.writeFile(path.join(dead, 'plugin.json'), JSON.stringify({ id: 'dead', name: 'Dead', description: 'no module' }));
+  await assert.rejects(
+    () => installPlugin(dead, dest, { existingIds: new Set(['ping']) }),
+    (err) => err.catalogCode === 'err_plugin_not_loadable' || err.catalogCode === 'err_plugin_invalid',
+  );
+  assert.equal(await fs.access(path.join(dest, 'dead')).then(() => true, () => false), false);
+
+  await assert.rejects(
+    () => installPlugin('', dest, { existingIds: new Set() }),
+    (err) => err.catalogCode === 'err_plugin_path_required',
+  );
+
+  const escaped = path.join(srcRoot, 'evil');
+  await fs.mkdir(escaped, { recursive: true });
+  const marker = path.join(srcRoot, 'marker.txt');
+  await fs.writeFile(path.join(srcRoot, 'outside.mjs'), `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(marker)}, 'x');\nexport function evil(){ return { output: 'no' }; }\n`);
+  await fs.writeFile(path.join(escaped, 'plugin.json'), JSON.stringify({
+    id: 'evil',
+    name: 'Evil',
+    description: 'escape',
+    version: '0.0.1',
+    main: '../outside.mjs',
+    tools: [{ name: 'evil', description: 'no' }],
+  }));
+  await assert.rejects(
+    () => installPlugin(escaped, dest, { existingIds: new Set() }),
+    (err) => err.catalogCode === 'err_plugin_not_loadable',
+  );
+  assert.equal(await fs.access(marker).then(() => true, () => false), false);
+  assert.equal(await fs.access(path.join(dest, 'evil')).then(() => true, () => false), false);
+
+  const linked = path.join(srcRoot, 'linked');
+  await fs.mkdir(linked, { recursive: true });
+  await fs.writeFile(path.join(linked, 'plugin.json'), JSON.stringify(pluginFixture('linked', 'linked').manifest));
+  await fs.symlink(path.join(srcRoot, 'outside.mjs'), path.join(linked, 'index.mjs'));
+  await assert.rejects(
+    () => installPlugin(linked, dest, { existingIds: new Set() }),
+    (err) => err.catalogCode === 'err_plugin_symlink',
+  );
+});
+
+test('selectToolDefs keeps builtins and adds plugin tools that were requested', () => {
+  const defs = selectToolDefs(['read', 'echo'], [{
+    type: 'function',
+    function: { name: 'echo', description: 'Echo', parameters: { type: 'object', properties: {} } },
+  }]);
+  assert.deepEqual(defs.map((tool) => tool.function.name), ['read', 'echo']);
+  const hidden = selectToolDefs(['read'], [{
+    type: 'function',
+    function: { name: 'echo', description: 'Echo', parameters: { type: 'object', properties: {} } },
+  }]);
+  assert.deepEqual(hidden.map((tool) => tool.function.name), ['read']);
+});
+
+test('orchestrator injects enabled skills and runs an enabled plugin tool', async () => {
+  const skillDir = await tmp();
+  const pluginDir = await tmp();
+  await writeSkillFile(skillDir, {
+    id: 'commit-message',
+    name: 'Commit messages',
+    description: 'commits',
+    body: 'SKILL_MARK_947',
+    source: 'local',
+  });
+  await writePlugin(pluginDir, 'echo', 'echo');
+  clearPluginCache();
+  const store = createMemoryStore();
+  const seen = [];
+  const llm = {
+    async next(req) {
+      seen.push(req);
+      if (seen.length === 1) return { type: 'tool', name: 'echo', args: { text: 'from-plugin' } };
+      return { type: 'end' };
+    },
+  };
+  const host = createExtensionHost({
+    skillDirs: [skillDir],
+    pluginDirs: [pluginDir],
+    getSettings: () => store.getSettings(),
+  });
+  const workspace = await tmp();
+  const orch = createOrchestrator({ llm, store, extensions: host });
+  await orch.start('C', { workspacePath: workspace, text: 'write a commit message' });
+  await waitFor(() => orch.status('C').status === 'done');
+  const system = seen[0].messages.find((message) => message.role === 'system');
+  assert.match(system.content, /SKILL_MARK_947/);
+  assert.equal(seen[0].tools.includes('echo'), true);
+  const messages = await store.getMessages('C');
+  assert.equal(messages.some((message) => message.role === 'tool' && message.text === 'echo:from-plugin'), true);
+
+  await store.putSettings({ skills: { 'commit-message': false }, plugins: { echo: false } });
+  const seenOff = [];
+  const llmOff = {
+    async next(req) {
+      seenOff.push(req);
+      if (seenOff.length === 1) return { type: 'tool', name: 'echo', args: { text: 'nope' } };
+      return { type: 'end' };
+    },
+  };
+  const orchOff = createOrchestrator({ llm: llmOff, store, extensions: host });
+  await orchOff.start('D', { workspacePath: workspace, text: 'again' });
+  await waitFor(() => orchOff.status('D').status === 'done');
+  const systemOff = seenOff[0].messages.find((message) => message.role === 'system');
+  assert.equal(String(systemOff?.content || '').includes('SKILL_MARK_947'), false);
+  const offMessages = await store.getMessages('D');
+  assert.equal(offMessages.some((message) => message.text === 'E_UNKNOWN_TOOL'), true);
+  assert.equal(offMessages.some((message) => message.text === 'nope'), false);
+});
+
+test('http api creates skills, rejects dead plugin metadata, and runs echo', async () => {
+  const dataDir = await tmp();
+  const scriptPath = path.join(dataDir, 'faux.json');
+  await fs.writeFile(scriptPath, JSON.stringify({
+    turns: [
+      { tool: 'echo', args: { text: 'from-plugin' } },
+      { text: 'done' },
+    ],
+  }));
+  const token = 'unit-test-token-skills';
+  const proc = spawn(process.execPath, ['server.mjs'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      PORT: '0',
+      PI_WORK_DATA_DIR: dataDir,
+      PI_WORK_TOKEN: token,
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_SCRIPT: scriptPath,
+      PI_WORK_RETRY_BASE_MS: '20',
+      PI_WORK_STALL_MS: '5000',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let log = '';
+  const base = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 15000);
+    const onData = (buf) => {
+      log += buf;
+      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
+      if (match) {
+        clearTimeout(timer);
+        resolve(match[1]);
+      }
+    };
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', onData);
+    proc.once('exit', (code) => {
+      clearTimeout(timer);
+      reject(new Error(`server exited ${code}:\n${log}`));
+    });
+  });
+  proc.removeAllListeners('exit');
+
+  async function request(method, apiPath, body) {
+    const res = await fetch(base + apiPath, {
+      method,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: body == null ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : null };
+  }
+
+  try {
+    const skills = await request('GET', '/api/skills');
+    assert.equal(skills.status, 200);
+    assert.equal(skills.body.find((skill) => skill.id === 'commit-message').enabled, true);
+    assert.equal(skills.body.some((skill) => skill.id === 'review-notes'), true);
+
+    const created = await request('POST', '/api/skills', {
+      name: '发布检查',
+      description: '发版前',
+      body: '先看测试再发版。',
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.enabled, true);
+    assert.match(created.body.id, /^skill-/);
+
+    const off = await request('PUT', `/api/skills/${created.body.id}`, { enabled: false });
+    assert.equal(off.status, 200);
+    assert.equal(off.body.enabled, false);
+
+    const edited = await request('PUT', `/api/skills/${created.body.id}`, { body: '只报告失败的测试。' });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.body.description, '发版前');
+
+    const ghost = await request('POST', '/api/plugins', { name: 'ghost', description: 'not a module', version: '1.0.0' });
+    assert.equal(ghost.status, 400);
+    assert.equal(ghost.body.code, 'err_plugin_path_required');
+
+    const plugins = await request('GET', '/api/plugins');
+    assert.equal(plugins.status, 200);
+    const echo = plugins.body.find((plugin) => plugin.id === 'echo');
+    assert.equal(echo.loaded, true);
+    assert.equal(echo.tools[0].name, 'echo');
+    assert.equal(plugins.body.some((plugin) => plugin.id === 'ghost'), false);
+
+    const ws = await request('POST', '/api/workspaces', { name: 'ext' });
+    assert.equal(ws.status, 201);
+    const conv = await request('POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'echo' });
+    assert.equal(conv.status, 201);
+    const sent = await request('POST', `/api/conversations/${conv.body.id}/messages`, { text: 'ping the plugin' });
+    assert.equal(sent.status, 202);
+    const done = await waitConv(request, conv.body.id);
+    assert.equal(done.status, 'done');
+    assert.equal(done.messages.some((message) => message.role === 'tool' && message.text === 'from-plugin'), true);
+
+    const disabled = await request('PUT', '/api/plugins/echo', { enabled: false });
+    assert.equal(disabled.status, 200);
+    assert.equal(disabled.body.enabled, false);
+    const conv2 = await request('POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'echo-off' });
+    await request('POST', `/api/conversations/${conv2.body.id}/messages`, { text: 'ping again' });
+    const doneOff = await waitConv(request, conv2.body.id);
+    assert.equal(doneOff.messages.some((message) => message.text === 'E_UNKNOWN_TOOL'), true);
+    assert.equal(doneOff.messages.some((message) => message.text === 'from-plugin'), false);
+  } finally {
+    await stopProcess(proc);
+  }
+});
+
+async function waitConv(request, id) {
+  for (let i = 0; i < 40; i += 1) {
+    const res = await request('GET', `/api/conversations/${id}`);
+    if (res.body?.status === 'done' || res.body?.status === 'failed') return res.body;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`conversation ${id} did not finish`);
+}
+
+async function waitFor(fn, ms = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (await fn()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('timeout');
+}
+
+function stopProcess(proc) {
+  return new Promise((resolve) => {
+    if (proc.exitCode != null) return resolve();
+    const timer = setTimeout(() => proc.kill('SIGKILL'), 2000);
+    proc.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    proc.kill('SIGTERM');
+  });
+}

@@ -1,0 +1,25 @@
+{
+  "id": "echo",
+  "name": "Echo",
+  "description": "返回传入的文本，用来确认插件已加载。Returns the text you pass it.",
+  "version": "0.1.0",
+  "source": "bundled",
+  "main": "index.mjs",
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Return the given text unchanged. Does not read files or run commands.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to return, at most 4000 characters."
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

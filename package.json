@@ -13,7 +13,7 @@
     "dev": "sh scripts/dev.sh",
     "test": "node --test tests/unit/*.test.mjs",
     "test:legacy": "node --test tests/*.test.mjs",
-    "check": "node --check server.mjs && node --check src/core/grok-auth.mjs && node --check src/llm/openai.mjs && node --check lib/agent.mjs && node --check lib/attachments.mjs && node --check lib/v3.mjs && node --check lib/v3-utils.mjs && node --check lib/wechat.mjs && node --check public/app.js && node --check public/i18n.js"
+    "check": "node --check server.mjs && node --check src/core/grok-auth.mjs && node --check src/core/catalog.mjs && node --check src/core/skills.mjs && node --check src/core/plugins.mjs && node --check src/core/extensions.mjs && node --check src/core/orchestrator.mjs && node --check src/llm/openai.mjs && node --check plugins/echo/index.mjs && node --check lib/agent.mjs && node --check lib/attachments.mjs && node --check lib/v3.mjs && node --check lib/v3-utils.mjs && node --check lib/wechat.mjs && node --check public/app.js && node --check public/i18n.js"
   },
   "dependencies": {
     "@earendil-works/chord": "1.1.0",

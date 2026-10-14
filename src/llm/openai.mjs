@@ -132,6 +132,26 @@ function toOpenAIMessages(messages = []) {
   return out;
 }
 
+export function selectToolDefs(requestedNames, extraDefs = []) {
+  const extras = [];
+  const seen = new Set(TOOL_DEFS.map((tool) => tool.function.name));
+  for (const def of extraDefs || []) {
+    const name = def?.function?.name || def?.name;
+    if (!name || seen.has(name)) continue;
+    const fn = def.function || {
+      name,
+      description: def.description || '',
+      parameters: def.parameters || { type: 'object', properties: {} },
+    };
+    seen.add(name);
+    extras.push({ type: 'function', function: fn });
+  }
+  const filter = Array.isArray(requestedNames) && requestedNames.length ? new Set(requestedNames) : null;
+  const builtin = filter ? TOOL_DEFS.filter((tool) => filter.has(tool.function.name)) : TOOL_DEFS.slice();
+  const extra = filter ? extras.filter((tool) => filter.has(tool.function.name)) : extras;
+  return [...builtin, ...extra];
+}
+
 function parseArgs(raw) {
   if (raw == null || raw === '') return {};
   if (typeof raw === 'object') return raw;
@@ -146,7 +166,7 @@ export function createOpenAILLM({
   getConfig,
 } = {}) {
   return {
-    async next({ messages, signal, tools, model: modelOverride, roleId } = {}) {
+    async next({ messages, signal, tools, toolDefs, model: modelOverride, roleId } = {}) {
       if (signal?.aborted) throw abortError();
       const last = [...(messages || [])].reverse().find((m) => m.role === 'assistant' || m.role === 'tool' || m.role === 'user');
       if (last?.role === 'assistant' && !last.tool_calls && (last.text || last.content)) {
@@ -162,9 +182,7 @@ export function createOpenAILLM({
       const key = cfg.apiKey || process.env.LLM_API_KEY;
       const mdl = modelOverride || cfg.model || process.env.LLM_MODEL;
 
-      const allowed = Array.isArray(tools) && tools.length
-        ? TOOL_DEFS.filter((t) => tools.includes(t.function.name))
-        : TOOL_DEFS;
+      const allowed = selectToolDefs(tools, toolDefs);
 
       const grok = cfg.api === 'grok-responses';
       const url = grok ? `${root}/responses` : `${root}/chat/completions`;

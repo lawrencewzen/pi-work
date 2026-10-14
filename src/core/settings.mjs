@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS = {
   theme: 'white',
   appearance: 'light',
   plugins: {},
+  skills: {},
 };
 
 const THEMES = new Set(['white', 'claude', 'codex', 'grok', 'cursor']);
@@ -37,7 +38,8 @@ export function isMaskedOrEmptyApiKey(value, currentMasked = '') {
 export function normalizeSettings(raw = {}) {
   const out = { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
   if (!out.models || typeof out.models !== 'object' || Array.isArray(out.models)) out.models = {};
-  if (!out.plugins || typeof out.plugins !== 'object' || Array.isArray(out.plugins)) out.plugins = {};
+  out.plugins = normalizeFlagMap(out.plugins);
+  out.skills = normalizeFlagMap(out.skills);
   if (typeof out.theme === 'string' && out.theme.includes('-')) {
     const [family, mode] = out.theme.split('-');
     if (THEMES.has(family)) out.theme = family;
@@ -66,6 +68,7 @@ export function publicSettings(s) {
     theme: n.theme,
     appearance: n.appearance,
     plugins: { ...n.plugins },
+    skills: { ...n.skills },
   };
 }
 
@@ -91,5 +94,20 @@ export function mergeSettings(prev, patch = {}) {
   if (patch.plugins && typeof patch.plugins === 'object' && !Array.isArray(patch.plugins)) {
     next.plugins = { ...cur.plugins, ...patch.plugins };
   }
+  if (patch.skills && typeof patch.skills === 'object' && !Array.isArray(patch.skills)) {
+    next.skills = { ...cur.skills, ...patch.skills };
+  }
   return normalizeSettings(next);
+}
+
+const FLAG_KEY = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+
+function normalizeFlagMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const [key, flag] of Object.entries(value)) {
+    if (!FLAG_KEY.test(key)) continue;
+    out[key] = !(flag === false || flag === 'false' || flag === 0 || flag === '0');
+  }
+  return out;
 }

@@ -6,13 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { createOrchestrator } from './src/core/orchestrator.mjs';
 import { createRetryPolicy } from './src/core/retry.mjs';
 import { formatSSE } from './src/core/sse.mjs';
-import { validateRole, validatePipeline } from './src/core/config.mjs';
+import { validateRole, validatePipeline, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
 import { diffStats, unifiedDiff } from './src/core/diff.mjs';
 import { publicSettings } from './src/core/settings.mjs';
 import { cloneGitRepo, stripGitUrlCredentials } from './src/core/git-import.mjs';
-import { scanPlugins, scanSkills } from './src/core/catalog.mjs';
+import { createExtensionHost } from './src/core/extensions.mjs';
+import { describePlugins, installPlugin, PLUGIN_ID } from './src/core/plugins.mjs';
+import { listSkills, listSkillRecords, createSkill, updateSkill, SKILL_ID } from './src/core/skills.mjs';
 import { loadRoleTemplates, loadPipelineTemplates } from './src/core/roles-load.mjs';
 import { buildAgents } from './src/core/agents.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
@@ -48,6 +50,10 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const PORT = process.env.PORT !== undefined && process.env.PORT !== '' ? Number(process.env.PORT) : 3000;
 const DATA_DIR = process.env.PI_WORK_DATA_DIR || path.join(ROOT, 'data');
+const SKILL_DIRS = [path.join(ROOT, 'skills'), path.join(DATA_DIR, 'skills')];
+const PLUGIN_DIRS = [path.join(ROOT, 'plugins'), path.join(DATA_DIR, 'plugins')];
+const USER_SKILLS = path.join(DATA_DIR, 'skills');
+const USER_PLUGINS = path.join(DATA_DIR, 'plugins');
 await fs.mkdir(DATA_DIR, { recursive: true });
 
 let dataLock;
@@ -73,6 +79,13 @@ const MIME = {
   '.map': 'application/json',
   '.woff2': 'font/woff2',
 };
+
+function sendCatalogError(res, err) {
+  const status = Number(err?.status) || 500;
+  const body = { error: status >= 500 ? 'server error' : (err?.message || 'error') };
+  if (err?.catalogCode) body.code = err.catalogCode;
+  sendJson(res, status, body);
+}
 
 function sendJson(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
@@ -275,6 +288,11 @@ const llm = {
 const orch = createOrchestrator({
   llm,
   store,
+  extensions: createExtensionHost({
+    skillDirs: SKILL_DIRS,
+    pluginDirs: PLUGIN_DIRS,
+    getSettings: () => store.getSettings(),
+  }),
   retry: createRetryPolicy({
     maxAttempts: Number(process.env.PI_WORK_RETRY_MAX) || 5,
     baseMs: Number(process.env.PI_WORK_RETRY_BASE_MS) || 200,
@@ -735,47 +753,102 @@ async function routeApi(req, res, url) {
   }
 
   if (p === '/api/plugins' && m === 'GET') {
-    const list = await scanPlugins(path.join(ROOT, 'plugins'));
     const s = await store.getSettings();
-    const enabledMap = s.plugins || {};
-    sendJson(res, 200, list.map((pl) => ({
-      ...pl,
-      enabled: enabledMap[pl.id] !== false,
-    })));
+    sendJson(res, 200, await describePlugins(PLUGIN_DIRS, s.plugins || {}));
     return;
   }
   if (p === '/api/plugins' && m === 'POST') {
     const body = await readBody(req);
-    const id = String(body?.id || body?.name || '').trim();
-    if (!id || !/^[a-zA-Z0-9._-]{1,64}$/.test(id)) {
-      sendJson(res, 400, { error: 'invalid plugin id' });
-      return;
+    try {
+      const s = await store.getSettings();
+      const current = await describePlugins(PLUGIN_DIRS, s.plugins || {});
+      const existingToolNames = new Set(BUILTIN_TOOLS);
+      for (const plugin of current) {
+        if (plugin.enabled && plugin.loaded) {
+          for (const tool of plugin.tools || []) existingToolNames.add(tool.name);
+        }
+      }
+      const installed = await installPlugin(body?.path, USER_PLUGINS, {
+        existingIds: new Set(current.map((plugin) => plugin.id)),
+        existingToolNames,
+      });
+      await store.putSettings({ plugins: { [installed.id]: true } });
+      sendJson(res, 201, installed);
+    } catch (err) {
+      sendCatalogError(res, err);
     }
-    const dir = path.join(ROOT, 'plugins', id);
-    await fs.mkdir(dir, { recursive: true });
-    const manifest = {
-      id,
-      name: body.name || id,
-      description: body.description || '',
-      version: body.version || '0.0.0',
-      source: body.source || 'imported',
-    };
-    await fs.writeFile(path.join(dir, 'plugin.json'), JSON.stringify(manifest, null, 2));
-    sendJson(res, 201, { ...manifest, enabled: true });
     return;
   }
   match = p.match(/^\/api\/plugins\/([^/]+)$/);
   if (match && m === 'PUT') {
     const id = decodeURIComponent(match[1]);
+    if (!PLUGIN_ID.test(id)) {
+      sendJson(res, 400, { error: 'invalid plugin id', code: 'err_plugin_invalid' });
+      return;
+    }
     const body = await readBody(req);
+    const s = await store.getSettings();
+    const current = await describePlugins(PLUGIN_DIRS, s.plugins || {});
+    if (!current.some((plugin) => plugin.id === id)) {
+      sendJson(res, 404, { error: 'plugin not found', code: 'err_plugin_not_found' });
+      return;
+    }
     const enabled = body?.enabled !== false;
     await store.putSettings({ plugins: { [id]: enabled } });
-    sendJson(res, 200, { id, enabled });
+    const next = await describePlugins(PLUGIN_DIRS, (await store.getSettings()).plugins || {});
+    sendJson(res, 200, next.find((plugin) => plugin.id === id) || { id, enabled });
     return;
   }
 
   if (p === '/api/skills' && m === 'GET') {
-    sendJson(res, 200, await scanSkills(path.join(ROOT, 'skills')));
+    const s = await store.getSettings();
+    sendJson(res, 200, await listSkills(SKILL_DIRS, s.skills || {}));
+    return;
+  }
+  if (p === '/api/skills' && m === 'POST') {
+    const body = await readBody(req);
+    try {
+      const existing = await listSkillRecords(SKILL_DIRS);
+      const created = await createSkill(USER_SKILLS, body || {}, new Set(existing.map((skill) => skill.id)));
+      await store.putSettings({ skills: { [created.id]: true } });
+      const list = await listSkills(SKILL_DIRS, (await store.getSettings()).skills || {});
+      sendJson(res, 201, list.find((skill) => skill.id === created.id));
+    } catch (err) {
+      sendCatalogError(res, err);
+    }
+    return;
+  }
+  match = p.match(/^\/api\/skills\/([^/]+)$/);
+  if (match && (m === 'PUT' || m === 'PATCH')) {
+    const id = decodeURIComponent(match[1]);
+    if (!SKILL_ID.test(id)) {
+      sendJson(res, 400, { error: 'invalid skill id', code: 'err_skill_invalid' });
+      return;
+    }
+    const body = await readBody(req);
+    try {
+      const hasContent = body?.name != null || body?.description != null || body?.body != null;
+      if (hasContent) await updateSkill(SKILL_DIRS, USER_SKILLS, id, body || {});
+      if (body?.enabled != null || !hasContent) {
+        const records = await listSkillRecords(SKILL_DIRS);
+        if (!records.some((skill) => skill.id === id)) {
+          sendJson(res, 404, { error: 'skill not found', code: 'err_skill_not_found' });
+          return;
+        }
+        if (body?.enabled != null) {
+          await store.putSettings({ skills: { [id]: body.enabled !== false } });
+        }
+      }
+      const list = await listSkills(SKILL_DIRS, (await store.getSettings()).skills || {});
+      const skill = list.find((item) => item.id === id);
+      if (!skill) {
+        sendJson(res, 404, { error: 'skill not found', code: 'err_skill_not_found' });
+        return;
+      }
+      sendJson(res, 200, skill);
+    } catch (err) {
+      sendCatalogError(res, err);
+    }
     return;
   }
 
