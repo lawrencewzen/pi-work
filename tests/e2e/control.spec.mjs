@@ -1,17 +1,17 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { startServer, tmpdir } from './helpers/server.mjs';
-import { createWorkspace, newConversation, send, statusText } from './helpers/ui.mjs';
+import { startServer, prepareWorkspaces } from './helpers/server.mjs';
+import { createWorkspace, newConversation, send, statusText, openApp } from './helpers/ui.mjs';
 
 let srv;
 test.afterEach(async () => { await srv?.kill(); });
 const exists = (p) => fs.access(p).then(() => true, () => false);
 
 test('pause / continue / stop', async ({ page }) => {
-  const ws = await tmpdir();
-  srv = await startServer({ script: 'slow.json' });
-  await page.goto(srv.url);
+  const { root, dirs: [ws] } = await prepareWorkspaces(['ctl']);
+  srv = await startServer({ script: 'slow.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  await openApp(page, srv);
   await createWorkspace(page, 'ctl', ws);
   await newConversation(page);
   await send(page, 'run');
@@ -34,9 +34,9 @@ test('pause / continue / stop', async ({ page }) => {
 });
 
 test('two agents run in parallel', async ({ page }) => {
-  const ws1 = await tmpdir(); const ws2 = await tmpdir();
-  srv = await startServer({ script: 'slow.json' });
-  await page.goto(srv.url);
+  const { root, dirs: [ws1, ws2] } = await prepareWorkspaces(['p1', 'p2']);
+  srv = await startServer({ script: 'slow.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  await openApp(page, srv);
   await createWorkspace(page, 'p1', ws1);
   await newConversation(page);
   await send(page, 'job one');
@@ -52,9 +52,9 @@ test('two agents run in parallel', async ({ page }) => {
 });
 
 test('stream cut -> auto retry, autocontinue counter shown', async ({ page }) => {
-  const ws = await tmpdir();
-  srv = await startServer({ script: 'crash.json' });
-  await page.goto(srv.url);
+  const { root, dirs: [ws] } = await prepareWorkspaces(['cut']);
+  srv = await startServer({ script: 'crash.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  await openApp(page, srv);
   await createWorkspace(page, 'cut', ws);
   await newConversation(page);
   await send(page, 'go');

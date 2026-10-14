@@ -1,17 +1,21 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { startServer, tmpdir, api } from './helpers/server.mjs';
-import { createWorkspace, newConversation, send, statusText } from './helpers/ui.mjs';
+import { startServer, prepareWorkspaces, api, authToken } from './helpers/server.mjs';
+import { createWorkspace, newConversation, send, statusText, openApp } from './helpers/ui.mjs';
 
 let srv, ws;
-test.beforeEach(async () => { ws = await tmpdir(); srv = await startServer({ script: 'basic.json' }); });
+test.beforeEach(async () => {
+  const prepared = await prepareWorkspaces(['ws']);
+  ws = prepared.dirs[0];
+  srv = await startServer({ script: 'basic.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: prepared.root } });
+});
 test.afterEach(async () => { await srv?.kill(); });
 
 const FILE = 'docs/deep/nested/folder/README.md';
 
 test('create workspace & conversation, markdown rendered', async ({ page }) => {
-  await page.goto(srv.url);
+  await openApp(page, srv);
   await createWorkspace(page, 'demo', ws);
   await newConversation(page);
   await send(page, '写个 README');
@@ -25,14 +29,15 @@ test('create workspace & conversation, markdown rendered', async ({ page }) => {
 });
 
 test('tool row collapsed with truncated path and +N -M, expands', async ({ page }) => {
-  await page.goto(srv.url);
+  await openApp(page, srv);
   await createWorkspace(page, 'demo', ws);
   await newConversation(page);
   await send(page, 'go');
   const row = page.locator('[data-testid=tool-row][data-tool=write]').first();
   await expect(row).toBeVisible({ timeout: 20000 });
   await expect(row).toHaveAttribute('data-path', FILE);
-  await expect(row.getByTestId('tool-row-path')).toContainText('…');
+  // 33 characters: truncatePath only inserts … past 40, so the row shows the full path.
+  await expect(row.getByTestId('tool-row-path')).toHaveText(FILE);
   await expect(row.getByTestId('tool-row-added')).toHaveText(/\+3/);
   await expect(row.getByTestId('tool-row-removed')).toHaveText(/−0|-0/);
   await expect(row.getByTestId('tool-row-detail')).toBeHidden();
@@ -42,7 +47,7 @@ test('tool row collapsed with truncated path and +N -M, expands', async ({ page 
 });
 
 test('click changed file -> diff panel; md editor save persists', async ({ page }) => {
-  await page.goto(srv.url);
+  await openApp(page, srv);
   await createWorkspace(page, 'demo', ws);
   await newConversation(page);
   await send(page, 'go');
@@ -65,7 +70,7 @@ test('click changed file -> diff panel; md editor save persists', async ({ page 
 });
 
 test('refresh keeps workspace, conversation, messages and status', async ({ page }) => {
-  await page.goto(srv.url);
+  await openApp(page, srv);
   await createWorkspace(page, 'keep', ws);
   await newConversation(page);
   await send(page, 'persist me');
@@ -78,8 +83,10 @@ test('refresh keeps workspace, conversation, messages and status', async ({ page
 });
 
 test('sandbox: file API rejects escape', async () => {
-  const w = await api(srv.url, 'POST', '/workspaces', { name: 'sb', path: ws });
-  const r = await api(srv.url, 'GET', `/workspaces/${w.body.id}/files?path=${encodeURIComponent('../../etc/passwd')}`);
+  const token = await authToken(srv.dataDir);
+  const w = await api(srv.url, 'POST', '/workspaces', { name: 'sb', path: ws }, token);
+  expect(w.status).toBe(201);
+  const r = await api(srv.url, 'GET', `/workspaces/${w.body.id}/files?path=${encodeURIComponent('../../etc/passwd')}`, null, token);
   expect(r.status).toBe(403);
   expect(r.body.error).toBe('E_SANDBOX');
 });

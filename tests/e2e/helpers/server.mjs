@@ -8,6 +8,18 @@ export const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 
 export async function tmpdir(p = 'piw-e2e-') { return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), p))); }
 
+/** Child directories the server will accept. Pass `root` as PI_WORK_WORKSPACE_ROOT. */
+export async function prepareWorkspaces(names = ['repo']) {
+  const root = await tmpdir('piw-wsroot-');
+  const dirs = [];
+  for (const name of names) {
+    const dir = path.join(root, name);
+    await fs.mkdir(dir);
+    dirs.push(dir);
+  }
+  return { root, dirs };
+}
+
 /** Start server.mjs with faux LLM. Returns {url, dataDir, proc, kill(signal), restart()} */
 export async function startServer({ script = 'basic.json', dataDir, port = 0, extraEnv = {} } = {}) {
   dataDir ??= await tmpdir('piw-data-');

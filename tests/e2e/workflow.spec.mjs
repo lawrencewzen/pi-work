@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { startServer, tmpdir } from './helpers/server.mjs';
-import { createWorkspace, send, statusText } from './helpers/ui.mjs';
+import { createWorkspace, createConversation, send, statusText, login } from './helpers/ui.mjs';
 
 const TOKEN = 'e2e-workflow-token';
 
@@ -20,8 +20,7 @@ test.beforeEach(async ({ page }) => {
       PI_WORK_WORKSPACE_ROOT: path.dirname(ws),
     },
   });
-  await page.goto(`${srv.url}/login?token=${encodeURIComponent(TOKEN)}`);
-  await expect(page.locator('[data-action=open-settings]')).toBeVisible();
+  await login(page, srv.url, TOKEN);
 });
 
 test.afterEach(async () => {
@@ -145,16 +144,20 @@ test('settings can create, edit, and delete roles and pipelines', async ({ page 
 
 test('new conversation can run the feature pipeline', async ({ page }) => {
   await createWorkspace(page, 'feature-ws', ws);
-  await page.getByTestId('conversation-new').click();
-  const picker = page.getByTestId('conversation-role-pipeline');
-  await expect(picker.locator('option[value="pipeline:feature"]')).toHaveText(/功能交付/);
-  await expect(picker.locator('option[value="pipeline:demo"]')).toHaveText(/演示/);
-  await picker.selectOption('pipeline:feature');
-  await page.getByTestId('conversation-title-input').fill('feature run');
-  await page.getByTestId('conversation-create-submit').click();
-  await expect(page.getByTestId('conversation-item').filter({ hasText: 'feature run' })).toBeVisible();
+  await createConversation(page);
+  await page.getByTestId('composer-agent').click();
+  const menu = page.getByTestId('composer-agent-menu');
+  await expect(menu).toBeVisible();
+  // WF-9: pipelines are listed on the composer Agent chip, not a create-dialog <select>.
+  await expect(menu.locator('[data-pipeline-id="feature"]')).toContainText('功能交付 (规划 → 编码 → 测试 → 审计)');
+  await expect(menu.locator('[data-pipeline-id="demo"]')).toContainText('演示 (编码 → 测试 → 审计)');
+  await menu.locator('[data-pipeline-id="feature"]').click();
+  await expect(menu).toBeHidden();
 
-  await send(page, 'Add an add helper and cover it.');
+  const prompt = 'Add an add helper and cover it.';
+  await send(page, prompt);
+  // The create dialog's title field is gone. The first message becomes the conversation title.
+  await expect(page.getByTestId('conversation-item').filter({ hasText: prompt })).toBeVisible();
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
 
   await expect.poll(() => fs.readFile(path.join(ws, 'src/add.js'), 'utf8').catch(() => '')).toContain('export function add');
