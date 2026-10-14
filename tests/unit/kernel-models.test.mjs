@@ -16,9 +16,10 @@ const TOKEN = 'unit-kernel-models-token';
 const KEY_DEFAULT = 'sk-default-secret-1111';
 const KEY_DEFAULT_NEXT = 'sk-default-secret-3333';
 const KEY_CODER = 'sk-coder-secret-2222';
+const KEY_TESTER = 'sk-tester-secret-4444';
 const ACCESS_1 = 'access-1';
 const REFRESH_1 = 'refresh-1';
-const SECRETS = [KEY_DEFAULT, KEY_DEFAULT_NEXT, KEY_CODER, REFRESH_1];
+const SECRETS = [KEY_DEFAULT, KEY_DEFAULT_NEXT, KEY_CODER, KEY_TESTER, REFRESH_1];
 
 const STRIP = [
   'PI_WORK_LLM',
@@ -242,9 +243,9 @@ async function startServer(dataDir, extra) {
   return { proc, base, logs: () => log };
 }
 
-async function waitTurn(base, cid, pred) {
+async function waitTurn(base, cid, pred, attempts = 80) {
   let last = null;
-  for (let i = 0; i < 80; i += 1) {
+  for (let i = 0; i < attempts; i += 1) {
     const got = await request(base, 'GET', `/api/conversations/${cid}`);
     last = got.body;
     if (pred(last)) return last;
@@ -399,6 +400,84 @@ test('kernel models call each source, refresh Grok once, and hide keys', { timeo
     await defaultFake.close();
     await coderFake.close();
     await grokFake.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('a two-step pipeline calls each role source', { timeout: 60000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kpipe-'));
+  const coderFake = await startFakeModel({ mode: 'openai', text: 'from-coder' });
+  const testerFake = await startFakeModel({ mode: 'openai', text: 'from-tester' });
+  let proc = null;
+  try {
+    const srv = await startServer(dataDir);
+    proc = srv.proc;
+    const { base } = srv;
+    const createdCoder = await request(base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'Coder',
+      baseUrl: coderFake.baseUrl,
+      apiKey: KEY_CODER,
+      models: ['model-coder'],
+    });
+    assert.equal(createdCoder.status, 201);
+    const createdTester = await request(base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'Tester',
+      baseUrl: testerFake.baseUrl,
+      apiKey: KEY_TESTER,
+      models: ['model-tester'],
+    });
+    assert.equal(createdTester.status, 201);
+    const bound = await request(base, 'PUT', '/api/settings', {
+      models: {
+        coder: { sourceId: createdCoder.body.id, model: 'model-coder' },
+        tester: { sourceId: createdTester.body.id, model: 'model-tester' },
+      },
+    });
+    assert.equal(bound.status, 200);
+    const pipe = await request(base, 'POST', '/api/pipelines', {
+      id: 'split-sources',
+      name: 'Split sources',
+      steps: [
+        { role: 'coder', input: 'user' },
+        { role: 'tester', input: 'previous' },
+      ],
+    });
+    assert.equal(pipe.status, 201, JSON.stringify(pipe.body));
+    const ws = await request(base, 'POST', '/api/workspaces', { name: 'kernel-pipeline' });
+    assert.equal(ws.status, 201);
+    const conv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, {
+      title: 'two-roles',
+      pipelineId: 'split-sources',
+    });
+    assert.equal(conv.status, 201);
+    const sent = await request(base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'ship it' });
+    assert.equal(sent.status, 202, JSON.stringify(sent.body));
+    const done = await waitTurn(
+      base,
+      conv.body.id,
+      (body) => body.status === 'done' && assistantTexts(body).includes('from-tester'),
+      160,
+    );
+    assert.equal(done.status, 'done', JSON.stringify(done));
+    assert.equal(done.pipelineStep, 1);
+    assert.deepEqual(assistantTexts(done), ['from-coder', 'from-tester']);
+    const handoff = (done.messages || []).find((message) => message.kind === 'handoff');
+    assert.equal(handoff?.fromAgent, 'coder');
+    assert.equal(handoff?.toAgent, 'tester');
+    assert.equal(handoff?.text, 'from-coder');
+    const coderHits = coderFake.seen.filter((hit) => hit.path.endsWith('/chat/completions'));
+    const testerHits = testerFake.seen.filter((hit) => hit.path.endsWith('/chat/completions'));
+    assert.deepEqual(coderHits.map((hit) => hit.model), ['model-coder']);
+    assert.deepEqual(coderHits.map((hit) => hit.keyTail), [KEY_CODER.slice(-4)]);
+    assert.deepEqual(testerHits.map((hit) => hit.model), ['model-tester']);
+    assert.deepEqual(testerHits.map((hit) => hit.keyTail), [KEY_TESTER.slice(-4)]);
+    assertClean(srv.logs(), 'server log');
+  } finally {
+    if (proc) await stopProcess(proc);
+    await coderFake.close();
+    await testerFake.close();
     await rm(dataDir, { recursive: true, force: true });
   }
 });

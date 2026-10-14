@@ -3,11 +3,11 @@
 // records the UUID row, maps watchEvents into the existing events table, and
 // answers the current REST shape.
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { appendFile, writeFile } from 'node:fs/promises';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
+import { getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
 import { ConversationBusy, createRegistry, watchEvents } from '@earendil-works/pi-durable';
-import { agentEventData, mapConvStatusToAgent } from '../core/agents.mjs';
 import { redactAuthText } from '../core/grok-auth.mjs';
 import { formatSSE } from '../core/sse.mjs';
 import { presentContext } from '../core/usage.mjs';
@@ -20,6 +20,7 @@ import {
 } from './events.mjs';
 import { FAUX_MODEL, openKernel, registerFaux } from './index.mjs';
 import { createKernelModels, explicitDemo } from './models.mjs';
+import { createRoleHost, installRoleExtensions } from './roles.mjs';
 import { createWorkspaceExtension, scriptedDemoStep, toolsForRole } from './tools.mjs';
 
 const DEMO_RESPONSE_COUNT = 100;
@@ -28,22 +29,73 @@ export function kernelRequested(env = process.env) {
   return String(env.PI_WORK_KERNEL || '').trim() === 'durable';
 }
 
+function parseFauxPlan(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const parsed = JSON.parse(text);
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('PI_WORK_FAUX_PLAN must be a non-empty JSON array');
+  }
+  return parsed.map((item) => {
+    if (item === 'hold') return 'hold';
+    if (typeof item === 'string') return item;
+    throw new Error('PI_WORK_FAUX_PLAN items must be strings');
+  });
+}
+
+function replayedSections(messages) {
+  const shown = new Map();
+  for (const message of messages || []) {
+    if (message?.role !== 'system' || !message.sections) continue;
+    for (const [key, value] of Object.entries(message.sections)) {
+      if (value === null) shown.delete(key);
+      else shown.set(key, value);
+    }
+  }
+  return [...shown.entries()].map(([key, value]) => ({ key, value }));
+}
+
+function requestSnapshot(context) {
+  const messages = context?.messages || [];
+  return {
+    sections: replayedSections(messages),
+    tools: getCurrentTools(messages).map((tool) => tool.name),
+    users: messages.filter((message) => message?.role === 'user').map((message) => (
+      typeof message.content === 'string' ? message.content : ''
+    )),
+  };
+}
+
 function installDemo(models, env) {
   const faux = registerFaux(models);
   const text = String(env.PI_WORK_FAUX_TEXT || 'ok');
-  const hold = String(env.PI_WORK_FAUX_HOLD || '').trim() === '1';
+  const holdAll = String(env.PI_WORK_FAUX_HOLD || '').trim() === '1';
   const ready = String(env.PI_WORK_FAUX_HOLD_READY || '').trim();
   const scriptPath = String(env.PI_WORK_FAUX_SCRIPT || '').trim();
-  // Hold still wins: a script must not replace the in-flight model call used by recovery tests.
-  const step = hold
-    ? async () => {
+  const recordPath = String(env.PI_WORK_FAUX_RECORD || '').trim();
+  const plan = holdAll ? null : parseFauxPlan(env.PI_WORK_FAUX_PLAN);
+  // Hold still wins: a script or plan must not replace the in-flight model call used by recovery tests.
+  const scripted = !holdAll && !plan && scriptPath ? scriptedDemoStep(scriptPath, env) : null;
+  let cursor = 0;
+  const step = async (context) => {
+    if (recordPath) await appendFile(recordPath, `${JSON.stringify(requestSnapshot(context))}\n`);
+    if (holdAll) {
       if (ready) await writeFile(ready, 'seen');
       await new Promise(() => {});
       return fauxAssistantMessage(text);
     }
-    : (scriptPath
-      ? scriptedDemoStep(scriptPath, env)
-      : () => fauxAssistantMessage(text));
+    if (plan) {
+      const item = plan[Math.min(cursor, plan.length - 1)];
+      cursor += 1;
+      if (item === 'hold') {
+        if (ready) await writeFile(ready, 'seen');
+        await new Promise(() => {});
+      }
+      return fauxAssistantMessage(item);
+    }
+    if (scripted) return scripted(context);
+    return fauxAssistantMessage(text);
+  };
   faux.setResponses(Array.from({ length: DEMO_RESPONSE_COUNT }, () => step));
   return faux;
 }
@@ -58,6 +110,7 @@ export async function openConversationKernel({
   store,
   demo,
   describeAgents,
+  extensions,
   getSettings,
   grokAuth,
   env = process.env,
@@ -69,9 +122,11 @@ export async function openConversationKernel({
   if (faux) installDemo(models, env);
   const routes = faux ? null : createKernelModels({ models, getSettings, grokAuth, env });
   const registry = createRegistry();
+  const roleBridge = {};
   const watches = new Map();
   const tails = new Map();
   const listeners = new Map();
+  let roles;
 
   async function conversationIdFor(harnessId) {
     const wanted = Number(harnessId);
@@ -101,6 +156,7 @@ export async function openConversationKernel({
       });
     },
   }));
+  installRoleExtensions(registry, roleBridge);
   const kernel = await openKernel({ dataDir, models, registry });
   const { harness, context } = kernel;
 
@@ -124,18 +180,21 @@ export async function openConversationKernel({
   }
 
   async function emitAgent(cid, status, messages) {
-    if (typeof describeAgents !== 'function') return;
+    if (!roles) return;
     try {
-      const conv = await store.getConversation(cid);
-      if (!conv) return;
-      const agents = await describeAgents({ ...conv, status }, messages || []);
-      const agent = Array.isArray(agents) ? agents[0] : null;
-      const data = agentEventData(agent, mapConvStatusToAgent(status));
-      if (!data) return;
-      await emit(cid, 'agent', data);
+      await roles.emitAgent(cid, status, messages);
     } catch (err) {
       console.error(`PI_WORK_KERNEL_AGENT ${redactAuthText(err instanceof Error ? err.message : err)}`);
     }
+  }
+
+  async function deliver(cid, ev) {
+    if (roles && ev.event === 'status' && ev.data?.status === 'done') {
+      const action = await roles.onRunFinished(cid);
+      if (action !== 'continue') return;
+    }
+    if (ev.event === 'status') await emitStatus(cid, ev.data.status, omitStatus(ev.data));
+    else await emit(cid, ev.event, ev.data);
   }
 
   async function emitStatus(cid, status, extra = {}) {
@@ -192,10 +251,7 @@ export async function openConversationKernel({
 
   async function applyBatch(cid, batch, mapCtx) {
     const mapped = mapHarnessBatch(batch, mapCtx);
-    for (const ev of mapped.events) {
-      if (ev.event === 'status') await emitStatus(cid, ev.data.status, omitStatus(ev.data));
-      else await emit(cid, ev.event, ev.data);
-    }
+    for (const ev of mapped.events) await deliver(cid, ev);
     for (const snapshot of mapped.snapshots) await fillSnapshot(cid, snapshot, mapCtx);
     if (mapped.events.some((ev) => ev.event === 'checkpoint')) {
       const last = [...mapped.events].reverse().find((ev) => ev.event === 'checkpoint');
@@ -213,10 +269,7 @@ export async function openConversationKernel({
   async function fillSnapshot(cid, snapshot, mapCtx) {
     const existing = await store.getEvents(cid);
     const gap = snapshotGap(snapshot, existing, mapCtx);
-    for (const ev of gap) {
-      if (ev.event === 'status') await emitStatus(cid, ev.data.status, omitStatus(ev.data));
-      else await emit(cid, ev.event, ev.data);
-    }
+    for (const ev of gap) await deliver(cid, ev);
   }
 
   async function attach(row) {
@@ -240,6 +293,7 @@ export async function openConversationKernel({
       await emitStatus(row.id, 'recovering', { autoContinues: row.autoContinues || 0 });
       return;
     }
+    if (roles && await roles.pipelinePending(row)) return;
     if (row.status !== 'running' && row.status !== 'recovering' && row.hostMark !== 'recovering') return;
     const view = await readView(row.harnessId);
     const lastAssistant = [...(view?.entries || [])].reverse().find((entry) => entry.kind === 'pi.assistant');
@@ -247,10 +301,34 @@ export async function openConversationKernel({
     await store.updateConversation(row.id, { status: failed ? 'failed' : 'done', hostMark: null });
   }
 
+  async function resolveModel(conv, role) {
+    if (!routes || !conv?.harnessId) return;
+    const conversation = await harness.conversation(conv.harnessId, context);
+    if (!conversation) return;
+    const roleId = role?.id || conv.roleId;
+    const model = await routes.modelFor({ ...conv, roleId });
+    await conversation.configure({ model: model ?? null }, context);
+  }
+
+  roles = createRoleHost({
+    store,
+    harness,
+    context,
+    registry,
+    extensions,
+    bridge: roleBridge,
+    readTranscript,
+    emit,
+    describeAgents,
+    resolveModel,
+  });
+
   const stored = await store.listKernelConversations();
+  await roles.seed(stored);
   for (const row of stored) await attach(row);
   for (const row of stored) await settleStored(row);
   harness.resume();
+  for (const row of stored) await roles.reconcile(row);
 
   async function conversationFor(conv) {
     if (!conv?.harnessId) return null;
@@ -279,6 +357,7 @@ export async function openConversationKernel({
         },
       }, context);
       const next = await store.updateConversation(conv.id, { harnessId: created.id, status: 'idle' });
+      if (roles) await roles.afterCreate(next);
       await attach(next);
       return next;
     },
@@ -292,7 +371,9 @@ export async function openConversationKernel({
       const status = synthesizeStatus(conv, transcript.busy);
       const usage = presentContext(transcript.usage || conv.usage).usage;
       const out = { ...conv, status, usage };
-      if (includeMessages) out.messages = transcript.messages;
+      if (includeMessages) {
+        out.messages = roles ? await roles.annotate(conv, transcript.messages) : transcript.messages;
+      }
       return out;
     },
     async postMessage(conv, text) {
@@ -301,17 +382,19 @@ export async function openConversationKernel({
         return { status: 409, body: { error: 'err_send_blocked', status: conv?.status || 'stopped' } };
       }
       try {
+        if (await submissionBlocked(conv.harnessId)) {
+          return { status: 409, body: { error: 'err_send_blocked', status: 'running' } };
+        }
+        const prepared = roles ? await roles.prepareSend(conv, text) : null;
+        const current = prepared?.conversation || conv;
         if (routes) {
-          if (await submissionBlocked(conv.harnessId)) {
-            return { status: 409, body: { error: 'err_send_blocked', status: 'running' } };
-          }
-          const model = await routes.modelFor(conv);
+          const model = await routes.modelFor(current);
           await conversation.configure({ model: model ?? null }, context);
         }
         const submission = await conversation.submit({
           type: 'input',
           content: text,
-          requestId: randomUUID(),
+          requestId: prepared?.requestId || randomUUID(),
           whenBusy: 'reject',
         }, context);
         return { status: 202, body: { runId: String(submission.id), status: 'running' } };
@@ -322,6 +405,9 @@ export async function openConversationKernel({
         if (err instanceof Error && err.message) err.message = redactAuthText(err.message);
         throw err;
       }
+    },
+    patchConversation(cid, body) {
+      return roles.patchConversation(cid, body);
     },
     subscribe(cid, fn) {
       let set = listeners.get(cid);

@@ -396,7 +396,7 @@ test('kernel path: a role without a tool does not offer it and rejects the call'
     assert.equal(denied.every((text) => text.includes('not available')), true, JSON.stringify(denied));
     await assert.rejects(readFile(path.join(ws.path, 'secret.txt'), 'utf8'));
     const offered = (await readFile(toolLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-    assert.deepEqual(offered[0], ['read', 'ls', 'grep']);
+    assert.deepEqual(offered[0], ['read', 'ls', 'grep', 'echo']);
     assert.equal(offered[0].includes('write'), false);
     assert.equal(offered[0].includes('bash'), false);
   } finally {
