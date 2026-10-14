@@ -2875,7 +2875,7 @@ button.file-tree-row:hover,
   color: var(--text-secondary);
 }
 .btn.g:hover { background: var(--bg-hover); color: var(--text-primary); }
-.btn.sm { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn.btn-sm { height: 24px; padding: 0 8px; font-size: 12px; }
 .ms-danger { margin-right: auto; color: var(--status-failed); }
 .ms-drawer-scrim {
   display: none;
