@@ -2,6 +2,7 @@
 // The host does not schedule work. It only renames events watchEvents already emitted.
 import { retryDelayMs } from '@earendil-works/pi-ai/utils/retry';
 import { DEFAULT_RETRY_POLICY } from '@earendil-works/pi-durable';
+import { redactAuthText } from '../core/grok-auth.mjs';
 import { presentContext } from '../core/usage.mjs';
 
 /** messageId for an assistant partial that has no transcript entry yet. */
@@ -57,7 +58,7 @@ function errorForSubmission(record) {
   const detail = typeof record.detail === 'string' ? record.detail : '';
   return {
     code: record.reason === 'model_error' ? 'E_LLM' : (record.reason || 'E_LLM'),
-    message: detail || record.reason || 'model error',
+    message: redactAuthText(detail || record.reason || 'model error'),
   };
 }
 
@@ -151,7 +152,7 @@ export function mapHarnessBatch(batch, ctx) {
         data: {
           attempt: ev.attempt,
           delayMs: retryDelayMs(ctx.retry || DEFAULT_RETRY_POLICY, ev.attempt),
-          reason: ev.errorMessage || '',
+          reason: redactAuthText(ev.errorMessage || ''),
         },
       });
       continue;
@@ -159,7 +160,7 @@ export function mapHarnessBatch(batch, ctx) {
     if (ev.type === 'task_failed') {
       events.push({
         event: 'error',
-        data: { code: 'E_LLM', message: ev.message || ev.kind || 'task failed' },
+        data: { code: 'E_LLM', message: redactAuthText(ev.message || ev.kind || 'task failed') },
       });
       if (!failed) {
         failed = true;

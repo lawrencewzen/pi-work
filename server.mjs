@@ -512,6 +512,8 @@ if (kernelRequested()) {
       store,
       demo: envRequestsFaux(),
       describeAgents: agentsFor,
+      getSettings: () => ensureSettings(),
+      grokAuth,
     });
   } catch (err) {
     console.error(`PI_WORK_KERNEL_OPEN_FAILED ${err instanceof Error ? err.message : err}`);
