@@ -9,6 +9,7 @@ import {
   isMaskedOrEmptyKey,
   httpOrigin,
 } from './agent-chip.js';
+import { formatProbeFailure, sourceProbeStatus } from './probe-error.js';
 
 const FALLBACK_VENDORS = [
   { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', needsKey: true },
@@ -172,14 +173,13 @@ function testedWhen(iso, t) {
 }
 
 function reasonText(source, reason, t) {
-  if (reason === 'unsigned') return t('src_why_unsigned');
-  if (reason === 'no_key') return t('src_why_no_key');
-  if (reason === 'no_url') return t('src_why_no_url');
-  if (reason === 'offline') {
-    if (source?.vendor === 'ollama') return t('src_why_ollama');
-    return t('src_why_offline');
-  }
-  return '';
+  return sourceProbeStatus(source, reason, t);
+}
+
+function probeResultText(test, t) {
+  if (!test || test.ok) return '';
+  if (test.text) return test.text;
+  return formatProbeFailure(test, t) || t('src_test_failed');
 }
 
 function usableCount(state) {
@@ -427,11 +427,11 @@ function renderSourceRow(source, ctx) {
     ? (source.models || []).map((name) => `<span class="ms-tag mono">${escapeHtml(name)}</span>`).join('')
     : '';
   const actions = isGrok
-    ? `<button type="button" class="btn g sm" data-action="ms-test-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_refresh_models'))}</button>` +
-      `<button type="button" class="btn g sm" data-action="ms-edit-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_edit'))}</button>`
-    : `<button type="button" class="btn g sm" data-action="ms-test-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(usable ? t('src_test') : t('src_retry'))}</button>` +
-      `<button type="button" class="btn g sm" data-action="ms-edit-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_edit'))}</button>` +
-      `<button type="button" class="btn g sm" data-action="ms-delete-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('btn_delete'))}</button>`;
+    ? `<button type="button" class="btn g btn-sm" data-action="ms-test-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_refresh_models'))}</button>` +
+      `<button type="button" class="btn g btn-sm" data-action="ms-edit-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_edit'))}</button>`
+    : `<button type="button" class="btn g btn-sm" data-action="ms-test-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(usable ? t('src_test') : t('src_retry'))}</button>` +
+      `<button type="button" class="btn g btn-sm" data-action="ms-edit-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('src_edit'))}</button>` +
+      `<button type="button" class="btn g btn-sm" data-action="ms-delete-source" data-source-id="${escapeHtml(source.id)}">${escapeHtml(t('btn_delete'))}</button>`;
   return (
     `<div class="ms-src-row${usable ? '' : ' err'}" data-testid="model-source" data-source-id="${escapeHtml(source.id)}" data-usable="${usable ? 'true' : 'false'}">` +
     `<span class="ms-dot ${dotClass(reason)}"></span>` +
@@ -558,24 +558,24 @@ function renderKeyDrawer(ctx) {
     ? (test.ok
       ? `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-dot ok"></span>${escapeHtml(t('src_test_found', { n: ui.form.models.length }))}</div>` +
         `<div class="ms-checks">${renderCheckboxes(ui.form.models, ui.form.checked, escapeHtml)}</div>` +
-        `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`
-      : `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-dot bad"></span>${escapeHtml(test.error || t('src_test_failed'))}</div>` +
+        `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn btn-sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`
+      : `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-dot bad"></span>${escapeHtml(probeResultText(test, t))}</div>` +
         (ui.form.models.length ? `<div class="ms-checks">${renderCheckboxes(ui.form.models, ui.form.checked, escapeHtml)}</div>` : '') +
-        `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`)
+        `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn btn-sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`)
     : (editing && ui.form.models.length
       ? `<div class="ms-result"><div class="ms-ok">${escapeHtml(t('src_enabled_models'))}</div><div class="ms-checks">${renderCheckboxes(ui.form.models, ui.form.checked, escapeHtml)}</div>` +
-        `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`
+        `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn btn-sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`
       : '');
   const title = editing
     ? t('src_edit_named', { name: ui.form.name || vendorById(state, vendorId)?.name || '' })
     : t('src_add_api');
   return (
     `<div class="ms-drawer-pane" data-testid="model-drawer" data-drawer="key">` +
-    `<div class="ms-dr-head">${editing ? '' : `<button type="button" class="btn g sm" data-action="ms-back" aria-label="${escapeHtml(t('src_back'))}">‹</button>`}<b>${escapeHtml(title)}</b><button type="button" class="btn g sm" data-action="ms-close-drawer" aria-label="${escapeHtml(t('btn_cancel'))}">✕</button></div>` +
+    `<div class="ms-dr-head">${editing ? '' : `<button type="button" class="btn g btn-sm" data-action="ms-back" aria-label="${escapeHtml(t('src_back'))}">‹</button>`}<b>${escapeHtml(title)}</b><button type="button" class="btn g btn-sm" data-action="ms-close-drawer" aria-label="${escapeHtml(t('btn_cancel'))}">✕</button></div>` +
     `<div class="ms-dr-body">` +
     `<div class="ms-field"><label>${escapeHtml(t('src_vendor'))}</label><div class="ms-vendors">${chips}</div></div>` +
     `<div class="ms-field"><label>${escapeHtml(t('src_base_url'))}</label><input class="ms-in mono" id="ms-url" data-testid="model-url" value="${escapeHtml(ui.form.baseUrl || '')}"${custom ? '' : ' readonly'} placeholder="${escapeHtml(t('src_url_placeholder'))}" autocomplete="off"><div class="ms-hint">${escapeHtml(custom ? t('src_url_custom_hint') : t('src_url_preset_hint'))}</div></div>` +
-    (hideKey ? '' : `<div class="ms-field" id="ms-key-field"><label>${escapeHtml(t('src_api_key'))}</label><div class="ms-keywrap"><input class="ms-in mono" id="ms-key" data-testid="model-key" type="${ui.form.showKey ? 'text' : 'password'}" value="${escapeHtml(ui.form.apiKey || '')}" autocomplete="off"><button type="button" class="btn g sm ms-eye" id="ms-key-eye" data-action="ms-toggle-key">${escapeHtml(t(ui.form.showKey ? 'src_hide' : 'src_show'))}</button></div><div class="ms-hint">${escapeHtml(editing ? t('src_key_keep_hint') : t('src_key_hint'))}</div></div>`) +
+    (hideKey ? '' : `<div class="ms-field" id="ms-key-field"><label>${escapeHtml(t('src_api_key'))}</label><div class="ms-keywrap"><input class="ms-in mono" id="ms-key" data-testid="model-key" type="${ui.form.showKey ? 'text' : 'password'}" value="${escapeHtml(ui.form.apiKey || '')}" autocomplete="off"><button type="button" class="btn g btn-sm ms-eye" id="ms-key-eye" data-action="ms-toggle-key">${escapeHtml(t(ui.form.showKey ? 'src_hide' : 'src_show'))}</button></div><div class="ms-hint">${escapeHtml(editing ? t('src_key_keep_hint') : t('src_key_hint'))}</div></div>`) +
     `<div class="ms-field"><label>${escapeHtml(t('src_name'))}</label><input class="ms-in" id="ms-name" data-testid="model-name" value="${escapeHtml(ui.form.name || '')}" autocomplete="off"><div class="ms-hint">${escapeHtml(t('src_name_hint'))}</div></div>` +
     (warn ? `<div class="ms-warn" id="ms-host-warn" data-testid="model-host-warn">${escapeHtml(warn)}</div>` : `<div class="ms-warn" id="ms-host-warn" data-testid="model-host-warn" hidden></div>`) +
     `<div class="ms-test-row"><button type="button" class="btn" data-action="ms-test-form" data-testid="model-test"${ui.form.testing ? ' disabled' : ''}>${escapeHtml(ui.form.testing ? t('src_testing') : t('src_test_models'))}</button></div>` +
@@ -598,14 +598,14 @@ function renderGrokDrawer(ctx) {
   const err = errKey ? t(errKey) : '';
   return (
     `<div class="ms-drawer-pane" data-testid="model-drawer" data-drawer="grok">` +
-    `<div class="ms-dr-head"><button type="button" class="btn g sm" data-action="ms-back" aria-label="${escapeHtml(t('src_back'))}">‹</button><b>${escapeHtml(t('src_grok_login_title'))}</b><button type="button" class="btn g sm" data-action="ms-close-drawer" aria-label="${escapeHtml(t('btn_cancel'))}">✕</button></div>` +
+    `<div class="ms-dr-head"><button type="button" class="btn g btn-sm" data-action="ms-back" aria-label="${escapeHtml(t('src_back'))}">‹</button><b>${escapeHtml(t('src_grok_login_title'))}</b><button type="button" class="btn g btn-sm" data-action="ms-close-drawer" aria-label="${escapeHtml(t('btn_cancel'))}">✕</button></div>` +
     `<div class="ms-dr-body">` +
     `<p class="ms-lead">${escapeHtml(t('src_grok_login_lead'))}</p>` +
     (pending ? (
       `<div class="ms-step"><div class="ms-no">1</div><div class="ms-step-body">${escapeHtml(t('src_grok_step_url'))}` +
-      `<div class="ms-url-row"><input class="ms-in mono" readonly value="${escapeHtml(url)}" data-testid="grok-url"><button type="button" class="btn sm" data-action="ms-open-grok-url" data-testid="grok-open"${url ? '' : ' disabled'}>${escapeHtml(t('src_open'))}</button></div></div></div>` +
+      `<div class="ms-url-row"><input class="ms-in mono" readonly value="${escapeHtml(url)}" data-testid="grok-url"><button type="button" class="btn btn-sm" data-action="ms-open-grok-url" data-testid="grok-open"${url ? '' : ' disabled'}>${escapeHtml(t('src_open'))}</button></div></div></div>` +
       `<div class="ms-step"><div class="ms-no">2</div><div class="ms-step-body">${escapeHtml(t('src_grok_step_code'))}` +
-      `<div class="ms-code-row"><span class="ms-code mono" data-testid="grok-user-code">${escapeHtml(code)}</span><button type="button" class="btn sm" data-action="ms-copy-code" data-testid="grok-copy">${escapeHtml(t('src_copy'))}</button></div>` +
+      `<div class="ms-code-row"><span class="ms-code mono" data-testid="grok-user-code">${escapeHtml(code)}</span><button type="button" class="btn btn-sm" data-action="ms-copy-code" data-testid="grok-copy">${escapeHtml(t('src_copy'))}</button></div>` +
       `<div class="ms-hint" id="ms-grok-expire">${escapeHtml(remainText(pending.expiresAt, t))}</div></div></div>` +
       `<div class="ms-waiting" data-testid="grok-device"><span class="ms-spin"></span>${escapeHtml(t('grok_waiting'))}</div>`
     ) : `<p class="ms-hint">${escapeHtml(t('src_grok_starting'))}</p>`) +
@@ -626,16 +626,16 @@ function renderGrokEdit(ctx) {
   const names = ui.form.models.length ? ui.form.models : (source.models || []);
   return (
     `<div class="ms-drawer-pane" data-testid="model-drawer" data-drawer="grok-edit">` +
-    `<div class="ms-dr-head"><b>${escapeHtml(t('src_edit_named', { name: 'Grok Build' }))}</b><button type="button" class="btn g sm" data-action="ms-close-drawer" aria-label="${escapeHtml(t('btn_cancel'))}">✕</button></div>` +
+    `<div class="ms-dr-head"><b>${escapeHtml(t('src_edit_named', { name: 'Grok Build' }))}</b><button type="button" class="btn g btn-sm" data-action="ms-close-drawer" aria-label="${escapeHtml(t('btn_cancel'))}">✕</button></div>` +
     `<div class="ms-dr-body">` +
     `<div class="ms-field"><label>${escapeHtml(t('src_name'))}</label><input class="ms-in" id="ms-grok-name" data-testid="model-grok-name" value="${escapeHtml(ui.grokName || '')}" autocomplete="off"></div>` +
     `<div class="ms-field"><label>${escapeHtml(t('src_account'))}</label>` +
     `<div class="ms-result"><div class="ms-ok"><span class="ms-dot ${signed ? 'ok' : 'bad'}"></span>${escapeHtml(signed ? (email || t('grok_signed_in')) : t('src_why_unsigned'))}</div>` +
     (signed && exp ? `<div class="ms-hint">${escapeHtml(t('src_token_renews', { time: exp }))} · ${escapeHtml(t('src_grok_file'))}</div>` : '') +
-    `<div class="ms-inline-acts"><button type="button" class="btn sm" data-action="ms-grok-relogin">${escapeHtml(t('src_relogin'))}</button>` +
-    (signed ? `<button type="button" class="btn sm" data-action="grok-logout" data-testid="grok-logout">${escapeHtml(t('grok_logout'))}</button>` : '') +
+    `<div class="ms-inline-acts"><button type="button" class="btn btn-sm" data-action="ms-grok-relogin">${escapeHtml(t('src_relogin'))}</button>` +
+    (signed ? `<button type="button" class="btn btn-sm" data-action="grok-logout" data-testid="grok-logout">${escapeHtml(t('grok_logout'))}</button>` : '') +
     `</div></div></div>` +
-    `<div class="ms-field"><label>${escapeHtml(t('src_available_models'))} <button type="button" class="btn g sm" data-action="ms-refresh-grok-form">${escapeHtml(t('src_refresh'))}</button></label>` +
+    `<div class="ms-field"><label>${escapeHtml(t('src_available_models'))} <button type="button" class="btn g btn-sm" data-action="ms-refresh-grok-form">${escapeHtml(t('src_refresh'))}</button></label>` +
     `<div class="ms-checks">${renderCheckboxes(names, ui.grokChecked, escapeHtml)}</div>` +
     `<div class="ms-hint">${escapeHtml(t('src_check_hint'))}</div></div>` +
     `</div>` +
@@ -661,7 +661,7 @@ function renderPickDrawer(ctx) {
   }).join('');
   return (
     `<div class="ms-drawer-pane" data-testid="model-drawer" data-drawer="pick">` +
-    `<div class="ms-dr-head"><b>${escapeHtml(t('src_add_title'))}</b><button type="button" class="btn g sm" data-action="ms-close-drawer" aria-label="${escapeHtml(t('btn_cancel'))}">✕</button></div>` +
+    `<div class="ms-dr-head"><b>${escapeHtml(t('src_add_title'))}</b><button type="button" class="btn g btn-sm" data-action="ms-close-drawer" aria-label="${escapeHtml(t('btn_cancel'))}">✕</button></div>` +
     `<div class="ms-dr-body">` +
     `<div class="ms-kind">${escapeHtml(t('src_group_account'))}</div>` +
     cards +
@@ -727,7 +727,7 @@ export function renderModelsPane(ctx) {
     `<div class="ms-head"><div><h2>${escapeHtml(t('settings_tab_models'))}</h2><p>${escapeHtml(t('src_page_desc'))}</p></div></div>` +
     `<div class="ms-scroll" id="ms-scroll">` +
     `<div class="ms-section"><div><b>${escapeHtml(t('src_sources'))}</b><span>${escapeHtml(t('src_count', { sources: sources.length, models: usableCount(state) }))}</span></div>` +
-    `<button type="button" class="btn sm" data-action="ms-open-add" data-testid="model-add">${escapeHtml(t('src_add'))}</button></div>` +
+    `<button type="button" class="btn btn-sm" data-action="ms-open-add" data-testid="model-add">${escapeHtml(t('src_add'))}</button></div>` +
     `<div class="ms-src" data-testid="model-source-list">${rows}</div>` +
     `<div class="ms-section ms-section-roles"><div><b>${escapeHtml(t('src_role_models'))}</b><span>${escapeHtml(t('src_role_hint'))}</span></div></div>` +
     `<div class="ms-roles">${roles}</div>` +
@@ -941,7 +941,12 @@ async function testForm(ctx) {
       ui.form.checked = checked;
       ui.form.test = { ok: true };
     } else {
-      ui.form.test = { ok: false, error: result?.error || ctx.t('src_test_failed') };
+      ui.form.test = {
+        ok: false,
+        error: typeof result?.error === 'string' ? result.error : '',
+        code: typeof result?.code === 'string' ? result.code : '',
+        ...(Number.isInteger(result?.status) ? { status: result.status } : {}),
+      };
     }
     ctx.render();
   } catch (err) {
@@ -951,7 +956,7 @@ async function testForm(ctx) {
       ctx.render();
       return;
     }
-    ui.form.test = { ok: false, error: knownError(err, ctx.t) };
+    ui.form.test = { ok: false, text: knownError(err, ctx.t) };
     ctx.render();
   }
 }
@@ -960,7 +965,7 @@ async function testSourceRow(ctx, id) {
   try {
     const result = await ctx.api('/api/sources/test', 'POST', { sourceId: id });
     await reloadSettings(ctx);
-    ctx.showToast(result?.ok ? 'src_test_ok' : 'src_test_failed');
+    ctx.showToast(result?.ok ? 'src_test_ok' : (formatProbeFailure(result, ctx.t) || 'src_test_failed'));
     ctx.render();
   } catch (err) {
     ctx.showToast(knownError(err, ctx.t));
