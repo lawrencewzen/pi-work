@@ -53,6 +53,53 @@ test('pause one agent does not affect the other; stop is terminal', async () => 
   assert.equal(orch.status('C').status, 'stopped');
 });
 
+function abortError() {
+  const err = new Error('aborted');
+  err.code = 'E_ABORTED';
+  err.name = 'AbortError';
+  return err;
+}
+
+test('message after stop starts a new run in the same conversation', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  let calls = 0;
+  const llm = {
+    async next({ signal } = {}) {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise((resolve, reject) => {
+          const onAbort = () => reject(abortError());
+          if (signal?.aborted) return onAbort();
+          signal?.addEventListener('abort', onAbort, { once: true });
+        });
+        return { type: 'text', text: 'should-not-land' };
+      }
+      if (calls === 2) return { type: 'text', text: 'resumed-reply' };
+      return { type: 'end' };
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({ llm, store });
+  await orch.start('S', { workspacePath: w, text: 'first' });
+  assert.equal(orch.status('S').status, 'running');
+  await waitFor(() => calls >= 1);
+  assert.equal((await orch.stop('S')).status, 'stopped');
+  // Resume must not revive a terminated run; only a new user message does.
+  assert.equal((await orch.resume('S')).status, 'stopped');
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(orch.status('S').status, 'stopped');
+  assert.equal(calls, 1);
+
+  const started = await orch.start('S', { workspacePath: w, text: 'second' });
+  assert.equal(started.status, 'running');
+  await waitFor(() => orch.status('S').status === 'done');
+  const msgs = await store.getMessages('S');
+  assert.ok(msgs.some((m) => m.role === 'user' && m.text === 'first'));
+  assert.ok(msgs.some((m) => m.role === 'user' && m.text === 'second'));
+  assert.equal(msgs.some((m) => m.text === 'should-not-land'), false);
+  assert.ok(msgs.some((m) => m.role === 'assistant' && m.text === 'resumed-reply'));
+});
+
 test('stream cut is retried and run completes', async () => {
   const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
   const llm = createFauxLLM({ turns: [{ text: 'part1' }, { cut: true }, { text: 'final' }] });

@@ -482,14 +482,21 @@ async function routeApi(req, res, url) {
     const body = await readBody(req);
     const runId = randomUUID();
     const ws = conv.workspaceId ? await store.getWorkspace(conv.workspaceId) : null;
-    await orch.start(cid, {
+    const result = await orch.start(cid, {
       workspacePath: conv.workspacePath || ws?.path,
       text: body.text || '',
       roleId: conv.roleId,
       pipelineId: conv.pipelineId,
       runId,
     });
-    sendJson(res, 202, { runId });
+    if (result?.status !== 'running' && result?.status !== 'recovering') {
+      sendJson(res, 409, {
+        error: 'err_send_blocked',
+        status: result?.status || 'stopped',
+      });
+      return;
+    }
+    sendJson(res, 202, { runId, status: result.status });
     return;
   }
 

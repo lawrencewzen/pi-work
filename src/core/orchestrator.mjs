@@ -243,6 +243,8 @@ export function createOrchestrator({
     const rt = runtimes.get(cid);
     if (!rt || rt.epoch !== epoch) return;
     if (rt.status === 'stopped' || rt.status === 'paused') return;
+    const loopToken = {};
+    rt.loopToken = loopToken;
     rt.loopActive = true;
     try {
       await loadRolePipeline(rt);
@@ -253,6 +255,7 @@ export function createOrchestrator({
         const assistantId = `${cid}:a:${rt.currentStep}`;
         const toolCallId = `${cid}:${rt.currentStep}`;
         const stored = await store.getMessages(cid);
+        if (rt.epoch !== epoch) return;
         const existingAssistant = stored.find((m) => m.id === assistantId);
         if (existingAssistant) {
           if (existingAssistant.text) rt.lastAssistantText = existingAssistant.text;
@@ -264,6 +267,7 @@ export function createOrchestrator({
           continue;
         }
         const existingTool = await store.getToolCall(toolCallId);
+        if (rt.epoch !== epoch) return;
         if (existingTool?.status === 'completed') {
           rt.currentStep += 1;
           rt.lastCheckpointAt = Date.now();
@@ -437,7 +441,7 @@ export function createOrchestrator({
                 signal: rt.abort.signal,
               });
             } catch (err) {
-              if (isAbort(err) || rt.status === 'paused' || rt.status === 'stopped') return;
+              if (rt.epoch !== epoch || isAbort(err) || rt.status === 'paused' || rt.status === 'stopped') return;
               result = {
                 name: action.name,
                 path: action.args?.path,
@@ -481,7 +485,7 @@ export function createOrchestrator({
           }
         }
 
-        if (rt.status === 'paused' || rt.status === 'stopped') return;
+        if (rt.epoch !== epoch || rt.status === 'paused' || rt.status === 'stopped') return;
         rt.currentStep += 1;
         rt.lastCheckpointAt = Date.now();
         markProgress(rt);
@@ -489,7 +493,25 @@ export function createOrchestrator({
         await emit(cid, 'checkpoint', { at: rt.lastCheckpointAt, step: rt.currentStep });
       }
     } finally {
-      if (rt.epoch === epoch) rt.loopActive = false;
+      if (rt.loopToken === loopToken) {
+        rt.loopActive = false;
+        rt.loopToken = null;
+      }
+    }
+  }
+
+  // Drop an in-flight loop before a stopped conversation is started again.
+  // Bumping the epoch makes the old loop exit; waiting until it clears
+  // loopActive keeps its trailing writes from landing on the new run.
+  async function retireActiveLoop(rt) {
+    const token = rt.loopToken;
+    rt.epoch += 1;
+    rt.abortReason = 'stop';
+    try { rt.abort.abort(); } catch { /* ignore */ }
+    if (!rt.loopActive) return;
+    const deadline = Date.now() + 2000;
+    while (rt.loopActive && rt.loopToken === token && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
     }
   }
 
@@ -543,7 +565,9 @@ export function createOrchestrator({
   return {
     async start(cid, opts = {}) {
       const rt = ensureRuntime(cid, opts);
-      if (rt.status === 'stopped') return { status: 'stopped' };
+      // Stop ends the current run only. A later user message in the same
+      // conversation has to be able to start another one.
+      if (rt.status === 'stopped') await retireActiveLoop(rt);
       rt.status = 'running';
       markProgress(rt);
       const firstPatch = {

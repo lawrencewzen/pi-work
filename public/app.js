@@ -1065,11 +1065,23 @@ export async function sendMessage(text) {
   updateConversationStatus(cid, 'running');
 
   try {
-    await api(`/api/conversations/${encodeURIComponent(cid)}/messages`, 'POST', { text });
+    const res = await api(`/api/conversations/${encodeURIComponent(cid)}/messages`, 'POST', { text });
+    if (res && res.status && res.status !== 'running' && res.status !== 'recovering') {
+      const err = new Error('err_send_blocked');
+      err.status = 409;
+      err.body = res;
+      throw err;
+    }
     scheduleConversationRefresh(cid);
   } catch (err) {
-    showToast(err.message || 'err_send');
-    updateConversationStatus(cid, 'failed');
+    const blocked = err.status === 409;
+    showToast(blocked ? (isToastKey(err.message) ? err.message : 'err_send_blocked') : (err.message || 'err_send'));
+    const next = blocked ? (err.body?.status || 'stopped') : 'failed';
+    if (state.activeConversationData && state.activeConversationId === cid) {
+      state.activeConversationData.status = next;
+      renderStatusBar();
+    }
+    updateConversationStatus(cid, next);
   }
 }
 
