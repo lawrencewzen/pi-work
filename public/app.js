@@ -140,10 +140,17 @@ export function renderMarkdown(src = '') {
   }
 
   function inlineFormat(txt) {
+    const codes = [];
     let s = escapeHtml(txt);
-    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
-    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    s = s.replace(/(^|[^*])\*([^*]+)\*([^*]|$)/g, '$1<em>$2</em>$3');
+    s = s.replace(/`([^`]+)`/g, (_, code) => {
+      const token = `\u0000C${codes.length}\u0000`;
+      codes.push(`<code>${code}</code>`);
+      return token;
+    });
+    s = applyEmphasis(s);
+    s = replaceMarkdownLinks(s);
+    s = replaceAutolinks(s);
+    s = s.replace(/\u0000C(\d+)\u0000/g, (_, i) => codes[Number(i)] || '');
     return s;
   }
 
@@ -223,6 +230,68 @@ export function renderMarkdown(src = '') {
   }
   closeLists();
   return out.join('');
+}
+
+function applyEmphasis(s) {
+  let out = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(^|[^*])\*([^*]+)\*([^*]|$)/g, '$1<em>$2</em>$3');
+  return out;
+}
+
+function decodeEntities(s) {
+  return String(s)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const cp = Number(n);
+      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '';
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => {
+      const cp = parseInt(n, 16);
+      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '';
+    });
+}
+
+/** Allow only http(s) and mailto after entity/percent decoding. */
+function safeUrl(escapedHref) {
+  let url = decodeEntities(String(escapedHref || '')).replace(/[\u0000-\u001f]/g, '').trim();
+  if (!url) return '';
+  try {
+    const decoded = decodeURIComponent(url);
+    if (decoded !== url) url = decoded.trim();
+  } catch { /* keep the original */ }
+  if (!url || /[\s"'<>`]/.test(url)) return '';
+  let parsed;
+  try { parsed = new URL(url); } catch { return ''; }
+  const proto = parsed.protocol.toLowerCase();
+  if (proto !== 'http:' && proto !== 'https:' && proto !== 'mailto:') return '';
+  if ((proto === 'http:' || proto === 'https:') && !parsed.hostname) return '';
+  return parsed.href;
+}
+
+function linkHtml(href, label) {
+  const safe = safeUrl(href);
+  if (!safe) return '';
+  return `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+}
+
+function replaceMarkdownLinks(s) {
+  return s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (full, label, href) => linkHtml(href, label) || full);
+}
+
+function replaceAutolinks(s) {
+  return s.split(/(<a\b[^>]*>[\s\S]*?<\/a>)/g).map((part) => {
+    if (part.startsWith('<a ')) return part;
+    return part.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, (full, pre, url) => {
+      const core = url.replace(/[),.;!?]+$/, '');
+      const trail = url.slice(core.length);
+      const html = linkHtml(core, core);
+      return html ? `${pre}${html}${trail}` : full;
+    });
+  }).join('');
 }
 
 const ROLE_LABEL_KEYS = {
@@ -1509,7 +1578,7 @@ export function renderChatThread() {
     const m = msgs[i];
     if (m.kind === 'handoff') {
       rendered.push(
-        `<div class="handoff-note" data-testid="message" data-role="system" data-kind="handoff">` +
+        `<div class="handoff-note msg-side-agent" data-testid="message" data-role="system" data-kind="handoff">` +
         `<span>${escapeHtml(t('handoff_note', { from: localizeRoleLabel(m.fromAgent || ''), to: localizeRoleLabel(m.toAgent || '') }))}</span>` +
         `</div>`
       );
@@ -1517,7 +1586,7 @@ export function renderChatThread() {
     }
     if (m.role === 'user') {
       rendered.push(
-        `<div class="msg-group" data-testid="message" data-role="user">` +
+        `<div class="msg-group msg-side-user" data-testid="message" data-role="user">` +
         `<div class="msg-header">` +
         `<div class="msg-avatar avatar-user">U</div>` +
         `<span class="msg-sender">${escapeHtml(t('user_name'))}</span>` +
@@ -1540,7 +1609,7 @@ export function renderChatThread() {
       const sender = assistantLabel(m);
       const chip = assistantChip(m);
       rendered.push(
-        `<div class="msg-group" data-testid="message" data-role="assistant">` +
+        `<div class="msg-group msg-side-agent" data-testid="message" data-role="assistant">` +
         `<div class="msg-header">` +
         `<div class="msg-avatar avatar-assistant">π</div>` +
         `<span class="msg-sender">${escapeHtml(sender)}</span>` +
