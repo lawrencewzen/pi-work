@@ -2661,3 +2661,12 @@ button.file-tree-row:hover,
   display: block;
 }
 
+
+.ws-node-add {
+  flex-shrink: 0;
+  visibility: hidden;
+}
+.ws-node-header:hover .ws-node-add,
+.ws-tree-node.ws-active .ws-node-add {
+  visibility: visible;
+}
