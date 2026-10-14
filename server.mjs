@@ -489,14 +489,16 @@ const llm = {
   },
 };
 
+const extensionHost = createExtensionHost({
+  skillDirs: SKILL_DIRS,
+  pluginDirs: PLUGIN_DIRS,
+  getSettings: () => store.getSettings(),
+});
+
 const orch = createOrchestrator({
   llm,
   store,
-  extensions: createExtensionHost({
-    skillDirs: SKILL_DIRS,
-    pluginDirs: PLUGIN_DIRS,
-    getSettings: () => store.getSettings(),
-  }),
+  extensions: extensionHost,
   retry: createRetryPolicy({
     maxAttempts: Number(process.env.PI_WORK_RETRY_MAX) || 5,
     baseMs: Number(process.env.PI_WORK_RETRY_BASE_MS) || 200,
@@ -512,6 +514,7 @@ if (kernelRequested()) {
       store,
       demo: envRequestsFaux(),
       describeAgents: agentsFor,
+      extensions: extensionHost,
       getSettings: () => ensureSettings(),
       grokAuth,
     });
@@ -981,6 +984,12 @@ async function routeApi(req, res, url) {
     const cid = decodeURIComponent(match[1]);
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
+    if (kernelApi) {
+      const body = await readBody(req);
+      const patched = await kernelApi.patchConversation(cid, body);
+      sendJson(res, patched.status, patched.body);
+      return;
+    }
     const live = liveStatus(orch, conv);
     if (live.status === 'running' || live.status === 'recovering' || live.status === 'paused') {
       sendJson(res, 409, { error: 'err_role_busy', status: live.status });
