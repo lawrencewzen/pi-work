@@ -22,10 +22,14 @@ export function validateRole(obj) {
       }
     }
   }
-  if (obj.model != null && typeof obj.model !== 'string') errors.push('model must be a string');
+  let model;
+  if (typeof obj.model === 'string') {
+    model = obj.model.trim();
+    if (!model) model = undefined;
+  } else if (obj.model != null) errors.push('model must be a string');
   if (errors.length) return { ok: false, errors };
   const value = { id: obj.id, name: obj.name, systemPrompt: obj.systemPrompt, tools };
-  if (obj.model != null) value.model = obj.model;
+  if (model) value.model = model;
   return { ok: true, value };
 }
 
@@ -34,8 +38,9 @@ export function validatePipeline(obj, roles = []) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     return { ok: false, errors: ['pipeline must be an object'] };
   }
-  if (typeof obj.id !== 'string' || obj.id.length === 0) errors.push('invalid id');
+  if (typeof obj.id !== 'string' || !ROLE_ID.test(obj.id)) errors.push('invalid id');
   if (typeof obj.name !== 'string' || obj.name.length === 0) errors.push('invalid name');
+  const steps = [];
   if (!Array.isArray(obj.steps) || obj.steps.length === 0) errors.push('steps must be a non-empty array');
   else if (obj.steps.length > 20) errors.push('steps must have at most 20 items');
   else {
@@ -47,8 +52,13 @@ export function validatePipeline(obj, roles = []) {
       }
       if (!roleIds.has(step.role)) errors.push(`unknown role: ${step.role}`);
       if (step.input != null && !INPUTS.has(step.input)) errors.push(`invalid input: ${step.input}`);
+      if (!errors.length) {
+        const next = { role: step.role };
+        if (step.input) next.input = step.input;
+        steps.push(next);
+      }
     }
   }
   if (errors.length) return { ok: false, errors };
-  return { ok: true, value: { id: obj.id, name: obj.name, steps: obj.steps } };
+  return { ok: true, value: { id: obj.id, name: obj.name, steps } };
 }

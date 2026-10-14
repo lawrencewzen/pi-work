@@ -1,6 +1,7 @@
 import { t, tPlural, getLocale, setLocale, applyI18n, translations } from './i18n.js';
 import { composerContextText } from './usage.js';
 import { composerAgentPresentation, resolveDispatchModel } from './agent-chip.js';
+import { renderWorkflowTab, handleWorkflowAction, filterWorkflow, pipelineTitle, captureWorkflowDraft } from './workflow-settings.js';
 
 // Application State
 const state = {
@@ -31,6 +32,9 @@ const state = {
   appearance: localStorage.getItem('piwork_appearance') || 'light',
   fontSize: localStorage.getItem('piwork_font_size') || 'md',
   activeSettingsTab: 'general',
+  workflowSection: 'roles',
+  workflowEditor: null,
+  workflowQuery: '',
   expandedTools: new Set(),
   expandedSubagents: new Set(),
   workspaceTree: [],
@@ -302,6 +306,7 @@ const ROLE_LABEL_KEYS = {
   coder: 'role_coder',
   tester: 'role_tester',
   auditor: 'role_auditor',
+  planner: 'role_planner',
   default: 'role_default',
   agent: 'agent_name',
 };
@@ -1906,10 +1911,12 @@ function localizeToolStatus(status) {
 function pipelineOptionLabel(pipe) {
   const steps = Array.isArray(pipe?.steps) ? pipe.steps : [];
   const chain = steps.map((s) => localizeRoleLabel(s?.role || '')).filter(Boolean).join(' → ');
-  let title = String(pipe?.name || pipe?.id || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
-  if (pipe?.id === 'demo' || /^demo$/i.test(title)) title = t('pipeline_demo_title');
-  else title = title.replace(/\b(coder|tester|auditor|default)\b/gi, (m) => localizeRoleLabel(m));
+  const title = pipelineTitle(pipe, { t, localizeRoleLabel });
   return chain ? `${title} (${chain})` : title;
+}
+
+function workflowCtx() {
+  return { state, t, escapeHtml, api, showToast, localizeRoleLabel, render: renderSettingsModal };
 }
 
 function pluginSourceLabel(src) {
@@ -2327,17 +2334,17 @@ export async function cancelGrokLogin() {
 }
 
 export function openSettings(tab = 'general') {
-  state.activeSettingsTab = tab;
-  renderSettingsModal();
-  if (tab === 'models') refreshGrokStatus();
+  setSettingsTab(tab);
 }
 
 export function closeSettings() {
+  state.workflowEditor = null;
   const ov = document.getElementById('settings-overlay');
   if (ov) ov.style.display = 'none';
 }
 
 export function renderSettingsModal() {
+  captureWorkflowDraft(workflowCtx());
   let ov = document.getElementById('settings-overlay');
   if (!ov) {
     ov = document.createElement('div');
@@ -2357,6 +2364,7 @@ export function renderSettingsModal() {
         <div class="${tTab === 'models' ? 'on' : ''}" data-action="set-settings-tab" data-tab="models">${escapeHtml(t('settings_tab_models'))}</div>
         <div class="${tTab === 'plugins' ? 'on' : ''}" data-action="set-settings-tab" data-tab="plugins">${escapeHtml(t('settings_tab_plugins'))}</div>
         <div class="${tTab === 'skills' ? 'on' : ''}" data-action="set-settings-tab" data-tab="skills">${escapeHtml(t('settings_tab_skills'))}</div>
+        <div class="${tTab === 'workflow' ? 'on' : ''}" data-action="set-settings-tab" data-tab="workflow" data-testid="settings-tab-workflow">${escapeHtml(t('settings_tab_workflow'))}</div>
         <div class="${tTab === 'about' ? 'on' : ''}" data-action="set-settings-tab" data-tab="about">${escapeHtml(t('settings_tab_about'))}</div>
       </div>
       <div class="sm-body">
@@ -2510,6 +2518,10 @@ function renderSettingsTabContent(tab) {
     `;
   }
 
+  if (tab === 'workflow') {
+    return renderWorkflowTab(workflowCtx());
+  }
+
   if (tab === 'about') {
     const pkg = state.about || {};
     return `
@@ -2606,6 +2618,19 @@ export function setSettingsTab(tab) {
   state.activeSettingsTab = tab;
   renderSettingsModal();
   if (tab === 'models') refreshGrokStatus();
+  if (tab === 'workflow') refreshWorkflowLists();
+}
+
+async function refreshWorkflowLists() {
+  const stamp = (state.workflowRefresh = (state.workflowRefresh || 0) + 1);
+  try {
+    const [roles, pipelines] = await Promise.all([api('/api/roles'), api('/api/pipelines')]);
+    if (stamp !== state.workflowRefresh) return;
+    state.roles = roles;
+    state.pipelines = pipelines;
+  } catch { /* keep existing lists */ }
+  if (stamp !== state.workflowRefresh) return;
+  if (state.activeSettingsTab === 'workflow' && !state.workflowEditor) renderSettingsModal();
 }
 
 function applyChromeLabels() {
@@ -2915,7 +2940,7 @@ export async function openNewConversationModal() {
       </div>
       <div class="form-group">
         <label>${escapeHtml(t('conv_role_pipeline_label'))}</label>
-        <select id="conv-role-pipeline">
+        <select id="conv-role-pipeline" data-testid="conversation-role-pipeline">
           <option value="">${escapeHtml(t('conv_default_agent'))}</option>
           ${roleOpts ? `<optgroup label="${escapeHtml(t('conv_roles_group'))}">${roleOpts}</optgroup>` : ''}
           ${pipeOpts ? `<optgroup label="${escapeHtml(t('conv_pipelines_group'))}">${pipeOpts}</optgroup>` : ''}
@@ -3350,8 +3375,13 @@ document.addEventListener('click', (e) => {
       pickDispatchTarget(actionEl);
       break;
     default:
+      handleWorkflowAction(action, actionEl, workflowCtx());
       break;
   }
+});
+
+document.addEventListener('submit', (e) => {
+  if (e.target?.id === 'workflow-form') e.preventDefault();
 });
 
 document.addEventListener('input', (e) => {
@@ -3359,6 +3389,8 @@ document.addEventListener('input', (e) => {
     filterPlugins(e.target.value);
   } else if (e.target.id === 'skill-search-input') {
     filterSkills(e.target.value);
+  } else if (e.target.id === 'workflow-search-input') {
+    filterWorkflow(e.target.value, workflowCtx());
   } else if (e.target.id === 'cfg-base-url' || e.target.id === 'cfg-api-key') {
     checkModelKeyWarning();
   }

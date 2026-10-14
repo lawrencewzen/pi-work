@@ -20,6 +20,7 @@ export async function loadRoleTemplates(store, dir) {
     }
     const v = validateRole(obj);
     if (!v.ok) continue;
+    if (await store.hasCatalogTombstone('role', v.value.id)) continue;
     const existing = await store.getRole(v.value.id);
     if (!existing) await store.createRole(v.value);
     loaded.push(v.value.id);
@@ -46,6 +47,7 @@ export async function loadPipelineTemplates(store, dir) {
     }
     const v = validatePipeline(obj, roles);
     if (!v.ok) continue;
+    if (await store.hasCatalogTombstone('pipeline', v.value.id)) continue;
     const existing = await store.getPipeline(v.value.id);
     if (!existing) await store.createPipeline(v.value);
     loaded.push(v.value.id);
