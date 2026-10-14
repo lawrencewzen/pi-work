@@ -4,6 +4,7 @@ export const translations = {
   zh: {
     app_name: 'pi-work',
     app_badge: 'workbench',
+    demo_model_badge: '演示模型',
     workspaces_and_chats: '工作区 & 对话',
     workspace_count: '{n} 个工作区',
     workspace_count_one: '{n} 个工作区',
@@ -233,6 +234,7 @@ export const translations = {
     err_workspace_failed: '创建工作区失败',
     err_select_workspace: '请先选择或创建一个工作区',
     err_send: '发送失败',
+    err_no_model: '未连接模型：请先在 设置 → 模型 登录 Grok',
     err_send_blocked: '发送失败：这条对话没有开始新的运行',
     err_pause: '暂停失败',
     err_resume: '继续失败',
@@ -263,6 +265,7 @@ export const translations = {
   en: {
     app_name: 'pi-work',
     app_badge: 'workbench',
+    demo_model_badge: 'Demo model',
     workspaces_and_chats: 'Workspaces & chats',
     workspace_count: '{n} workspaces',
     workspace_count_one: '{n} workspace',
@@ -492,6 +495,7 @@ export const translations = {
     err_workspace_failed: 'Failed to create workspace',
     err_select_workspace: 'Please select or create a workspace first',
     err_send: 'Send failed',
+    err_no_model: 'No model connected: sign in to Grok under Settings → Models',
     err_send_blocked: 'Send failed: this conversation did not start a run',
     err_pause: 'Pause failed',
     err_resume: 'Resume failed',

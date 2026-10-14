@@ -11,7 +11,7 @@ test('retryable errors', () => {
     assert.equal(p().shouldRetry(e, 1), true, JSON.stringify(e));
 });
 test('non-retryable errors', () => {
-  for (const e of [err({ status: 400 }), err({ status: 401 }), err({ status: 403 }), err({ code: 'E_SANDBOX' }), err({ code: 'E_ABORTED' })])
+  for (const e of [err({ status: 400 }), err({ status: 401 }), err({ status: 403 }), err({ code: 'E_SANDBOX' }), err({ code: 'E_ABORTED' }), err({ code: 'E_NO_MODEL' })])
     assert.equal(p().shouldRetry(e, 1), false);
 });
 test('attempt limit', () => {

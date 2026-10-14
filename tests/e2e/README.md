@@ -24,6 +24,7 @@
 | [conversation-control.md](conversation-control.md) | 暂停、继续、终止，终止后再次发送 |
 | [running-overview.md](running-overview.md) | 运行中概览 |
 | [grok-login.md](grok-login.md) | Grok 登录与模型设置 |
+| [model-connection.md](model-connection.md) | 未连接模型时报错，登录后真实回复，演示模式有徽章 |
 | [skills.md](skills.md) | 新建 Skill、开关、启用后影响回复 |
 | [plugins.md](plugins.md) | Echo 列表、开关、调用工具、空导入被拒绝 |
 | [appearance.md](appearance.md) | 语言与主题 |
