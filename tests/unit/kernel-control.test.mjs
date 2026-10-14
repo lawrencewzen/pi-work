@@ -195,6 +195,11 @@ async function waitFor(base, id, pred, timeoutMs = 20000) {
   throw new Error(`conversation ${id} timed out: ${JSON.stringify(body)}`);
 }
 
+function nodeScript(name) {
+  if (process.platform === 'win32') return `node ${name}`;
+  return `"${process.execPath}" ${name}`;
+}
+
 async function writeScript(dataDir, name, turns) {
   const file = path.join(dataDir, name);
   await writeFile(file, JSON.stringify({ turns }));
@@ -314,10 +319,9 @@ test('retry alignment keeps terminated and blocks 401 even when the text says ti
 
 test('pause lets the in-progress write finish and resume runs the next step', { timeout: 40_000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kpause-'));
-  const node = process.execPath;
   const script = await writeScript(dataDir, 'pause.json', [
-    { tool: 'bash', args: { command: `"${node}" slow-write.cjs` } },
-    { tool: 'bash', args: { command: `"${node}" next-write.cjs` } },
+    { tool: 'bash', args: { command: nodeScript('slow-write.cjs') } },
+    { tool: 'bash', args: { command: nodeScript('next-write.cjs') } },
     { text: 'paused-done' },
   ]);
   const srv = await startServer({
@@ -368,9 +372,8 @@ test('pause lets the in-progress write finish and resume runs the next step', { 
 
 test('stop is terminal, resume stays stopped, and a later message can run', { timeout: 40_000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kstop-'));
-  const node = process.execPath;
   const script = await writeScript(dataDir, 'stop.json', [
-    { tool: 'bash', args: { command: `"${node}" stop-write.cjs` } },
+    { tool: 'bash', args: { command: nodeScript('stop-write.cjs') } },
     { text: 'after-stop' },
   ]);
   const srv = await startServer({
