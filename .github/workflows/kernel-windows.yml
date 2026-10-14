@@ -31,3 +31,5 @@ jobs:
         run: node --test tests/unit/kernel-roles.test.mjs
       - name: Pi Durable usage chip and plugin reload tests
         run: node --test tests/unit/kernel-usage-plugins.test.mjs
+      - name: Pi Durable subagent tests
+        run: node --test tests/unit/kernel-subagents.test.mjs

@@ -29,6 +29,7 @@ import {
 } from './archive.mjs';
 import { installPluginReload } from './plugins.mjs';
 import { createRoleHost, installRoleExtensions } from './roles.mjs';
+import { createSubagentExtension, createSubagentHost, maxSubagents } from './subagents.mjs';
 import { createWorkspaceExtension, scriptedDemoStep, toolsForRole } from './tools.mjs';
 import { installUsageExtension } from './usage.mjs';
 
@@ -129,9 +130,11 @@ export async function openConversationKernel({
   const faux = demo === true || explicitDemo(env);
   const models = createModels();
   if (faux) installDemo(models, env);
-  const routes = faux ? null : createKernelModels({ models, getSettings, grokAuth, env });
+  const modelRoutes = createKernelModels({ models, getSettings, grokAuth, env });
+  const routes = faux ? null : modelRoutes;
   const registry = createRegistry();
   const roleBridge = {};
+  const subagentApi = {};
   const watches = new Map();
   const tails = new Map();
   const listeners = new Map();
@@ -169,6 +172,14 @@ export async function openConversationKernel({
   installArchiveExtension(registry);
   installUsageExtension(registry);
   installPluginReload(registry, roleBridge);
+  const subagentExtension = createSubagentExtension({
+    listRoles: () => store.listRoles(),
+    prepareChild: (role, parent) => subagentApi.prepareChild(role, parent),
+    maxConcurrent: () => maxSubagents(env),
+    onChild: (parentId, childId, roleId) => subagentApi.onChild?.(parentId, childId, roleId),
+  });
+  roleBridge.extraTools = () => subagentExtension.tools || [];
+  registry.install(subagentExtension);
   const kernel = await openKernel({ dataDir, models, registry });
   const { harness, context } = kernel;
 
@@ -201,9 +212,13 @@ export async function openConversationKernel({
   }
 
   async function deliver(cid, ev) {
-    if (roles && ev.event === 'status' && ev.data?.status === 'done') {
-      const action = await roles.onRunFinished(cid);
-      if (action !== 'continue') return;
+    if (ev.event === 'status' && ev.data?.status === 'done') {
+      const conv = await store.getConversation(cid);
+      if (conv?.hostMark === 'stopped') return;
+      if (roles) {
+        const action = await roles.onRunFinished(cid);
+        if (action !== 'continue') return;
+      }
     }
     if (ev.event === 'status') await emitStatus(cid, ev.data.status, omitStatus(ev.data));
     else await emit(cid, ev.event, ev.data);
@@ -211,6 +226,7 @@ export async function openConversationKernel({
 
   async function emitStatus(cid, status, extra = {}) {
     const conv = await store.getConversation(cid);
+    if (conv?.hostMark === 'stopped' && status !== 'stopped') return;
     if (status === 'running' && conv?.hostMark === 'recovering') return;
     const patch = { status };
     if (status === 'done' || status === 'failed') patch.hostMark = null;
@@ -300,6 +316,7 @@ export async function openConversationKernel({
   }
 
   async function settleStored(row) {
+    if (row.hostMark === 'stopped' || row.status === 'stopped') return;
     if (await unfinished(row.harnessId)) {
       await store.updateConversation(row.id, { status: 'recovering', hostMark: 'recovering' });
       await emitStatus(row.id, 'recovering', { autoContinues: row.autoContinues || 0 });
@@ -335,10 +352,45 @@ export async function openConversationKernel({
     resolveModel,
   });
 
+  function cidFor(harnessId) {
+    const wanted = Number(harnessId);
+    for (const [cid, watch] of watches) {
+      if (Number(watch.harnessId) === wanted) return cid;
+    }
+    return null;
+  }
+
+  async function resolveChildModel(role) {
+    const model = await modelRoutes.modelFor({ roleId: role?.id });
+    if (model) return model;
+    if (faux) return undefined;
+    return null;
+  }
+
+  const subagents = createSubagentHost({
+    store,
+    harness,
+    context,
+    readTranscript,
+    emit,
+    watchEvents,
+    resolveModel: resolveChildModel,
+    collectTools: (role, options) => roles.collectTools(role, options),
+    cidFor,
+  });
+  subagentApi.prepareChild = subagents.prepareChild;
+  subagentApi.onChild = subagents.onChild;
+  const resolveParentRole = roleBridge.resolveRole;
+  roleBridge.resolveRole = async (harnessId) => (
+    await subagents.roleFor(harnessId) || resolveParentRole(harnessId)
+  );
+
   const stored = await store.listKernelConversations();
   await roles.seed(stored);
+  await subagents.seed(stored);
   for (const row of stored) await attach(row);
   for (const row of stored) await settleStored(row);
+  await modelRoutes.warm();
   harness.resume();
   for (const row of stored) await roles.reconcile(row);
 
@@ -372,12 +424,28 @@ export async function openConversationKernel({
         try { await watch.stream.stop(); } catch { /* already stopped */ }
       }
       watches.clear();
+      await subagents.close();
       await kernel.close();
     },
     async reloadPlugins() {
       if (roles?.reloadPlugins) await roles.reloadPlugins();
     },
     createConversation,
+    listSubagents(conv) {
+      return subagents.listSubagents(conv).then((agents) => agents.map((agent) => {
+        const { harnessId, ...rest } = agent;
+        return rest;
+      }));
+    },
+    childMessages(cid, agentId) {
+      return subagents.childMessages(cid, agentId);
+    },
+    async stopConversation(cid) {
+      const conv = await store.getConversation(cid);
+      if (!conv) return { status: 404, body: { error: 'conversation not found' } };
+      if (isArchivedConversation(conv)) return archivedMutation();
+      return subagents.stopConversation(cid);
+    },
     async present(conv, { includeMessages = false } = {}) {
       if (isArchivedConversation(conv)) {
         const messages = includeMessages ? await store.getMessages(conv.id) : undefined;

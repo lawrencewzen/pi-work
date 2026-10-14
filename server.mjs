@@ -934,6 +934,16 @@ async function routeApi(req, res, url) {
     return;
   }
 
+  match = p.match(/^\/api\/conversations\/([^/]+)\/agents\/([^/]+)\/messages$/);
+  if (match && m === 'GET') {
+    if (!kernelApi) { sendJson(res, 404, { error: 'not found' }); return; }
+    const cid = decodeURIComponent(match[1]);
+    const aid = decodeURIComponent(match[2]);
+    const result = await kernelApi.childMessages(cid, aid);
+    sendJson(res, result.status, result.body);
+    return;
+  }
+
   match = p.match(/^\/api\/conversations\/([^/]+)$/);
   if (match && m === 'GET') {
     const cid = decodeURIComponent(match[1]);
@@ -942,7 +952,10 @@ async function routeApi(req, res, url) {
     if (kernelApi) {
       const live = await kernelApi.present(conv, { includeMessages: true });
       const messages = live.messages;
-      const agents = await agentsFor(live, messages);
+      const agents = [
+        ...(await agentsFor(live, messages)),
+        ...(await kernelApi.listSubagents(live)),
+      ];
       const context = presentContext(live.usage);
       const llmError = await lastLlmError(cid, live.status);
       sendJson(res, 200, {
@@ -1100,6 +1113,11 @@ async function routeApi(req, res, url) {
     if (kernelApi && isArchivedConversation(conv)) {
       const blocked = archivedMutation();
       sendJson(res, blocked.status, blocked.body);
+      return;
+    }
+    if (kernelApi && action === 'stop') {
+      const stopped = await kernelApi.stopConversation(cid);
+      sendJson(res, stopped.status, stopped.body);
       return;
     }
     const result = await orch[action](cid);

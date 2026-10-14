@@ -145,8 +145,16 @@ export function createRoleHost({
     return role;
   }
 
-  function toolsFor(role) {
-    return plugins.toolsFor(role, toolsForRole(role));
+  function toolsFor(role, { dispatch = true } = {}) {
+    const tools = plugins.toolsFor(role, toolsForRole(role));
+    if (!dispatch || typeof bridge?.extraTools !== 'function') return tools;
+    const have = new Set(tools.map((tool) => tool.name));
+    for (const tool of bridge.extraTools() || []) {
+      if (!tool?.name || have.has(tool.name)) continue;
+      tools.push(tool);
+      have.add(tool.name);
+    }
+    return tools;
   }
 
   async function configure(conv, role) {
@@ -408,6 +416,10 @@ export function createRoleHost({
     remember,
     reloadPlugins,
     resolveRole,
+    async collectTools(role, options) {
+      await plugins.refresh();
+      return toolsFor(role, options);
+    },
     annotate,
     emitAgent,
     pipelinePending,
