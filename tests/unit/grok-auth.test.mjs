@@ -351,12 +351,19 @@ test('client version prefers grok --version, else a current default, and keeps t
   assert.equal(grokVersionAtLeast(grokClientVersion({}), GROK_CLIENT_VERSION_MIN), true);
 });
 
-test('chat runtime prefers a grok session unless faux is explicit', () => {
+test('chat runtime uses a real model when one is connected, and faux only when asked', () => {
   assert.equal(selectChatRuntime('faux', { hasSession: true, hasApiKey: true }), 'faux');
   assert.equal(selectChatRuntime('openai', { hasSession: false }), 'openai');
   assert.equal(selectChatRuntime('', { hasSession: true }), 'openai');
   assert.equal(selectChatRuntime(undefined, { hasApiKey: true }), 'openai');
-  assert.equal(selectChatRuntime('', {}), 'faux');
+  assert.equal(selectChatRuntime('', { hasBaseUrl: true }), 'openai');
+  assert.equal(selectChatRuntime('', { llmApi: 'faux' }), 'faux');
+  assert.equal(selectChatRuntime('', { llmApi: 'faux', hasSession: true }), 'faux');
+  assert.equal(selectChatRuntime('', { fauxScript: true }), 'faux');
+  assert.equal(selectChatRuntime('openai', { fauxScript: true, llmApi: 'faux' }), 'openai');
+  assert.equal(selectChatRuntime('', {}), 'none');
+  assert.equal(selectChatRuntime(undefined, {}), 'none');
+  assert.equal(selectChatRuntime('', { llmApi: 'openai-completions' }), 'none');
 });
 
 test('settings do not persist a grok blob', () => {

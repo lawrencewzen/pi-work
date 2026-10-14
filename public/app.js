@@ -855,6 +855,11 @@ export async function refreshConversationMeta(cid) {
     }
     if (conv.autoContinues != null) state.activeConversationData.autoContinues = conv.autoContinues;
     if (conv.status) state.activeConversationData.status = conv.status;
+    if (conv.status === 'failed') {
+      if (conv.llmError) state.activeConversationData.llmError = conv.llmError;
+    } else if (conv.status && conv.status !== 'recovering') {
+      state.activeConversationData.llmError = null;
+    }
     if (conv.lastCheckpointAt) state.activeConversationData.lastCheckpointAt = conv.lastCheckpointAt;
     if (conv.usage) state.activeConversationData.usage = conv.usage;
     if (conv.contextWindow != null) state.activeConversationData.contextWindow = conv.contextWindow;
@@ -1084,7 +1089,7 @@ export function connectSSE(cid) {
       state.activeConversationData.llmError = { code, message };
       renderStatusBar();
       renderChatThread();
-      if (message) showToast(message);
+      if (message || code === 'E_NO_MODEL') showToast(code === 'E_NO_MODEL' ? 'err_no_model' : message);
     } catch { /* ignore malformed payloads */ }
   });
 }
@@ -1601,9 +1606,28 @@ export async function pickDispatchTarget(el) {
   }
 }
 
+function localizedErrorText(message, code) {
+  if (code === 'E_NO_MODEL' || message === 'err_no_model') return t('err_no_model');
+  const text = String(message || '').trim();
+  if (!text) return '';
+  return isToastKey(text) ? t(text) : text;
+}
+
+function renderDemoModelBadge() {
+  const on = state.settings?.runtime === 'faux';
+  const label = t('demo_model_badge');
+  for (const id of ['demo-model-badge', 'demo-model-chip']) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.classList.toggle('is-hidden', !on);
+    el.textContent = label;
+  }
+}
+
 export function renderStatusBar() {
   renderComposerContext();
   renderComposerAgent();
+  renderDemoModelBadge();
   const bar = document.getElementById('status-bar');
   if (!bar) return;
 
@@ -1615,7 +1639,9 @@ export function renderStatusBar() {
   const statusTextEl = document.getElementById('status-text');
   if (statusTextEl) {
     statusTextEl.textContent = statusTextStr;
-    const failedText = status === 'failed' ? String(conv?.llmError?.message || '').trim() : '';
+    const failedText = status === 'failed'
+      ? localizedErrorText(conv?.llmError?.message, conv?.llmError?.code)
+      : '';
     if (failedText) statusTextEl.title = failedText;
     else statusTextEl.removeAttribute('title');
   }
@@ -1826,12 +1852,12 @@ export function renderChatThread() {
 function llmErrorHtml(conv) {
   const err = conv?.llmError;
   if (!err) return '';
-  const message = String(err.message || '').trim();
   const code = String(err.code || '').trim();
+  const message = localizedErrorText(err.message, code);
   if (!message && !code) return '';
   return (
     `<div class="llm-error" data-testid="llm-error" role="alert">` +
-    (code ? `<div class="llm-error-code">${escapeHtml(code)}</div>` : '') +
+    (code && code !== 'E_NO_MODEL' ? `<div class="llm-error-code">${escapeHtml(code)}</div>` : '') +
     (message ? `<div class="llm-error-text">${escapeHtml(message)}</div>` : '') +
     `</div>`
   );

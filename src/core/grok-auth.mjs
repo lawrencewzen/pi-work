@@ -456,14 +456,39 @@ export function actionFromGrokResponses(json) {
   return attachUsage({ type: 'text', text }, json?.usage);
 }
 
+export const UNCONFIGURED_MODEL_CODE = 'E_NO_MODEL';
+export const UNCONFIGURED_MODEL_MESSAGE = 'err_no_model';
+
+export function unconfiguredModelError() {
+  const err = new Error(UNCONFIGURED_MODEL_MESSAGE);
+  err.code = UNCONFIGURED_MODEL_CODE;
+  return err;
+}
+
+function namedRuntime(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'faux' || text === 'openai') return text;
+  return '';
+}
+
 /**
- * Explicit `faux` / `openai` wins. Otherwise a usable Grok session or API key
- * selects the real client so sign-in works without restarting into faux.
+ * A scripted model is used only when it is requested: `PI_WORK_LLM=faux`,
+ * `LLM_API=faux`, or `PI_WORK_FAUX_SCRIPT`. Explicit `openai` forces the real
+ * client. Otherwise a Grok session, API key, or base URL selects that client.
+ * With none of those, return `none` so the server refuses the turn.
  */
-export function selectChatRuntime(explicit, { hasSession = false, hasApiKey = false } = {}) {
-  if (explicit === 'faux' || explicit === 'openai') return explicit;
-  if (hasSession || hasApiKey) return 'openai';
-  return 'faux';
+export function selectChatRuntime(explicit, {
+  hasSession = false,
+  hasApiKey = false,
+  hasBaseUrl = false,
+  llmApi = '',
+  fauxScript = false,
+} = {}) {
+  const chosen = namedRuntime(explicit);
+  if (chosen) return chosen;
+  if (namedRuntime(llmApi) === 'faux' || fauxScript) return 'faux';
+  if (hasSession || hasApiKey || hasBaseUrl) return 'openai';
+  return 'none';
 }
 
 async function readStore(file) {

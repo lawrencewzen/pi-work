@@ -23,6 +23,7 @@ import { createOpenAILLM } from './src/llm/openai.mjs';
 import {
   createGrokAuth,
   selectChatRuntime,
+  unconfiguredModelError,
   grokProxyBase,
   grokProxyHeaders,
   GROK_SESSION_MODEL,
@@ -126,6 +127,27 @@ async function readBody(req, limit = 2_000_000) {
   }
 }
 
+function envRequestsFaux() {
+  return selectChatRuntime(process.env.PI_WORK_LLM, {
+    llmApi: process.env.LLM_API,
+    fauxScript: Boolean(String(process.env.PI_WORK_FAUX_SCRIPT || '').trim()),
+  }) === 'faux';
+}
+
+async function resolveChatKind() {
+  if (envRequestsFaux()) return 'faux';
+  if (String(process.env.PI_WORK_LLM || '').trim().toLowerCase() === 'openai') return 'openai';
+  const [grok, settings] = await Promise.all([
+    grokAuth.status().catch(() => ({ signedIn: false })),
+    store.getSettings(),
+  ]);
+  return selectChatRuntime('', {
+    hasSession: Boolean(grok?.signedIn),
+    hasApiKey: Boolean(String(settings?.apiKey || process.env.LLM_API_KEY || '').trim()),
+    hasBaseUrl: Boolean(String(settings?.baseUrl || process.env.LLM_BASE_URL || '').trim()),
+  });
+}
+
 async function settingsResponse(stored) {
   const body = publicSettings(stored);
   try {
@@ -133,7 +155,22 @@ async function settingsResponse(stored) {
   } catch {
     body.grok = { signedIn: false, account: null, email: null, expiresAt: null, authMode: null, source: null, pending: null };
   }
+  body.runtime = await resolveChatKind();
   return body;
+}
+
+async function lastLlmError(cid, status) {
+  if (status !== 'failed') return null;
+  const events = await store.getEvents(cid);
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const ev = events[i];
+    if (ev?.event !== 'error') continue;
+    const message = String(ev.data?.message || '').trim();
+    const code = String(ev.data?.code || '').trim();
+    if (!message && !code) continue;
+    return { code: code || 'E_LLM', message };
+  }
+  return null;
 }
 
 function sendGrokError(res, err) {
@@ -274,25 +311,17 @@ async function llmConfig({ roleId, model: modelOverride } = {}) {
 }
 
 const openaiLlm = createOpenAILLM({ getConfig: llmConfig });
-const fauxLlm = process.env.PI_WORK_FAUX_SCRIPT
-  ? loadFauxLLM(process.env.PI_WORK_FAUX_SCRIPT)
-  : createFauxLLM({ turns: [] });
+const fauxScriptPath = String(process.env.PI_WORK_FAUX_SCRIPT || '').trim();
+const fauxLlm = envRequestsFaux()
+  ? (fauxScriptPath ? loadFauxLLM(fauxScriptPath) : createFauxLLM({ turns: [] }))
+  : null;
 
 const llm = {
   async next(req) {
-    const explicit = process.env.PI_WORK_LLM || '';
-    let kind = explicit === 'faux' || explicit === 'openai' ? explicit : '';
-    if (!kind) {
-      const [grok, settings] = await Promise.all([
-        grokAuth.status().catch(() => ({ signedIn: false })),
-        store.getSettings(),
-      ]);
-      kind = selectChatRuntime('', {
-        hasSession: Boolean(grok?.signedIn),
-        hasApiKey: Boolean(settings?.apiKey || process.env.LLM_API_KEY),
-      });
-    }
-    return (kind === 'openai' ? openaiLlm : fauxLlm).next(req);
+    const kind = await resolveChatKind();
+    if (kind === 'faux' && fauxLlm) return fauxLlm.next(req);
+    if (kind === 'openai') return openaiLlm.next(req);
+    throw unconfiguredModelError();
   },
 };
 
@@ -560,6 +589,7 @@ async function routeApi(req, res, url) {
     const messages = await store.getMessages(cid);
     const agents = await agentsFor(live, messages);
     const context = presentContext(live.usage);
+    const llmError = await lastLlmError(cid, live.status);
     sendJson(res, 200, {
       id: live.id,
       title: live.title,
@@ -576,6 +606,7 @@ async function routeApi(req, res, url) {
       usage: context.usage,
       contextWindow: context.contextWindow,
       contextLabel: context.contextLabel,
+      ...(llmError ? { llmError } : {}),
     });
     return;
   }

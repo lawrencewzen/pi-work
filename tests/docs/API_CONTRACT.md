@@ -8,12 +8,15 @@
 |---|---|---|
 | `PORT` | 监听端口 | 随机 |
 | `PI_WORK_DATA_DIR` | SQLite/检查点目录 | 临时目录 |
-| `PI_WORK_LLM` | `openai` \| `faux` | `faux` |
-| `PI_WORK_FAUX_SCRIPT` | faux 模型脚本 JSON 路径（见 §6） | fixtures/*.json |
+| `PI_WORK_LLM` | `openai` \| `faux`。`faux` 只在显式要求时使用 | 测试设 `faux` |
+| `PI_WORK_FAUX_SCRIPT` | faux 模型脚本 JSON 路径（见 §6）。设置后即视为要求演示模型 | fixtures/*.json |
+| `LLM_API` | `faux` 时使用演示模型；其他值不单独打开演示模型 | 测试可设 `faux` |
 | `PI_WORK_RETRY_BASE_MS` / `PI_WORK_RETRY_MAX` | 续跑退避 | 50 / 5 |
 | `PI_WORK_STALL_MS` | 卡住判定 | 2000 |
 | `PI_WORK_TOKEN` | 可选 Bearer 鉴权；设置后所有 /api 需 `Authorization: Bearer` | 不设 |
 启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。`GET /api/health` → `{ok:true}`。
+
+未设置 `PI_WORK_LLM=faux`、`LLM_API=faux`、`PI_WORK_FAUX_SCRIPT` 时，没有 Grok 会话、API Key、Base URL 就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。
 
 ## 2. 纯函数模块（单元测试直接 import，均为 ESM，路径相对仓库根）
 - `src/core/paths.mjs`
@@ -24,7 +27,7 @@
   - `unifiedDiff(path, oldText, newText)` → 标准 unified diff 字符串（含 `--- a/path`、`+++ b/path`、`@@`）。
 - `src/core/retry.mjs`
   - `createRetryPolicy({maxAttempts, baseMs, maxMs, factor=2})` → `{ shouldRetry(err, attempt), delayMs(attempt) }`。
-  - 可重试：`err.code` ∈ `ETIMEDOUT, ECONNRESET, E_STREAM_CUT, E_EMPTY_OUTPUT` 或 `err.status` 为 429/5xx；不可重试：400/401/403、`E_SANDBOX`、`E_ABORTED`。`attempt` 从 1 起，`attempt >= maxAttempts` 一律 false。
+  - 可重试：`err.code` ∈ `ETIMEDOUT, ECONNRESET, E_STREAM_CUT, E_EMPTY_OUTPUT` 或 `err.status` 为 429/5xx；不可重试：400/401/403、`E_SANDBOX`、`E_ABORTED`、`E_NO_MODEL`。`attempt` 从 1 起，`attempt >= maxAttempts` 一律 false。
   - `delayMs(n) = min(maxMs, baseMs * factor^(n-1))`，无抖动（便于测试）。
   - `decideAutoContinue({lastProgressAt, now, stallMs, status, autoContinues, maxAutoContinues})` → `'continue' | 'wait' | 'give_up'`：仅 `status==='running'` 且超时才 continue；次数用尽 give_up；其余 wait。
 - `src/core/sse.mjs`

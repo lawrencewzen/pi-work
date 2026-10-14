@@ -1,5 +1,5 @@
 const RETRYABLE_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'E_STREAM_CUT', 'E_EMPTY_OUTPUT']);
-const NON_RETRYABLE_CODES = new Set(['E_SANDBOX', 'E_ABORTED']);
+const NON_RETRYABLE_CODES = new Set(['E_SANDBOX', 'E_ABORTED', 'E_NO_MODEL']);
 const NON_RETRYABLE_STATUS = new Set([400, 401, 403]);
 
 function isRetryableError(err) {
