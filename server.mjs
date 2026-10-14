@@ -44,6 +44,7 @@ import {
 } from './src/core/auth.mjs';
 import { resolveAllowedWorkspacePath, defaultWorkspaceRoot } from './src/core/workspace-guard.mjs';
 import { acquireDataDirLock } from './src/core/lock.mjs';
+import { presentContext } from './src/core/usage.mjs';
 import fs from 'node:fs/promises';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -152,6 +153,7 @@ function liveStatus(orch, conv) {
       currentStep: s.currentStep,
       lastCheckpointAt: s.lastCheckpointAt,
       pipelineStep: s.pipelineStep ?? conv.pipelineStep,
+      usage: s.usage || conv.usage || null,
     };
   }
   return conv;
@@ -548,6 +550,7 @@ async function routeApi(req, res, url) {
     const live = liveStatus(orch, conv);
     const messages = await store.getMessages(cid);
     const agents = await agentsFor(live, messages);
+    const context = presentContext(live.usage);
     sendJson(res, 200, {
       id: live.id,
       title: live.title,
@@ -558,6 +561,9 @@ async function routeApi(req, res, url) {
       currentStep: live.currentStep,
       messages,
       agents,
+      usage: context.usage,
+      contextWindow: context.contextWindow,
+      contextLabel: context.contextLabel,
     });
     return;
   }

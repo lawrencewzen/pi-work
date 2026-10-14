@@ -44,7 +44,7 @@
 | `GET /workspaces` | | `[{id,name,path}]` |
 | `POST /workspaces/:wid/conversations` | `{title?, roleId?, pipelineId?}` | `201 {id, workspaceId, title, status:'idle'}` |
 | `GET /workspaces/:wid/conversations?q=` | | 列表，按更新时间倒序 |
-| `GET /conversations/:cid` | | `{id,title,status,autoContinues,lastCheckpointAt,currentStep,messages:[...]}` |
+| `GET /conversations/:cid` | | `{id,title,status,autoContinues,lastCheckpointAt,currentStep,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—` |
 | `POST /conversations/:cid/messages` | `{text}` | `202 {runId}`，开始运行 |
 | `POST /conversations/:cid/pause` · `/resume` · `/stop` | | `200 {status}` |
 | `GET /conversations/:cid/changes` | | `[{path, added, removed, toolCallId}]`（按文件聚合） |
@@ -59,7 +59,7 @@ status 取值：`idle | running | waiting | paused | recovering | failed | done 
 
 ## 4. SSE：`GET /api/conversations/:cid/events`
 支持 `Last-Event-ID` 断线续传（id 为会话内单调递增整数）。事件：
-`status {status}` · `message.delta {messageId, text}` · `message.done {messageId}` · `tool.start {tool}` · `tool.end {tool}` · `checkpoint {at, step}` · `retry {attempt, delayMs, reason}` · `error {code, message}`。
+`status {status}` · `message.delta {messageId, text}` · `message.done {messageId}` · `tool.start {tool}` · `tool.end {tool}` · `checkpoint {at, step}` · `retry {attempt, delayMs, reason}` · `error {code, message}` · `usage {usage, contextWindow, contextLabel}`。`usage` 仅在模型响应带了 token 计数时发送；最新一次调用覆盖上一次，不把多轮相加。
 
 ## 5. 持久性/恢复语义
 - 每个工具调用完成后写检查点；工具调用有稳定 `toolCallId`，恢复时已完成的调用**不得重放**（写文件幂等：同 toolCallId 不重复执行）。
@@ -76,6 +76,7 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true}
 | `conversation-new` / `conversation-item` (+`data-id`,`data-status`) | 会话项 |
 | `status-dot` (+`data-status`) | 会话状态点 |
 | `chat-input` / `chat-send` | 输入与发送 |
+| `composer-context` | 作曲栏上下文用量（`—` 或 `1.2k / 128k`） |
 | `message` (+`data-role`) / `message-body` | 消息与渲染体（Markdown → HTML） |
 | `tool-row` (+`data-tool`,`data-path`) / `tool-row-path` / `tool-row-added` / `tool-row-removed` / `tool-row-detail` | 工具行（点击展开 detail） |
 | `status-bar` / `status-text` / `autocontinue-count` / `btn-pause` / `btn-resume` / `btn-stop` | 状态条 |

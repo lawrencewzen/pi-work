@@ -3,6 +3,7 @@ import { createRetryPolicy, decideAutoContinue } from './retry.mjs';
 import { executeTool } from '../tools/workspace.mjs';
 import { buildAgents, agentEventData, mapConvStatusToAgent } from './agents.mjs';
 import { TOOLS as TOOL_REGISTRY } from './config.mjs';
+import { normalizeUsage, presentContext } from './usage.mjs';
 
 const DEFAULT_TITLE = 'New conversation';
 
@@ -137,6 +138,7 @@ export function createOrchestrator({
       currentStep: rt.currentStep,
       pipelineStep: rt.pipelineStep,
       lastCheckpointAt: rt.lastCheckpointAt,
+      usage: rt.usage || null,
     };
   }
 
@@ -163,6 +165,7 @@ export function createOrchestrator({
         loopActive: false,
         role: null,
         pipeline: null,
+        usage: null,
       };
       runtimes.set(id, rt);
     }
@@ -241,10 +244,25 @@ export function createOrchestrator({
       pipelineId: rt.pipelineId,
       originalText: rt.originalText,
     };
+    if (rt.usage) patch.usage = rt.usage;
     for (const [k, v] of Object.entries(extra)) {
       if (v !== undefined) patch[k] = v;
     }
     await store.updateConversation(rt.id, patch);
+  }
+
+  async function hydrateUsage(rt) {
+    if (rt.usage) return;
+    const conv = await store.getConversation(rt.id);
+    if (conv?.usage) rt.usage = conv.usage;
+  }
+
+  async function recordUsage(cid, rt, raw) {
+    const usage = normalizeUsage(raw);
+    if (!usage) return;
+    rt.usage = usage;
+    await persist(rt, { usage });
+    await emit(cid, 'usage', presentContext(usage));
   }
 
   async function loadRolePipeline(rt) {
@@ -327,6 +345,7 @@ export function createOrchestrator({
     const rt = runtimes.get(cid);
     if (!rt || rt.epoch !== epoch) return;
     if (rt.status === 'stopped' || rt.status === 'paused') return;
+    await hydrateUsage(rt);
     const loopToken = {};
     rt.loopToken = loopToken;
     rt.loopActive = true;
@@ -433,6 +452,8 @@ export function createOrchestrator({
 
         if (rt.epoch !== epoch) return;
         if (rt.status === 'paused' || rt.status === 'stopped') return;
+
+        if (action?.usage) await recordUsage(cid, rt, action.usage);
 
         if (action.type === 'end') {
           // Explicit `{end:true}` faux turns consume a step so the next pipeline
@@ -749,6 +770,7 @@ export function createOrchestrator({
         rt.lastCheckpointAt = conv.lastCheckpointAt;
         rt.originalText = conv.originalText;
         rt.workspacePath = conv.workspacePath;
+        rt.usage = conv.usage || rt.usage || null;
         const msgs = await store.getMessages(conv.id);
         const lastA = [...msgs].reverse().find((m) => m.role === 'assistant');
         if (lastA?.text) rt.lastAssistantText = lastA.text;

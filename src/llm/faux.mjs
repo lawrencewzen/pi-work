@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { attachUsage } from '../core/usage.mjs';
 
 function abortError() {
   const err = new Error('aborted');
@@ -78,10 +79,10 @@ export function createFauxLLM(script = { turns: [] }) {
       }
 
       writeCursor(conversationId, i + 1);
-      if (turn.end) return { type: 'end', consumed: true };
-      if (turn.tool) return { type: 'tool', name: turn.tool, args: turn.args || {} };
-      if (turn.text != null) return { type: 'text', text: String(turn.text) };
-      return { type: 'end' };
+      if (turn.end) return attachUsage({ type: 'end', consumed: true }, turn.usage);
+      if (turn.tool) return attachUsage({ type: 'tool', name: turn.tool, args: turn.args || {} }, turn.usage);
+      if (turn.text != null) return attachUsage({ type: 'text', text: String(turn.text) }, turn.usage);
+      return attachUsage({ type: 'end' }, turn.usage);
     },
   };
 }

@@ -1,4 +1,5 @@
 import { t, tPlural, getLocale, setLocale, applyI18n, translations } from './i18n.js';
+import { composerContextText } from './usage.js';
 
 // Application State
 const state = {
@@ -849,6 +850,8 @@ export async function refreshConversationMeta(cid) {
     if (conv.autoContinues != null) state.activeConversationData.autoContinues = conv.autoContinues;
     if (conv.status) state.activeConversationData.status = conv.status;
     if (conv.lastCheckpointAt) state.activeConversationData.lastCheckpointAt = conv.lastCheckpointAt;
+    if (conv.usage) state.activeConversationData.usage = conv.usage;
+    if (conv.contextWindow != null) state.activeConversationData.contextWindow = conv.contextWindow;
     if (conv.agents) state.activeConversationData.agents = conv.agents;
     if (Array.isArray(conv.messages)) {
       const local = state.activeConversationData.messages || [];
@@ -1021,6 +1024,16 @@ export function connectSSE(cid) {
           if (state.activeFilePath) loadFileOrDiff(state.activeFilePath);
         })
         .catch(() => {});
+    } catch { /* ignore */ }
+  });
+
+  sse.addEventListener('usage', (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      if (!state.activeConversationData || state.activeConversationId !== cid) return;
+      if (data.usage) state.activeConversationData.usage = data.usage;
+      if (data.contextWindow != null) state.activeConversationData.contextWindow = data.contextWindow;
+      renderStatusBar();
     } catch { /* ignore */ }
   });
 
@@ -1428,7 +1441,14 @@ export function renderRunningOverview() {
     .join('');
 }
 
+function renderComposerContext() {
+  const el = document.getElementById('composer-context-value');
+  if (!el) return;
+  el.textContent = composerContextText(state.activeConversationData);
+}
+
 export function renderStatusBar() {
+  renderComposerContext();
   const bar = document.getElementById('status-bar');
   if (!bar) return;
 
