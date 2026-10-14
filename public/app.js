@@ -1,6 +1,16 @@
 import { t, tPlural, getLocale, setLocale, applyI18n, translations } from './i18n.js';
 import { composerContextText } from './usage.js';
 import { composerAgentPresentation, resolveDispatchModel } from './agent-chip.js';
+import {
+  renderModelsPane,
+  renderModelPop,
+  mountModelsPane,
+  handleModelsAction,
+  onModelsField,
+  onModelsToggle,
+  closeModelPop,
+  noteSettingsReloaded,
+} from './model-settings.js';
 import { renderWorkflowTab, handleWorkflowAction, filterWorkflow, pipelineTitle, captureWorkflowDraft } from './workflow-settings.js';
 
 // Application State
@@ -324,17 +334,6 @@ export function localizeRoleLabel(value) {
   return key ? t(key) : raw;
 }
 
-const PROVIDER_PRESETS = {
-  xai: { baseUrl: 'https://api.x.ai/v1', modelHint: 'grok-4' },
-  deepseek: { baseUrl: 'https://api.deepseek.com/v1', modelHint: 'deepseek-chat' },
-  openai: { baseUrl: 'https://api.openai.com/v1', modelHint: 'gpt-4o' },
-  ollama: { baseUrl: 'http://127.0.0.1:11434/v1', modelHint: 'llama3.2' },
-};
-
-function providerPreset(prov) {
-  return PROVIDER_PRESETS[prov] || PROVIDER_PRESETS.openai;
-}
-
 /** New-file hunks have an empty old side (`@@ -0,0`). */
 export function isAddedFileDiff(diffText) {
   if (!diffText) return false;
@@ -595,7 +594,6 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 export async function loadInitialData() {
   try {
     state.settings = await api('/api/settings');
-    rememberSavedSettings(state.settings);
     if (state.settings?.grok?.pending?.loginId) {
       state.grokPending = state.settings.grok.pending;
       scheduleGrokPoll(state.settings.grok.pending.interval);
@@ -1597,7 +1595,6 @@ function renderComposerContext() {
   el.textContent = composerContextText(state.activeConversationData);
 }
 
-const SESSION_MODEL = 'grok-build';
 const DISPATCH_BUSY = new Set(['running', 'recovering', 'paused']);
 
 function dispatchContext() {
@@ -1606,8 +1603,9 @@ function dispatchContext() {
     roles: state.roles,
     pipelines: state.pipelines,
     models: state.settings?.models || {},
+    sources: state.settings?.sources || [],
+    grokSignedIn: Boolean(state.settings?.grok?.signedIn),
     agentName: t('agent_name'),
-    sessionModel: state.settings?.grok?.signedIn ? SESSION_MODEL : '',
   };
 }
 
@@ -1633,7 +1631,8 @@ function modelForDispatchRole(role) {
     role,
     roleId: role?.id || '',
     models: state.settings?.models || {},
-    sessionModel: state.settings?.grok?.signedIn ? SESSION_MODEL : '',
+    sources: state.settings?.sources || [],
+    grokSignedIn: Boolean(state.settings?.grok?.signedIn),
   });
 }
 
@@ -2068,11 +2067,15 @@ function assistantLabel(m) {
 }
 
 function assistantChip(m) {
-  const rid = m?.roleId;
-  const models = state.settings?.models || {};
-  let chip = '';
-  if (rid && models[rid]) chip = models[rid];
-  else if (rid && rid !== 'default') chip = localizeRoleLabel(rid);
+  const rid = m?.roleId || '';
+  const role = rid ? (state.roles || []).find((item) => item.id === rid) || null : null;
+  const chip = resolveDispatchModel({
+    role,
+    roleId: rid,
+    models: state.settings?.models || {},
+    sources: state.settings?.sources || [],
+    grokSignedIn: Boolean(state.settings?.grok?.signedIn),
+  });
   if (!chip || chip === assistantLabel(m)) return '';
   return chip;
 }
@@ -2345,66 +2348,6 @@ function grokErrorKey(code) {
   return 'grok_err_failed';
 }
 
-function safeGrokHttps(url) {
-  try {
-    const u = new URL(String(url || ''));
-    if (u.protocol !== 'https:') return '';
-    const host = u.hostname.toLowerCase();
-    if (host !== 'x.ai' && !host.endsWith('.x.ai')) return '';
-    return u.href;
-  } catch {
-    return '';
-  }
-}
-
-function formatGrokExpiry(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  try { return d.toLocaleString(); } catch { return ''; }
-}
-
-function grokAuthCardHtml() {
-  const g = state.settings?.grok || {};
-  const pending = state.grokPending || g.pending;
-  if (g.signedIn && !pending) {
-    const account = g.account || g.email || '';
-    const exp = formatGrokExpiry(g.expiresAt);
-    const detail = [account, exp ? t('grok_expires', { time: exp }) : ''].filter(Boolean).join(' · ');
-    return (
-      `<div id="grok-auth-card" class="grok-auth-card" data-testid="grok-auth-card">` +
-      `<div class="row">` +
-      `<div class="l"><b>${escapeHtml(t('grok_signed_in'))}</b><span>${escapeHtml(detail)}</span></div>` +
-      `<button class="btn" type="button" data-action="grok-logout" data-testid="grok-logout">${escapeHtml(t('grok_logout'))}</button>` +
-      `</div>` +
-      `<p class="grok-auth-note">${escapeHtml(t('grok_proxy_note'))}</p>` +
-      `</div>`
-    );
-  }
-  const url = safeGrokHttps(pending?.verificationUri);
-  const code = pending?.userCode || '';
-  const err = state.grokError ? t(state.grokError) : '';
-  return (
-    `<div id="grok-auth-card" class="grok-auth-card" data-testid="grok-auth-card">` +
-    `<div class="row">` +
-    `<div class="l"><b>${escapeHtml(t('grok_sign_in'))}</b><span>${escapeHtml(t('grok_sign_in_desc'))}</span></div>` +
-    `<button class="btn p" type="button" data-action="grok-signin" data-testid="grok-sign-in"${pending ? ' disabled' : ''}>${escapeHtml(t('grok_sign_in_btn'))}</button>` +
-    `</div>` +
-    (pending
-      ? `<div class="grok-device" data-testid="grok-device">` +
-        `<div class="grok-device-label">${escapeHtml(t('grok_open_url'))}</div>` +
-        (url ? `<a class="grok-url" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>` : '') +
-        `<div class="grok-device-label">${escapeHtml(t('grok_user_code'))}</div>` +
-        `<div class="grok-user-code" data-testid="grok-user-code">${escapeHtml(code)}</div>` +
-        `<div class="grok-wait">${escapeHtml(t('grok_waiting'))}</div>` +
-        `<button class="btn" type="button" data-action="grok-cancel">${escapeHtml(t('grok_cancel'))}</button>` +
-        `</div>`
-      : '') +
-    (err ? `<div class="cfg-warn-box" data-testid="grok-error">${escapeHtml(err)}</div>` : '') +
-    `</div>`
-  );
-}
-
 let grokPollTimer = null;
 
 function stopGrokPoll() {
@@ -2420,38 +2363,42 @@ function scheduleGrokPoll(seconds) {
   grokPollTimer = setTimeout(() => { pollGrokLogin(); }, ms);
 }
 
-function captureModelsDraft() {
-  if (!state.settings) state.settings = {};
-  const base = document.getElementById('cfg-base-url');
-  if (base) state.settings.baseUrl = base.value;
-  const keyEl = document.getElementById('cfg-api-key');
-  if (keyEl) state._draftApiKey = keyEl.value;
-  const roleInputs = document.querySelectorAll('[data-role-id]');
-  if (!state.settings.models || typeof state.settings.models !== 'object') state.settings.models = {};
-  roleInputs.forEach((inp) => {
-    const rid = inp.getAttribute('data-role-id');
-    if (rid) state.settings.models[rid] = inp.value.trim();
-  });
+function modelsCtx() {
+  return {
+    state,
+    t,
+    escapeHtml,
+    api,
+    showToast,
+    localizeRoleLabel,
+    confirm: confirmDialog,
+    render: renderSettingsModal,
+    renderChrome: () => {
+      renderStatusBar();
+      renderChatThread();
+    },
+    startGrokSignIn,
+  };
 }
 
 function paintGrok() {
   const ov = document.getElementById('settings-overlay');
   const open = ov && ov.style.display !== 'none' && state.activeSettingsTab === 'models';
   if (!open) return;
-  captureModelsDraft();
   renderSettingsModal();
 }
 
 async function refreshGrokStatus() {
   try {
-    const grok = await api('/api/grok/session');
-    if (!state.settings) state.settings = {};
-    state.settings.grok = grok;
-    if (grok?.pending) {
-      state.grokPending = grok.pending;
-      scheduleGrokPoll(grok.pending.interval);
+    const settings = await api('/api/settings');
+    state.settings = settings;
+    noteSettingsReloaded(state);
+    if (settings?.grok?.pending?.loginId) {
+      state.grokPending = settings.grok.pending;
+      scheduleGrokPoll(settings.grok.pending.interval);
     }
     paintGrok();
+    renderStatusBar();
   } catch { /* status stays as last known */ }
 }
 
@@ -2479,10 +2426,15 @@ async function pollGrokLogin() {
       stopGrokPoll();
       state.grokPending = null;
       state.grokError = '';
-      if (!state.settings) state.settings = {};
-      state.settings.grok = result.grok || { signedIn: true, pending: null };
+      try {
+        state.settings = await api('/api/settings');
+        noteSettingsReloaded(state);
+      } catch { /* toast still reports the login */ }
+      if (state.modelsUi) state.modelsUi.drawer = null;
       showToast('grok_login_ok');
       paintGrok();
+      renderStatusBar();
+      renderChatThread();
       return;
     }
     state.grokPending = { ...pending, interval: result.interval || pending.interval, expiresAt: result.expiresAt || pending.expiresAt };
@@ -2503,12 +2455,14 @@ export async function logoutGrok() {
   stopGrokPoll();
   state.grokPending = null;
   try {
-    const grok = await api('/api/grok/logout', 'POST', {});
-    if (!state.settings) state.settings = {};
-    state.settings.grok = grok;
+    await api('/api/grok/logout', 'POST', {});
+    state.settings = await api('/api/settings');
+    noteSettingsReloaded(state);
     state.grokError = '';
     showToast('grok_logged_out');
     paintGrok();
+    renderStatusBar();
+    renderChatThread();
   } catch (err) {
     state.grokError = grokErrorKey(err.body?.error || err.message);
     paintGrok();
@@ -2524,6 +2478,7 @@ export async function cancelGrokLogin() {
     const grok = await api('/api/grok/login/cancel', 'POST', { loginId: id || '' });
     if (state.settings) state.settings.grok = grok;
   } catch { /* local pending is already cleared */ }
+  if (state.modelsUi?.drawer === 'grok') state.modelsUi.drawer = 'pick';
   paintGrok();
 }
 
@@ -2533,6 +2488,12 @@ export function openSettings(tab = 'general') {
 
 export function closeSettings() {
   state.workflowEditor = null;
+  closeModelPop(state);
+  const ui = state.modelsUi;
+  if (ui?.tick) {
+    clearInterval(ui.tick);
+    ui.tick = null;
+  }
   const ov = document.getElementById('settings-overlay');
   if (ov) ov.style.display = 'none';
 }
@@ -2550,8 +2511,10 @@ export function renderSettingsModal() {
 
   const tTab = state.activeSettingsTab;
 
+  const models = tTab === 'models';
+  const ctx = models ? modelsCtx() : null;
   ov.innerHTML = `
-    <div class="sm">
+    <div class="sm${models ? ' is-models' : ''}">
       <div class="sm-nav">
         <h3>${escapeHtml(t('settings_title'))}</h3>
         <div class="${tTab === 'general' ? 'on' : ''}" data-action="set-settings-tab" data-tab="general">${escapeHtml(t('settings_tab_general'))}</div>
@@ -2561,12 +2524,11 @@ export function renderSettingsModal() {
         <div class="${tTab === 'workflow' ? 'on' : ''}" data-action="set-settings-tab" data-tab="workflow" data-testid="settings-tab-workflow">${escapeHtml(t('settings_tab_workflow'))}</div>
         <div class="${tTab === 'about' ? 'on' : ''}" data-action="set-settings-tab" data-tab="about">${escapeHtml(t('settings_tab_about'))}</div>
       </div>
-      <div class="sm-body">
-        <span class="sm-x" data-action="close-settings">×</span>
-        ${renderSettingsTabContent(tTab)}
-      </div>
+      ${models ? renderModelsPane(ctx) : `<div class="sm-body"><span class="sm-x" data-action="close-settings">×</span>${renderSettingsTabContent(tTab)}</div>`}
     </div>
+    ${models ? renderModelPop(ctx) : ''}
   `;
+  if (models) mountModelsPane(state, t);
 }
 
 function renderSettingsTabContent(tab) {
@@ -2620,58 +2582,6 @@ function renderSettingsTabContent(tab) {
           <span class="${curFont === 'md' ? 'on' : ''}" data-action="switch-font-size" data-size="md">${escapeHtml(t('size_md'))}</span>
           <span class="${curFont === 'lg' ? 'on' : ''}" data-action="switch-font-size" data-size="lg">${escapeHtml(t('size_lg'))}</span>
         </div>
-      </div>
-    `;
-  }
-
-  if (tab === 'models') {
-    const s = state.settings || {};
-    const prov = s.provider || 'openai';
-    const preset = providerPreset(prov);
-    const models = s.models || {};
-    const maskedKey = s.apiKey || '';
-    const keyValue = state._draftApiKey != null ? state._draftApiKey : maskedKey;
-    const grokOn = Boolean(s.grok?.signedIn);
-    const modelHint = grokOn ? 'grok-build' : preset.modelHint;
-
-    const rolesList = state.roles || [];
-    const keyRows = `
-      <div class="row">
-        <div class="l"><b>${escapeHtml(t('models_base_url_label'))}</b><span>${escapeHtml(t('models_base_url_desc'))}</span></div>
-        <input class="in" id="cfg-base-url" type="text" data-original-val="${escapeHtml(s.baseUrl || '')}" value="${escapeHtml(s.baseUrl || '')}" placeholder="${escapeHtml(preset.baseUrl)}" />
-      </div>
-      <div class="row">
-        <div class="l"><b>${escapeHtml(t('models_api_key_label'))}</b><span>${escapeHtml(t('models_api_key_desc'))}</span></div>
-        <input class="in" id="cfg-api-key" type="text" data-original-masked="${escapeHtml(maskedKey)}" value="${escapeHtml(keyValue)}" placeholder="${escapeHtml(t('models_api_key_placeholder'))}" autocomplete="off" />
-      </div>
-      <div id="cfg-key-warning" class="cfg-warn-box" style="display:none;">
-        ${escapeHtml(t('models_key_safety_warn'))}
-      </div>`;
-    const keyBlock = grokOn
-      ? `<details class="grok-key-fallback"><summary>${escapeHtml(t('grok_key_fallback'))}</summary><p class="grok-auth-note">${escapeHtml(t('grok_key_fallback_desc'))}</p>${keyRows}</details>`
-      : keyRows;
-
-    return `
-      <h2>${escapeHtml(t('settings_tab_models'))}</h2>
-      ${grokAuthCardHtml()}
-      <div class="prov">
-        <span class="${prov === 'xai' ? 'on' : ''}" data-action="set-model-provider" data-provider="xai">xAI</span>
-        <span class="${prov === 'deepseek' ? 'on' : ''}" data-action="set-model-provider" data-provider="deepseek">DeepSeek</span>
-        <span class="${prov === 'openai' ? 'on' : ''}" data-action="set-model-provider" data-provider="openai">${escapeHtml(t('provider_openai'))}</span>
-        <span class="${prov === 'ollama' ? 'on' : ''}" data-action="set-model-provider" data-provider="ollama">${escapeHtml(t('provider_ollama'))}</span>
-      </div>
-      ${keyBlock}
-      ${rolesList
-        .map(
-          (r) =>
-            `<div class="row">` +
-            `<div class="l"><b>${escapeHtml(localizeRoleLabel(r.id || r.name))}</b><span>${escapeHtml(r.id)}</span></div>` +
-            `<input class="in" style="min-width:180px" data-role-id="${escapeHtml(r.id)}" value="${escapeHtml(models[r.id] || '')}" placeholder="${escapeHtml(t('model_placeholder_eg', { model: modelHint }))}" />` +
-            `</div>`
-        )
-        .join('')}
-      <div style="margin-top:20px;display:flex;justify-content:flex-end;">
-        <button class="btn p" data-action="save-models-settings">${escapeHtml(t('btn_save_settings'))}</button>
       </div>
     `;
   }
@@ -2876,124 +2786,6 @@ export function switchFontSize(sz) {
   localStorage.setItem('piwork_font_size', sz);
   document.documentElement.setAttribute('data-font-size', sz);
   renderSettingsModal();
-}
-
-function rememberSavedSettings(s) {
-  const src = s || {};
-  state._savedSettings = {
-    provider: src.provider || 'openai',
-    baseUrl: src.baseUrl || '',
-    apiKey: src.apiKey || '',
-    hasApiKey: Boolean(src.hasApiKey || src.apiKey),
-  };
-}
-
-export function setModelProvider(prov) {
-  if (!state.settings) state.settings = {};
-  const roleInputs = document.querySelectorAll('[data-role-id]');
-  if (!state.settings.models || typeof state.settings.models !== 'object') state.settings.models = {};
-  roleInputs.forEach((inp) => {
-    const rid = inp.getAttribute('data-role-id');
-    if (rid) state.settings.models[rid] = inp.value.trim();
-  });
-  state.settings.provider = prov;
-  state.settings.baseUrl = providerPreset(prov).baseUrl;
-  renderSettingsModal();
-  checkModelKeyWarning();
-  const hasSavedKey = Boolean(state._savedSettings?.hasApiKey);
-  if (!hasSavedKey) {
-    api('/api/settings', 'PUT', { provider: prov, baseUrl: state.settings.baseUrl })
-      .then((savedResp) => {
-        if ((state.settings.provider || '') !== prov) return;
-        state.settings.provider = savedResp.provider || prov;
-        state.settings.baseUrl = savedResp.baseUrl || state.settings.baseUrl;
-        state.settings.apiKey = savedResp.apiKey || '';
-        state.settings.hasApiKey = Boolean(savedResp.hasApiKey);
-        rememberSavedSettings(state.settings);
-        checkModelKeyWarning();
-      })
-      .catch(() => { /* draft stays; Save still persists it */ });
-  }
-}
-
-export function checkModelKeyWarning() {
-  const warnEl = document.getElementById('cfg-key-warning');
-  if (!warnEl) return;
-  const baseUrlEl = document.getElementById('cfg-base-url');
-  const apiKeyEl = document.getElementById('cfg-api-key');
-  if (!baseUrlEl || !apiKeyEl) return;
-
-  const saved = state._savedSettings || {};
-  const hasSavedKey = Boolean(saved.hasApiKey || saved.apiKey);
-  const origProvider = saved.provider || 'openai';
-  const curProvider = state.settings.provider || 'openai';
-  const origBaseUrl = saved.baseUrl || '';
-  const curBaseUrl = baseUrlEl.value.trim();
-
-  const enteredKey = apiKeyEl.value.trim();
-  const maskedKey = apiKeyEl.getAttribute('data-original-masked') || '';
-  const isNewKeyEntered = enteredKey && enteredKey !== maskedKey && !enteredKey.startsWith('••••');
-
-  const changed = (origProvider !== curProvider) || (origBaseUrl !== curBaseUrl);
-  if (hasSavedKey && changed && !isNewKeyEntered) {
-    warnEl.style.display = 'block';
-  } else {
-    warnEl.style.display = 'none';
-  }
-}
-
-export async function saveModelsSettings() {
-  const baseUrlEl = document.getElementById('cfg-base-url');
-  const apiKeyEl = document.getElementById('cfg-api-key');
-  const roleInputs = document.querySelectorAll('[data-role-id]');
-
-  const saved = state._savedSettings || {};
-  const hasSavedKey = Boolean(saved.hasApiKey || saved.apiKey);
-  const origProvider = saved.provider || 'openai';
-  const curProvider = state.settings.provider || 'openai';
-  const origBaseUrl = saved.baseUrl || '';
-  const curBaseUrl = baseUrlEl?.value.trim() || '';
-
-  const enteredKey = apiKeyEl?.value.trim() || '';
-  const maskedKey = apiKeyEl?.getAttribute('data-original-masked') || '';
-  const isNewKeyEntered = enteredKey && enteredKey !== maskedKey && !enteredKey.startsWith('••••') && !enteredKey.includes('…');
-
-  const providerOrUrlChanged = (origProvider !== curProvider) || (origBaseUrl !== curBaseUrl);
-
-  const models = {};
-  roleInputs.forEach((inp) => {
-    const rid = inp.getAttribute('data-role-id');
-    const val = inp.value.trim();
-    if (val && rid) models[rid] = val;
-  });
-
-  const payload = {
-    provider: curProvider,
-    baseUrl: curBaseUrl,
-    models,
-  };
-
-  if (hasSavedKey && providerOrUrlChanged && !isNewKeyEntered) {
-    const ok = await confirmDialog({
-      message: t('models_key_safety_confirm'),
-      confirmLabel: t('btn_continue'),
-    });
-    if (!ok) return;
-    payload.apiKey = '';
-  } else if (isNewKeyEntered) {
-    payload.apiKey = enteredKey;
-  }
-
-  try {
-    state.settings = await api('/api/settings', 'PUT', payload);
-    state._draftApiKey = null;
-    rememberSavedSettings(state.settings);
-    showToast('msg_settings_saved');
-    renderSettingsModal();
-    renderStatusBar();
-  } catch (err) {
-    showToast(err.message || 'err_save');
-  }
 }
 
 export async function togglePlugin(id, enabled) {
@@ -3434,8 +3226,6 @@ window.__app = {
   switchAppearance,
   switchThemeFamily,
   switchFontSize,
-  setModelProvider,
-  saveModelsSettings,
   startGrokSignIn,
   logoutGrok,
   cancelGrokLogin,
@@ -3455,13 +3245,16 @@ window.__app = {
   toggleToolDetail,
   toggleSubagent,
   handleUnauthorized,
-  checkModelKeyWarning,
 };
 
 // ============================================================================
 // Event Delegation
 // ============================================================================
 document.addEventListener('click', (e) => {
+  const ui = state.modelsUi;
+  if (ui?.pickerRole && !e.target.closest?.('.model-pop') && !e.target.closest?.('[data-action="toggle-model-pick"]')) {
+    closeModelPop(state);
+  }
   const agentMenu = document.getElementById('composer-agent-menu');
   if (agentMenu?.classList.contains('is-open') && !e.target.closest('#composer-agent-wrap')) {
     closeAgentMenu();
@@ -3559,12 +3352,6 @@ document.addEventListener('click', (e) => {
     case 'switch-font-size':
       switchFontSize(actionEl.getAttribute('data-size'));
       break;
-    case 'set-model-provider':
-      setModelProvider(actionEl.getAttribute('data-provider'));
-      break;
-    case 'save-models-settings':
-      saveModelsSettings();
-      break;
     case 'grok-signin':
       startGrokSignIn();
       break;
@@ -3620,6 +3407,12 @@ document.addEventListener('click', (e) => {
       pickDispatchTarget(actionEl);
       break;
     default:
+      if (action === 'toggle-model-pick' || (action && action.startsWith('ms-'))) {
+        void handleModelsAction(action, actionEl, modelsCtx()).catch((err) => {
+          showToast(err?.message || 'err_save');
+        });
+        break;
+      }
       handleWorkflowAction(action, actionEl, workflowCtx());
       break;
   }
@@ -3636,9 +3429,13 @@ document.addEventListener('input', (e) => {
     filterSkills(e.target.value);
   } else if (e.target.id === 'workflow-search-input') {
     filterWorkflow(e.target.value, workflowCtx());
-  } else if (e.target.id === 'cfg-base-url' || e.target.id === 'cfg-api-key') {
-    checkModelKeyWarning();
+  } else if (e.target.id === 'ms-name' || e.target.id === 'ms-url' || e.target.id === 'ms-key' || e.target.id === 'ms-manual' || e.target.id === 'ms-grok-name' || e.target.id === 'ms-search') {
+    onModelsField(e.target, modelsCtx());
   }
+});
+
+document.addEventListener('change', (e) => {
+  if (e.target?.matches?.('[data-action="ms-toggle-model"]')) onModelsToggle(e.target, modelsCtx());
 });
 
 // ============================================================================

@@ -4,11 +4,11 @@ export async function login(page, url, token) {
   await expect(page.getByTestId('composer-agent')).toBeVisible();
 }
 
+/** Start a draft. The conversation row is created when the first message is sent. */
 export async function createConversation(page) {
-  const before = await page.getByTestId('conversation-item').count();
   await page.getByTestId('conversation-new').click();
-  await page.getByTestId('conversation-create-submit').click();
-  await expect(page.getByTestId('conversation-item')).toHaveCount(before + 1);
+  await expect(page.getByTestId('chat-input')).toBeVisible();
+  await expect(page.getByTestId('conversation-create-submit')).toHaveCount(0);
 }
 
 export async function createWorkspace(page, name, wsPath) {

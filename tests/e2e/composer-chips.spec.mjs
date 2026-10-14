@@ -120,7 +120,7 @@ test('agent chip lists configured roles and switches the conversation target', a
   await expect(page.getByTestId('composer-agent')).toHaveAttribute('aria-expanded', 'false');
 
   await page.getByTestId('composer-agent').click();
-  await expect(page.locator('.toast-msg')).toHaveText(/请先选择对话|Select a conversation first/);
+  await expect(page.locator('.toast-msg')).toHaveText(/请先选择或创建一个工作区|Please select or create a workspace first/);
   await expect(menu(page)).toBeHidden();
 
   await createWorkspace(page, 'dispatch', ws);
@@ -137,8 +137,12 @@ test('agent chip lists configured roles and switches the conversation target', a
 
   await menu(page).locator('[data-role-id="coder"]:not([data-pipeline-id])').click();
   await expect(menu(page)).toBeHidden();
-  await expect(chip(page)).toHaveText('Agent · grok-4');
+  await expect(chip(page)).toHaveText('编码 · grok-4');
   await expect(page.getByTestId('composer-agent')).toHaveAttribute('title', /grok-4/);
+
+  await send(page, 'hello');
+  await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
+  await expect(chip(page)).toHaveText('编码 · grok-4');
 
   const cid = await conversationId(page);
   const coder = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
@@ -147,7 +151,7 @@ test('agent chip lists configured roles and switches the conversation target', a
 
   await page.getByTestId('composer-agent').click();
   await menu(page).locator('[data-pipeline-id="demo"]').click();
-  await expect(chip(page)).toHaveText('Agent · grok-4');
+  await expect(chip(page)).toHaveText('编码 · grok-4');
   const piped = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
   expect(piped.body.pipelineId).toBe('demo');
   expect(piped.body.roleId).toBe('coder');
