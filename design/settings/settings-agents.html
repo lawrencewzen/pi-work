@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="white-light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440, initial-scale=1">
+<title>pi-work Agent 设置</title>
+<style>
+[data-theme="white-dark"]{color-scheme:dark;
+--bg-app:#141414;--bg-sidebar:#111111;--bg-surface:#141414;--bg-surface-subtle:#1b1b1b;--bg-hover:#222222;--bg-active:#2a2a2a;
+--border-subtle:#262626;--border-strong:#333333;--border-focus:#6e6e6e;--text-primary:#ededed;--text-secondary:#a3a3a3;--text-muted:#6e6e6e;--text-inverse:#141414;
+--accent:#ededed;--ok:#8d9c92;--warn:#a8987e;--bad:#b08484;--scrim:rgba(0,0,0,.55);--on:#8d9c92}
+[data-theme="white-light"]{color-scheme:light;
+--bg-app:#ffffff;--bg-sidebar:#fafafa;--bg-surface:#ffffff;--bg-surface-subtle:#f7f7f7;--bg-hover:#f2f2f2;--bg-active:#ebebeb;
+--border-subtle:#ececec;--border-strong:#dedede;--border-focus:#9a9a9a;--text-primary:#1a1a1a;--text-secondary:#6b6b6b;--text-muted:#9a9a9a;--text-inverse:#ffffff;
+--accent:#1a1a1a;--ok:#9aaa9f;--warn:#b8a68a;--bad:#c08f8f;--scrim:rgba(0,0,0,.25);--on:#1a1a1a}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg-app);color:var(--text-primary);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+button,input,textarea{font:inherit;color:inherit}
+.mono{font-family:ui-monospace,"SF Mono",Consolas,monospace}
+.muted{color:var(--text-muted)}.sec{color:var(--text-secondary)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0;background:var(--text-muted)}
+.dot.ok{background:var(--ok)}
+.btn{height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--bg-hover)}
+.btn.p{background:var(--accent);color:var(--text-inverse);border-color:var(--accent)}
+.btn.g{border-color:transparent;background:transparent;color:var(--text-secondary)}
+.btn.g:hover{background:var(--bg-hover);color:var(--text-primary)}
+.btn.small{height:24px;padding:0 8px;font-size:12px}
+.btn.danger{color:var(--bad)}
+.in{height:32px;width:100%;padding:0 10px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface-subtle);outline:none}
+.in:focus,textarea:focus{border-color:var(--border-focus)}
+.tag{font-size:11px;padding:0 6px;border-radius:4px;border:1px solid var(--border-subtle);color:var(--text-secondary);background:var(--bg-surface-subtle);white-space:nowrap}
+
+.bg-shell{position:fixed;inset:0;display:flex}.bg-side{width:260px;background:var(--bg-sidebar);border-right:1px solid var(--border-subtle)}
+.scrim{position:fixed;inset:0;background:var(--scrim)}
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:1080px;height:760px;display:flex;border:1px solid var(--border-subtle);border-radius:10px;background:var(--bg-surface);overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.nav{width:200px;background:var(--bg-sidebar);border-right:1px solid var(--border-subtle);padding:16px 10px;flex-shrink:0}
+.nav h3{font-size:14px;font-weight:600;padding:2px 8px 14px}
+.nav div{padding:7px 10px;border-radius:6px;color:var(--text-secondary);cursor:pointer}
+.nav div.on{background:var(--bg-active);color:var(--text-primary);font-weight:500}
+.nav .new{font-size:10px;margin-left:6px;color:var(--text-muted)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.head{padding:22px 28px 12px}
+.head h2{font-size:17px;font-weight:600}.head p{color:var(--text-muted);margin-top:2px}
+
+/* Agent 页：左列表 + 右编辑 */
+.split{flex:1;display:flex;min-height:0;border-top:1px solid var(--border-subtle)}
+.list{width:236px;border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;flex-shrink:0}
+.list .search{padding:12px 12px 6px}
+.list .items{flex:1;overflow:auto;padding:4px 8px}
+.grp{font-size:11px;color:var(--text-muted);padding:10px 8px 4px}
+.item{display:flex;gap:10px;align-items:center;padding:8px;border-radius:6px;cursor:pointer}
+.item:hover{background:var(--bg-hover)}
+.item.on{background:var(--bg-active)}
+.av{width:26px;height:26px;border-radius:6px;background:var(--bg-active);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;flex-shrink:0}
+.item.on .av{background:var(--bg-surface)}
+.item .c{min-width:0;flex:1}
+.item .c b{font-weight:500;display:block}
+.item .c span{font-size:11.5px;color:var(--text-muted);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list .foot{padding:10px 12px;border-top:1px solid var(--border-subtle)}
+.list .foot .btn{width:100%;justify-content:center}
+
+.edit{flex:1;overflow:auto;padding:18px 28px 24px;min-width:0}
+.ehead{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.ehead .av{width:36px;height:36px;font-size:15px}
+.ehead .tt{flex:1}
+.ehead .tt b{font-size:15px;font-weight:600}
+.ehead .tt div{color:var(--text-muted);font-size:12px}
+.sect{margin-top:20px}
+.sect label:not(.skpop label),.sect .lab{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);font-weight:500;margin-bottom:6px}
+.sect .lab .r{margin-left:auto}
+.hint{font-size:12px;color:var(--text-muted);margin-top:4px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+textarea{width:100%;min-height:96px;padding:8px 10px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface-subtle);outline:none;resize:vertical;line-height:1.55}
+textarea.prompt{min-height:220px;font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:12px}
+
+.pick-btn{width:100%;height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface-subtle);display:flex;align-items:center;gap:8px;cursor:pointer;text-align:left}
+.pick-btn .m{flex:1}.pick-btn .from{color:var(--text-muted);font-size:12px}
+.caret{width:9px;height:9px;border-right:1.5px solid var(--text-muted);border-bottom:1.5px solid var(--text-muted);transform:rotate(45deg) translate(-2px,-2px)}
+.pop{position:absolute;width:360px;background:var(--bg-surface);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.18);z-index:20;padding:6px;display:none}
+.pop.open{display:block}
+.pop .g{font-size:11px;color:var(--text-muted);padding:8px 8px 4px;display:flex;gap:6px;align-items:center}
+.pop .o{padding:6px 8px;border-radius:5px;display:flex;align-items:center;gap:8px;cursor:pointer}
+.pop .o:hover{background:var(--bg-hover)}.pop .o.on{background:var(--bg-active)}
+.pop .o .x{margin-left:auto;font-size:11px;color:var(--text-muted)}
+.pop hr{border:0;border-top:1px solid var(--border-subtle);margin:4px 0}
+
+.tools{border:1px solid var(--border-subtle);border-radius:8px}
+.tool{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 12px;border-top:1px solid var(--border-subtle)}
+.tool:first-child{border-top:0}
+.tool b{font-weight:500}
+.tool .d{font-size:12px;color:var(--text-muted)}
+.tool .d .mono{font-size:11px}
+.sw{width:30px;height:18px;border-radius:9px;background:var(--border-strong);position:relative;cursor:pointer;flex-shrink:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--bg-surface);transition:left .12s}
+.sw.on{background:var(--on)}.sw.on::after{left:14px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:3px 10px;border-radius:999px;border:1px solid var(--border-subtle);color:var(--text-secondary);cursor:pointer;font-size:12px}
+.chip.on{border-color:var(--border-focus);color:var(--text-primary);background:var(--bg-active)}
+
+.skbox{border:1px solid var(--border-subtle);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:relative}
+.skbox .sum{flex:1;display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0}
+.sk{font-size:12px;padding:1px 8px;border-radius:4px;background:var(--bg-surface-subtle);border:1px solid var(--border-subtle)}
+.skpop{position:fixed;width:380px;max-height:340px;background:var(--bg-surface);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.18);z-index:30;display:none;flex-direction:column}
+.skpop.open{display:flex}
+.skpop .top{padding:8px;border-bottom:1px solid var(--border-subtle);display:flex;gap:6px;align-items:center}
+.skpop .lst{overflow:auto;padding:4px}
+.skpop label{display:grid;grid-template-columns:16px 1fr;gap:8px;padding:6px 8px;border-radius:5px;cursor:pointer;align-items:start}
+.skpop label:hover{background:var(--bg-hover)}
+.skpop label input{margin-top:3px;accent-color:var(--text-secondary)}
+.skpop label b{font-weight:500;display:block}
+.skpop label span{font-size:11.5px;color:var(--text-muted)}
+.skpop .bot{padding:6px 10px;border-top:1px solid var(--border-subtle);display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)}
+.lock{font-size:11px;color:var(--text-muted)}
+.savebar{border-top:1px solid var(--border-subtle);padding:10px 28px;display:flex;align-items:center;gap:8px}
+.savebar .msg{flex:1;color:var(--text-secondary)}
+
+/* 模型页（调整后） */
+.mbody{flex:1;overflow:auto;padding:0 28px 24px}
+.st{display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px}
+.st b{font-size:13px;font-weight:600}.st span{color:var(--text-muted);font-size:12px;margin-left:8px}
+.box{border:1px solid var(--border-subtle);border-radius:8px}
+.srow{display:grid;grid-template-columns:16px 1fr auto;gap:12px;align-items:center;padding:12px 14px;border-top:1px solid var(--border-subtle)}
+.srow:first-child{border-top:0}
+.srow .t{display:flex;gap:8px;align-items:center;font-weight:500}
+.srow .s{font-size:12px;color:var(--text-muted);margin-top:2px}
+.mtags{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.ok-line{font-size:12px;color:var(--ok);display:flex;align-items:center;gap:4px}
+.drow{display:grid;grid-template-columns:1fr 340px;gap:12px;align-items:center;padding:12px 14px}
+.link{color:var(--text-primary);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+
+.hidden{display:none!important}
+.notes{position:fixed;left:12px;top:14px;width:160px;font-size:12px;color:var(--text-secondary);line-height:1.6}
+.notes b{color:var(--text-primary)}
+.notes .demo{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="bg-shell"><div class="bg-side"></div></div>
+<div class="scrim"></div>
+
+<div class="notes">
+  <b>演示（不属于界面）</b>
+  <div class="demo">
+    <button class="btn small" onclick="show('agents')">Agent 页</button>
+    <button class="btn small" onclick="show('agents');togglePop()">Agent · 选模型</button>
+    <button class="btn small" onclick="show('new')">新建子 Agent</button>
+    <button class="btn small" onclick="show('agents');setTimeout(()=>{document.querySelector('.edit').scrollTop=600;toggleSk()},0)">Skills 选择</button>
+    <button class="btn small" onclick="show('models')">模型页（调整后）</button>
+    <button class="btn small" onclick="toggleTheme()">切换浅色 / 深色</button>
+  </div>
+</div>
+
+<div class="modal">
+  <div class="nav">
+    <h3>系统设置</h3>
+    <div>通用</div>
+    <div id="nav-models" onclick="show('models')">模型</div>
+    <div id="nav-agents" class="on" onclick="show('agents')">Agent<span class="new">新</span></div>
+    <div>流程</div><div>插件</div><div>Skills</div><div>关于</div>
+  </div>
+
+  <!-- ========== Agent 页 ========== -->
+  <div class="main" id="page-agents">
+    <div class="head"><h2>Agent</h2><p>主 Agent 负责理解需求、拆任务、汇总结果；子 Agent 是它可以派活的角色模板。对话里派子 Agent 时，按这里的模型、工具和提示词生成。</p></div>
+    <div class="split">
+      <div class="list">
+        <div class="search"><input class="in" placeholder="搜索"></div>
+        <div class="items">
+          <div class="grp">主 Agent</div>
+          <div class="item" onclick="pick(this)"><div class="av">主</div><div class="c"><b>主 Agent</b><span>理解需求、拆任务、派子 Agent</span></div></div>
+          <div class="grp">子 Agent · 预设</div>
+          <div class="item" onclick="pick(this)"><div class="av">规</div><div class="c"><b>规划</b><span>出方案和任务拆分，不改代码</span></div></div>
+          <div class="item on" onclick="pick(this)"><div class="av">编</div><div class="c"><b>编码</b><span>按计划修改仓库</span></div></div>
+          <div class="item" onclick="pick(this)"><div class="av">测</div><div class="c"><b>测试</b><span>写测试、跑测试、报告结果</span></div></div>
+          <div class="item" onclick="pick(this)"><div class="av">审</div><div class="c"><b>审计</b><span>只读审查，输出问题清单</span></div></div>
+          <div class="grp">子 Agent · 自定义</div>
+          <div class="item" onclick="pick(this)"><div class="av">文</div><div class="c"><b>文档</b><span>整理 README 和变更说明</span></div></div>
+        </div>
+        <div class="foot"><button class="btn" onclick="show('new')">＋ 新建子 Agent</button></div>
+      </div>
+
+      <div class="edit" id="edit-existing">
+        <div class="ehead">
+          <div class="av">编</div>
+          <div class="tt"><b>编码</b> <span class="tag">预设子 Agent</span><div>预设的不能删除；改坏了可以恢复默认</div></div>
+          <button class="btn g small">复制为新的子 Agent</button>
+          <button class="btn g small">恢复默认</button>
+        </div>
+
+        <div class="row2 sect">
+          <div><label>名称</label><input class="in" value="编码"></div>
+          <div style="position:relative"><label>模型</label>
+            <button class="pick-btn" onclick="togglePop()"><span class="dot"></span><span class="m">跟随默认 · <span class="mono">grok-build</span></span><span class="caret"></span></button>
+            <div class="pop" id="pop" style="top:58px;right:0">
+              <div class="o on"><span class="dot"></span>跟随默认<span class="x mono">grok-build</span></div><hr>
+              <div class="g"><span class="dot ok"></span>Grok 订阅</div>
+              <div class="o mono">grok-build</div>
+              <div class="g"><span class="dot ok"></span>DeepSeek</div>
+              <div class="o mono">deepseek-chat</div>
+              <div class="o mono">deepseek-reasoner</div>
+              <hr><div class="o sec">去「模型」页添加…</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect"><label>什么时候用</label>
+          <textarea style="min-height:56px">需要修改仓库代码时使用：按用户请求或上一位交出的计划，读相关文件后做小而正确的改动。</textarea>
+          <div class="hint">主 Agent 派活时看这段话决定交给谁，写清楚擅长什么、不做什么。</div>
+        </div>
+
+        <div class="sect"><div class="lab">工具<span class="r muted" style="font-weight:400">已开 3 组 / 共 4 组</span></div>
+          <div class="tools">
+            <div class="tool"><div><b>读取文件</b><div class="d">查看、列目录、搜索 · <span class="mono">read ls grep</span></div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+            <div class="tool"><div><b>修改文件</b><div class="d">新建、覆盖、局部修改 · <span class="mono">write edit</span></div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+            <div class="tool"><div><b>运行命令</b><div class="d">在工作区里执行 shell 命令 · <span class="mono">bash</span></div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+            <div class="tool"><div><b>插件工具</b><div class="d">已启用插件提供的工具 · <span class="mono">echo word_count</span></div></div><div class="sw" onclick="this.classList.toggle('on')"></div></div>
+          </div>
+          <div class="hint">预设按角色初始化：规划、审计只读；编码、测试可读写和运行命令。</div>
+        </div>
+
+        <div class="sect"><div class="lab">Skills<span class="r muted" style="font-weight:400">只对这个子 Agent 生效</span></div>
+          <div class="skbox">
+            <div class="sum"><span class="sk">commit-message</span><span class="sk">code-review</span><span class="sk">changelog</span><span class="muted" style="font-size:12px">+4</span></div>
+            <span class="muted" style="font-size:12px">已选 7 / 32</span>
+            <button class="btn small" onclick="toggleSk(event)">选择…</button>
+            <div class="skpop" id="skpop">
+              <div class="top"><input class="in" placeholder="搜索 Skills（名称或说明）"><button class="btn g small">全选</button><button class="btn g small">清空</button></div>
+              <div class="lst">
+                <label><input type="checkbox" checked><div><b>commit-message</b><span>按约定格式写提交说明</span></div></label>
+                <label><input type="checkbox" checked><div><b>code-review</b><span>按清单审查改动</span></div></label>
+                <label><input type="checkbox" checked><div><b>changelog</b><span>汇总变更写进 CHANGELOG</span></div></label>
+                <label><input type="checkbox"><div><b>review-notes</b><span>整理评审意见</span></div></label>
+                <label><input type="checkbox" checked><div><b>refactor-safe</b><span>先补测试再重构</span></div></label>
+                <label><input type="checkbox"><div><b>sql-migration</b><span>写可回滚的数据库迁移</span></div></label>
+                <label><input type="checkbox" checked><div><b>api-contract</b><span>改接口时同步契约文档</span></div></label>
+                <label><input type="checkbox"><div><b>i18n-keys</b><span>新增文案中英成对</span></div></label>
+                <label><input type="checkbox" checked><div><b>windows-paths</b><span>兼容 Windows 路径</span></div></label>
+                <label><input type="checkbox" checked><div><b>error-messages</b><span>报错写清原因和下一步</span></div></label>
+              </div>
+              <div class="bot">只显示已在「Skills」页启用的 · 共 32 个<span style="margin-left:auto"><button class="btn p small" onclick="toggleSk(event)">完成</button></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sect"><div class="lab">提示词<span class="r muted" style="font-weight:400">612 字 · 已改动，和预设版本不同</span></div>
+          <textarea class="prompt">你是 pi-work 的编码角色。说明跟随用户的语言；代码、路径和标识保持原样。
+
+职责
+- 按用户请求，或按上一位交出的计划，修改仓库。
+- 先读相关文件，再做小而正确的改动。
+- 不要主动写测试，测试交给测试角色。
+
+输出
+- 改动要写进仓库。只在回复里贴代码不算完成。
+- 说明改了哪些文件、现在的行为、还没做的事。
+
+交接
+回复的最后必须有「## 交接」一段。</textarea>
+        </div>
+      </div>
+
+      <div class="edit hidden" id="edit-new">
+        <div class="ehead"><div class="av">＋</div><div class="tt"><b>新建子 Agent</b><div>从空白开始，或复制一个现有的子 Agent</div></div></div>
+        <div class="sect"><label>从哪里开始</label>
+          <div class="chips"><span class="chip on">空白</span><span class="chip">复制 规划</span><span class="chip">复制 编码</span><span class="chip">复制 测试</span><span class="chip">复制 审计</span></div>
+        </div>
+        <div class="row2 sect">
+          <div><label>名称</label><input class="in" placeholder="例如 文档"></div>
+          <div><label>模型</label><button class="pick-btn"><span class="dot"></span><span class="m">跟随默认 · <span class="mono">grok-build</span></span><span class="caret"></span></button></div>
+        </div>
+        <div class="sect"><label>什么时候用</label><textarea style="min-height:56px" placeholder="主 Agent 派活时看这段话决定交给谁"></textarea></div>
+        <div class="sect"><div class="lab">工具</div>
+          <div class="tools">
+            <div class="tool"><div><b>读取文件</b><div class="d"><span class="mono">read ls grep</span></div></div><div class="sw on"></div></div>
+            <div class="tool"><div><b>修改文件</b><div class="d"><span class="mono">write edit</span></div></div><div class="sw"></div></div>
+            <div class="tool"><div><b>运行命令</b><div class="d"><span class="mono">bash</span></div></div><div class="sw"></div></div>
+            <div class="tool"><div><b>插件工具</b><div class="d"><span class="mono">echo word_count</span></div></div><div class="sw"></div></div>
+          </div>
+          <div class="hint">新建的子 Agent 默认只读，按需打开。</div>
+        </div>
+        <div class="sect"><div class="lab">Skills</div><div class="skbox"><div class="sum"><span class="muted" style="font-size:12px">还没选</span></div><button class="btn small">选择…</button></div></div>
+        <div class="sect"><label>提示词</label><textarea class="prompt" placeholder="这个子 Agent 的角色、职责、输出格式、交接要求……"></textarea></div>
+      </div>
+    </div>
+    <div class="savebar"><span class="msg" id="save-msg">2 处改动未保存：编码 · 工具、提示词</span><button class="btn danger small" id="del-btn" style="display:none">删除这个 Agent</button><button class="btn g">放弃</button><button class="btn p">保存</button></div>
+  </div>
+
+  <!-- ========== 模型页（调整后） ========== -->
+  <div class="main hidden" id="page-models">
+    <div class="head"><h2>模型</h2><p>先接入模型，再选默认模型。每个 Agent 用什么模型在「Agent」页里设置。</p></div>
+    <div class="mbody">
+      <div class="st"><div><b>模型</b><span>可用模型列表</span></div><button class="btn small">＋ 添加</button></div>
+      <div class="box">
+        <div class="srow"><span class="dot ok"></span><div><div class="t">Grok 订阅 <span class="tag">Grok Build 账号</span></div><div class="s">you@example.com · 令牌自动续期 · 不按量计费</div><div class="mtags"><span class="tag mono">grok-build</span></div></div><div style="display:flex;gap:4px;align-items:center"><span class="ok-line">✓ 测试通过</span><button class="btn g small">刷新模型</button><button class="btn g small">编辑</button></div></div>
+        <div class="srow"><span class="dot ok"></span><div><div class="t">DeepSeek <span class="tag">API Key</span></div><div class="s mono">••••0eec · api.deepseek.com</div><div class="mtags"><span class="tag mono">deepseek-chat</span><span class="tag mono">deepseek-reasoner</span></div></div><div style="display:flex;gap:4px;align-items:center"><span class="ok-line">✓ 测试通过</span><button class="btn g small">测试</button><button class="btn g small">编辑</button><button class="btn g small">删除</button></div></div>
+      </div>
+      <div class="st" style="margin-top:22px"><div><b>默认模型</b><span>主 Agent 和没单独设置模型的 Agent 都用它</span></div></div>
+      <div class="box"><div class="drow"><div><b style="font-weight:500">默认</b> <span class="mono muted">default</span><div class="hint" style="margin-top:2px">各个 Agent 单独用什么模型，去 <span class="link" onclick="show('agents')">Agent 页</span> 设置</div></div><button class="pick-btn"><span class="dot ok"></span><span class="m mono">grok-build</span><span class="from">Grok 订阅</span><span class="caret"></span></button></div></div>
+    </div>
+    <div class="savebar"><span class="msg muted">没有未保存的改动</span><button class="btn g">放弃</button><button class="btn p">保存</button></div>
+  </div>
+</div>
+
+<script>
+function show(which) {
+  const models = which === 'models';
+  document.getElementById('page-models').classList.toggle('hidden', !models);
+  document.getElementById('page-agents').classList.toggle('hidden', models);
+  document.getElementById('nav-models').classList.toggle('on', models);
+  document.getElementById('nav-agents').classList.toggle('on', !models);
+  document.getElementById('edit-new').classList.toggle('hidden', which !== 'new');
+  document.getElementById('edit-existing').classList.toggle('hidden', which === 'new');
+  document.getElementById('save-msg').textContent = which === 'new' ? '新建子 Agent，填好后保存' : '2 处改动未保存：编码 · 工具、提示词';
+  document.getElementById('pop').classList.remove('open');
+}
+function pick(el) { document.querySelectorAll('.item').forEach(i => i.classList.remove('on')); el.classList.add('on'); show('agents'); }
+function toggleSk(e) {
+  if (e) e.stopPropagation();
+  const pop = document.getElementById('skpop');
+  pop.classList.toggle('open');
+  if (!pop.classList.contains('open')) return;
+  // 弹窗有 transform，fixed 以弹窗为参照；不受内容区滚动裁切。下面放不下就往上弹
+  const m = document.querySelector('.modal').getBoundingClientRect();
+  const r = pop.closest('.skbox').getBoundingClientRect();
+  const h = pop.offsetHeight;
+  pop.style.left = (r.right - m.left - 380) + 'px';
+  pop.style.top = (r.bottom + 4 + h > m.bottom - 8 ? r.top - m.top - 4 - h : r.bottom - m.top + 4) + 'px';
+}
+function togglePop() { document.getElementById('pop').classList.toggle('open'); }
+function toggleTheme() { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'white-dark' ? 'white-light' : 'white-dark'; }
+const q = new URLSearchParams(location.search);
+if (q.get('theme')) document.documentElement.dataset.theme = q.get('theme');
+if (q.get('state')) show(['pop','skills'].includes(q.get('state')) ? 'agents' : q.get('state'));
+if (q.get('state') === 'pop') togglePop();
+if (q.get('state') === 'skills') { document.getElementById('edit-existing').scrollTop = 700; toggleSk(); }
+</script>
+</body>
+</html>
