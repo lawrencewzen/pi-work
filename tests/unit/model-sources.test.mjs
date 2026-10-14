@@ -308,11 +308,11 @@ test('modelsAfterProbe enables every fetched name only when none are enabled', (
     catalog: ['deepseek-chat', 'deepseek-reasoner'],
   });
   assert.deepEqual(modelsAfterProbe(['keep-me', 'gone'], ['new-one', 'keep-me']), {
-    models: ['keep-me'],
+    models: ['keep-me', 'gone'],
     catalog: ['new-one', 'keep-me'],
   });
   assert.deepEqual(modelsAfterProbe(['only'], []), {
-    models: [],
+    models: ['only'],
     catalog: [],
   });
 });

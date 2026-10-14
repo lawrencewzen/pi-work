@@ -169,6 +169,6 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true}
 
 认不出的抛错只有 `error`，没有 `code`。成功响应不带 `code` / `status`。
 
-`POST /api/sources/test` 带 `sourceId` 时，把请求里的 `vendor` / `baseUrl` / `apiKey` 叠到已保存的来源上再探测，不写回这条来源。origin 变了又没带新密钥，同样 400 `api key required`，不探测。只有请求里完全没有这些覆盖字段时，才把结果写入该来源的 `lastTest`（含 `code` / `status`）。这次如果成功，还按下面的规则改 `models`，并把拉到的完整列表写入 `catalog`：当前没有启用任何模型时，`models` 变成拉到的全部；已经有启用模型时，只保留仍然出现在这次列表里的已启用项（保持原顺序），新出现的名字只进 `catalog`、不自动启用。失败不改 `models` 和 `catalog`。
+`POST /api/sources/test` 带 `sourceId` 时，把请求里的 `vendor` / `baseUrl` / `apiKey` 叠到已保存的来源上再探测，不写回这条来源。origin 变了又没带新密钥，同样 400 `api key required`，不探测。只有请求里完全没有这些覆盖字段时，才把结果写入该来源的 `lastTest`（含 `code` / `status`）。这次如果成功，还按下面的规则改 `models`，并把拉到的完整列表写入 `catalog`：刷新不删除已经启用的模型。当前没有启用任何模型时，`models` 变成拉到的全部；已经有启用模型时 `models` 保持不变，新出现的名字只进 `catalog`、不自动启用。失败不改 `models` 和 `catalog`。
 
 发消息时按角色选来源：该角色的 `{ sourceId, model }`，没有再用 `default`，再没有就用第一个可用的来源上的第一个模型。角色模板上的 `model` 字符串若出现在某个可用的来源列表里，就改走那个来源；否则沿用上面选中的来源，但模型名改成模板里的字符串。目标是 Grok 但拿不到 access token，并且没有别的可用目标时，本轮以 `E_NO_MODEL` / `err_no_model` 失败，而不是拿空的 base URL 去请求。

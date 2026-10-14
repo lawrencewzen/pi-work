@@ -75,19 +75,15 @@ export function normalizeModelList(value) {
 
 /**
  * Enabled names after a successful source-row probe.
+ * A refresh never drops a name the user already enabled (including ones typed in by hand).
  * An empty enabled list takes the whole fetched list.
- * An existing list keeps only names that are still in the fetch, in the previous order.
- * `catalog` is the full fetch so the edit drawer can show new names unchecked.
+ * An existing list stays as-is; `catalog` is the full fetch so the edit drawer can check new names.
  */
 export function modelsAfterProbe(current, fetched) {
   const enabled = normalizeModelList(current) || [];
   const found = normalizeModelList(fetched) || [];
   if (!enabled.length) return { models: found, catalog: found.slice() };
-  const still = new Set(found);
-  return {
-    models: enabled.filter((name) => still.has(name)),
-    catalog: found.slice(),
-  };
+  return { models: enabled.slice(), catalog: found.slice() };
 }
 
 const PROBE_CODES = new Set(['network', 'timeout', 'bad_json', 'auth', 'not_found', 'http']);

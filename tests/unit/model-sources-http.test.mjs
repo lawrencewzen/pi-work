@@ -459,7 +459,7 @@ function modelsServer(ids) {
   });
 }
 
-test('POST /api/sources/test enables fetched models when none are enabled, and keeps only names that are still listed', async () => {
+test('POST /api/sources/test enables fetched models when none are enabled, and keeps every name already enabled', async () => {
   const emptyUpstream = await modelsServer(['deepseek-chat', 'deepseek-reasoner']);
   const keptUpstream = await modelsServer(['new-one', 'keep-me']);
   const srv = await startServer();
@@ -494,7 +494,7 @@ test('POST /api/sources/test enables fetched models when none are enabled, and k
     assert.equal(narrowed.body.ok, true);
     const afterKept = await request(srv.base, 'GET', '/api/settings');
     const storedKept = afterKept.body.sources.find((source) => source.id === kept.body.id);
-    assert.deepEqual(storedKept.models, ['keep-me']);
+    assert.deepEqual(storedKept.models, ['keep-me', 'gone']);
     assert.deepEqual(storedKept.catalog, ['new-one', 'keep-me']);
 
     const overridden = await request(srv.base, 'POST', '/api/sources/test', {
