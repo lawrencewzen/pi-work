@@ -8,6 +8,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import { ConversationBusy, createRegistry, watchEvents } from '@earendil-works/pi-durable';
 import { agentEventData, mapConvStatusToAgent } from '../core/agents.mjs';
+import { redactAuthText } from '../core/grok-auth.mjs';
 import { formatSSE } from '../core/sse.mjs';
 import { presentContext } from '../core/usage.mjs';
 import {
@@ -18,6 +19,7 @@ import {
   synthesizeStatus,
 } from './events.mjs';
 import { FAUX_MODEL, openKernel, registerFaux } from './index.mjs';
+import { createKernelModels, explicitDemo } from './models.mjs';
 import { createWorkspaceExtension, scriptedDemoStep, toolsForRole } from './tools.mjs';
 
 const DEMO_RESPONSE_COUNT = 100;
@@ -51,11 +53,21 @@ function installDemo(models, env) {
  * Call `harness.resume()` only after unfinished rows are marked recovering,
  * so a restarted run keeps that status until it settles.
  */
-export async function openConversationKernel({ dataDir, store, demo, describeAgents, env = process.env } = {}) {
+export async function openConversationKernel({
+  dataDir,
+  store,
+  demo,
+  describeAgents,
+  getSettings,
+  grokAuth,
+  env = process.env,
+} = {}) {
   if (!dataDir) throw new Error('dataDir is required');
   if (!store) throw new Error('store is required');
+  const faux = demo === true || explicitDemo(env);
   const models = createModels();
-  if (demo) installDemo(models, env);
+  if (faux) installDemo(models, env);
+  const routes = faux ? null : createKernelModels({ models, getSettings, grokAuth, env });
   const registry = createRegistry();
   const watches = new Map();
   const tails = new Map();
@@ -122,7 +134,7 @@ export async function openConversationKernel({ dataDir, store, demo, describeAge
       if (!data) return;
       await emit(cid, 'agent', data);
     } catch (err) {
-      console.error(`PI_WORK_KERNEL_AGENT ${err instanceof Error ? err.message : err}`);
+      console.error(`PI_WORK_KERNEL_AGENT ${redactAuthText(err instanceof Error ? err.message : err)}`);
     }
   }
 
@@ -158,6 +170,15 @@ export async function openConversationKernel({ dataDir, store, demo, describeAge
     if (!view) return { messages: [], usage: null, busy: false };
     const mapped = messagesFromEntries(view.entries);
     return { ...mapped, busy: Boolean(view.live?.run) };
+  }
+
+  async function submissionBlocked(harnessId) {
+    const view = await readView(harnessId);
+    if (view?.live?.run) return true;
+    const inspection = await harness.inspect(context);
+    return inspection.submissions.some((record) => (
+      record.conversationId === harnessId && (record.status === 'queued' || record.status === 'placed')
+    ));
   }
 
   async function unfinished(harnessId) {
@@ -208,7 +229,7 @@ export async function openConversationKernel({ dataDir, store, demo, describeAge
       try {
         await applyBatch(row.id, batch, mapCtx);
       } catch (err) {
-        console.error(`PI_WORK_KERNEL_EVENT ${err instanceof Error ? err.stack : err}`);
+        console.error(`PI_WORK_KERNEL_EVENT ${redactAuthText(err instanceof Error ? (err.stack || err.message) : err)}`);
       }
     }));
   }
@@ -252,7 +273,7 @@ export async function openConversationKernel({ dataDir, store, demo, describeAge
       const created = await harness.createConversation({
         ownership: { kind: 'ownerless' },
         agent: {
-          ...(demo ? { model: FAUX_MODEL } : {}),
+          ...(faux ? { model: FAUX_MODEL } : {}),
           ...(fields.workspacePath ? { cwd: fields.workspacePath } : {}),
           tools: toolsForRole(role),
         },
@@ -280,6 +301,13 @@ export async function openConversationKernel({ dataDir, store, demo, describeAge
         return { status: 409, body: { error: 'err_send_blocked', status: conv?.status || 'stopped' } };
       }
       try {
+        if (routes) {
+          if (await submissionBlocked(conv.harnessId)) {
+            return { status: 409, body: { error: 'err_send_blocked', status: 'running' } };
+          }
+          const model = await routes.modelFor(conv);
+          await conversation.configure({ model: model ?? null }, context);
+        }
         const submission = await conversation.submit({
           type: 'input',
           content: text,
@@ -291,6 +319,7 @@ export async function openConversationKernel({ dataDir, store, demo, describeAge
         if (err instanceof ConversationBusy) {
           return { status: 409, body: { error: 'err_send_blocked', status: 'running' } };
         }
+        if (err instanceof Error && err.message) err.message = redactAuthText(err.message);
         throw err;
       }
     },
