@@ -11,6 +11,7 @@ import { createOrchestrator } from '../../src/core/orchestrator.mjs';
 import { createMemoryStore } from '../../src/store/memory.mjs';
 import { handoffInput } from '../../src/kernel/roles.mjs';
 import { ROOT } from './_root.mjs';
+import { startFakeModel } from './kernel-models-fake.mjs';
 
 const TOKEN = 'unit-kernel-roles-token';
 const STRIP = [
@@ -546,5 +547,77 @@ test('kernel path: killing during a pipeline handoff resumes the next step once'
     assert.equal(inputs.every((row) => row.status === 'done'), true);
   } finally {
     await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('kernel path: a two-step pipeline calls each role source', { timeout: 60000 }, async () => {
+  const keyA = 'sk-source-a-7777';
+  const keyB = 'sk-source-b-8888';
+  const sourceA = await startFakeModel({ mode: 'openai', text: 'from-a' });
+  const sourceB = await startFakeModel({ mode: 'openai', text: 'from-b' });
+  const srv = await startServer({ PI_WORK_KERNEL: 'durable' });
+  try {
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'sources' });
+    assert.equal((await request(srv.base, 'POST', '/api/roles', ALPHA)).status, 201);
+    assert.equal((await request(srv.base, 'POST', '/api/roles', BETA)).status, 201);
+    const createdA = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'Source A',
+      baseUrl: sourceA.baseUrl,
+      apiKey: keyA,
+      models: ['model-a'],
+    });
+    assert.equal(createdA.status, 201);
+    const createdB = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'Source B',
+      baseUrl: sourceB.baseUrl,
+      apiKey: keyB,
+      models: ['model-b'],
+    });
+    assert.equal(createdB.status, 201);
+    const bound = await request(srv.base, 'PUT', '/api/settings', {
+      models: {
+        alpha: { sourceId: createdA.body.id, model: 'model-a' },
+        beta: { sourceId: createdB.body.id, model: 'model-b' },
+      },
+    });
+    assert.equal(bound.status, 200);
+    assert.equal((await request(srv.base, 'POST', '/api/pipelines', {
+      id: 'split-sources',
+      name: 'Split sources',
+      steps: [
+        { role: 'alpha', input: 'user' },
+        { role: 'beta', input: 'previous' },
+      ],
+    })).status, 201);
+    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, {
+      title: 'two-sources',
+      pipelineId: 'split-sources',
+    });
+    assert.equal(conv.status, 201);
+    const sent = await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'ship it' });
+    assert.equal(sent.status, 202, JSON.stringify(sent.body));
+    const done = await waitFor(srv.base, conv.body.id, (body) => (
+      body.status === 'done' && body.messages?.some((msg) => msg.text === 'from-b')
+    ), 80);
+    assert.equal(done.status, 'done', srv.logs());
+    assert.equal(done.pipelineStep, 1);
+    const hits = (seen) => seen.filter((hit) => String(hit.path).endsWith('/chat/completions'));
+    const hitsA = hits(sourceA.seen);
+    const hitsB = hits(sourceB.seen);
+    assert.deepEqual(hitsA.map((hit) => hit.keyTail), [keyA.slice(-4)]);
+    assert.deepEqual(hitsB.map((hit) => hit.keyTail), [keyB.slice(-4)]);
+    assert.deepEqual(hitsA.map((hit) => hit.model), ['model-a']);
+    assert.deepEqual(hitsB.map((hit) => hit.model), ['model-b']);
+    console.log(`KERNEL_ROLES_SOURCES ${JSON.stringify({
+      a: hitsA.map((hit) => ({ path: hit.path, keyTail: hit.keyTail, model: hit.model })),
+      b: hitsB.map((hit) => ({ path: hit.path, keyTail: hit.keyTail, model: hit.model })),
+    })}`);
+  } finally {
+    await stopProcess(srv.proc);
+    await sourceA.close();
+    await sourceB.close();
+    await rm(srv.dataDir, { recursive: true, force: true });
   }
 });
