@@ -2,9 +2,10 @@
 
 ## 范围
 - 单元测试（`node:test`）：纯函数与编排器核心，见 `tests/unit/`。
-- 端到端（Playwright）：真实启动 `server.mjs`（faux 模型），浏览器操作三栏界面，见 `tests/e2e/`。
+- 功能验收：`tests/e2e/*.md`。一个功能一个文件，含步骤和预期。QA 在真实服务器上手工执行，全部通过才接受。规则见 `tests/e2e/README.md`。新功能 PR 必须同时改这里的对应用例。
+- `tests/e2e/*.spec.mjs` 是旧的 Playwright 子集，不代替手工清单。
 - 契约：`docs/API_CONTRACT.md`（模块路径、REST、SSE、环境变量、faux 脚本、data-testid）。实现必须按此对齐，改契约需同步改测试。
-- 不在范围：真实模型全流程（由总控验收阶段做）、视觉像素比对、Windows 专属行为（后续补）。
+- 不在范围：视觉像素比对、Windows 专属行为（后续补）。真实模型的手工验收走 `tests/e2e/*.md`，不在 Playwright 子集里。
 
 ## 用例
 | # | 层 | 用例 | 文件 |
@@ -27,7 +28,7 @@
 | E9 | E2E | 执行中 `kill -9`，同数据目录重启 → 恢复中 → 完成；bash 副作用和写文件不重复，工具行不重复 | e2e/recovery |
 
 ## 判定
-全部单元 + E2E 通过才算交付；失败打回写代码 Agent。测试 Agent 只改测试/契约，不改功能代码。
+全部单元测试通过，并且 `tests/e2e/*.md` 由 QA 在真实服务器上手工通过，才算交付。`*.spec.mjs` 失败仍须修，但不能代替手工清单。测试 Agent 只改测试/契约，不改功能代码。
 
 ## 运行
 ```bash
