@@ -211,6 +211,20 @@ SSE 映射（`spike/lib/events.mjs` 已按这个打日志）：
 
 T5-11 之前产品行为就是今天的行为。T5-11 之后产品行为是契约加上 2f 的决定。
 
+### T5-2 开关
+
+`PI_WORK_KERNEL=durable` 时，进程启动打开 `<dataDir>/harness/session.sqlite` 上的 Pi Durable Harness，并调用 `harness.resume()`。下面这些接口改走内核，其它接口和默认路径不动：
+
+- `POST /api/workspaces/:wid/conversations`
+- `GET /api/workspaces/:wid/conversations`
+- `GET /api/conversations/:cid`
+- `POST /api/conversations/:cid/messages`
+- `GET /api/conversations/:cid/events`
+
+未设置，或设成其它值时，这些接口仍走 `src/core/orchestrator.mjs`。Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
+
+演示模型仍只在 `PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`，不是编排器那份剧本 JSON。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。可选：`PI_WORK_FAUX_TEXT` 指定演示回复（默认 `ok`）；`PI_WORK_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `PI_WORK_FAUX_HOLD_READY` 写出一个就绪文件。
+
 ## 2f. 风险和要拍板的决定
 
 1. **暂停。** 内核只能中止，不能把一次工具调用冻住再thaw。两个可落地的做法：甲，暂停 = `abort()`，继续 = 用新的 `requestId` 提交「从已有工具结果接着做」；进行中的 `replay: "unsafe"` 工具不会重跑，已写的一半文件留在磁盘。乙，暂停只停止宿主往模型发下一次请求，已经在跑的工具让它跑完。乙更接近「不要弄坏写到一半的文件」，甲更接近现在 `pause()` 立刻 abort 控制器的行为。在选定之前，T5-7 不实现暂停。

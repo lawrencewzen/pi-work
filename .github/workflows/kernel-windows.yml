@@ -19,3 +19,5 @@ jobs:
       - run: npm ci
       - name: Pi Durable kernel unit tests
         run: node --test tests/unit/kernel.test.mjs
+      - name: Pi Durable conversation HTTP tests
+        run: node --test tests/unit/kernel-conversations.test.mjs

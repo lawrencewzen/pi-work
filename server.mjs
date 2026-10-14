@@ -68,6 +68,7 @@ import {
 import { resolveAllowedWorkspacePath, defaultWorkspaceRoot } from './src/core/workspace-guard.mjs';
 import { acquireDataDirLock } from './src/core/lock.mjs';
 import { presentContext } from './src/core/usage.mjs';
+import { kernelRequested, openConversationKernel } from './src/kernel/conversations.mjs';
 import fs from 'node:fs/promises';
 
 // 内置 fetch 默认不读 HTTP(S)_PROXY；配置了代理时让模型请求也走它（遵守 NO_PROXY）
@@ -249,6 +250,14 @@ function sendGrokError(res, err) {
   sendJson(res, status, { error: code });
 }
 
+function publicConversation(conv) {
+  if (!conv) return conv;
+  const out = { ...conv };
+  delete out.harnessId;
+  delete out.hostMark;
+  return out;
+}
+
 function liveStatus(orch, conv) {
   const s = orch.status(conv.id);
   if (s && s.status && s.status !== 'idle') {
@@ -339,12 +348,17 @@ function parseCatalogId(raw) {
 }
 
 const store = createSqliteStore(DATA_DIR);
+let kernelApi = null;
 
 function shutdown() {
   try { store.close(); } catch { /* ignore */ }
   try { dataLock?.release?.(); } catch { /* ignore */ }
   dataLock = null;
-  process.exit(0);
+  if (!kernelApi) {
+    process.exit(0);
+    return;
+  }
+  kernelApi.close().finally(() => process.exit(0));
 }
 process.on('exit', () => { try { dataLock?.release?.(); } catch { /* ignore */ } });
 for (const sig of ['SIGINT', 'SIGTERM']) {
@@ -490,6 +504,20 @@ const orch = createOrchestrator({
   }),
   stallMs: Number(process.env.PI_WORK_STALL_MS) || 120_000,
 });
+
+if (kernelRequested()) {
+  try {
+    kernelApi = await openConversationKernel({
+      dataDir: DATA_DIR,
+      store,
+      demo: envRequestsFaux(),
+      describeAgents: agentsFor,
+    });
+  } catch (err) {
+    console.error(`PI_WORK_KERNEL_OPEN_FAILED ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
 
 await orch.recover();
 
@@ -801,6 +829,18 @@ async function routeApi(req, res, url) {
       const pipe = await store.getPipeline(body.pipelineId);
       if (!pipe) { sendJson(res, 400, { errors: ['unknown pipeline'] }); return; }
     }
+    if (kernelApi) {
+      const conv = await kernelApi.createConversation({
+        workspaceId: wid,
+        workspacePath: ws.path,
+        title: body.title || 'New conversation',
+        roleId: body.roleId,
+        pipelineId: body.pipelineId,
+        status: 'idle',
+      });
+      sendJson(res, 201, { id: conv.id, workspaceId: conv.workspaceId, title: conv.title, status: 'idle' });
+      return;
+    }
     const conv = await store.createConversation({
       workspaceId: wid,
       workspacePath: ws.path,
@@ -816,7 +856,13 @@ async function routeApi(req, res, url) {
     const wid = decodeURIComponent(match[1]);
     const q = url.searchParams.get('q') || undefined;
     const list = await store.listConversations(wid, { q });
-    sendJson(res, 200, list.map((c) => liveStatus(orch, c)));
+    if (kernelApi) {
+      const presented = [];
+      for (const item of list) presented.push(publicConversation(await kernelApi.present(item)));
+      sendJson(res, 200, presented);
+      return;
+    }
+    sendJson(res, 200, list.map((c) => publicConversation(liveStatus(orch, c))));
     return;
   }
 
@@ -878,6 +924,32 @@ async function routeApi(req, res, url) {
     const cid = decodeURIComponent(match[1]);
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
+    if (kernelApi) {
+      const live = await kernelApi.present(conv, { includeMessages: true });
+      const messages = live.messages;
+      const agents = await agentsFor(live, messages);
+      const context = presentContext(live.usage);
+      const llmError = await lastLlmError(cid, live.status);
+      sendJson(res, 200, {
+        id: live.id,
+        title: live.title,
+        status: live.status,
+        autoContinues: live.autoContinues,
+        retries: live.retries,
+        lastCheckpointAt: live.lastCheckpointAt,
+        currentStep: live.currentStep,
+        roleId: live.roleId || null,
+        pipelineId: live.pipelineId || null,
+        pipelineStep: live.pipelineStep || 0,
+        messages,
+        agents,
+        usage: context.usage,
+        contextWindow: context.contextWindow,
+        contextLabel: context.contextLabel,
+        ...(llmError ? { llmError } : {}),
+      });
+      return;
+    }
     const live = liveStatus(orch, conv);
     const messages = await store.getMessages(cid);
     const agents = await agentsFor(live, messages);
@@ -960,6 +1032,11 @@ async function routeApi(req, res, url) {
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
     const body = await readBody(req);
+    if (kernelApi) {
+      const posted = await kernelApi.postMessage(conv, body.text || '');
+      sendJson(res, posted.status, posted.body);
+      return;
+    }
     const runId = randomUUID();
     const ws = conv.workspaceId ? await store.getWorkspace(conv.workspaceId) : null;
     const result = await orch.start(cid, {
@@ -1030,6 +1107,10 @@ async function routeApi(req, res, url) {
     const cid = decodeURIComponent(match[1]);
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
+    if (kernelApi) {
+      await kernelApi.streamEvents(req, res, cid, { headers: SECURITY_HEADERS });
+      return;
+    }
     const last = req.headers['last-event-id'];
     const afterId = last != null && last !== '' ? Number(last) : 0;
     res.writeHead(200, {
