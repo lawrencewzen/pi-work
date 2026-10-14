@@ -46,6 +46,10 @@ const state = {
 
 let runningPollInterval = null;
 let convMetaRefreshTimer = null;
+let workspaceTreeRefreshTimer = null;
+
+const FILE_TREE_TOOLS = new Set(['write', 'edit', 'bash']);
+const FILE_TREE_RUN_DONE = new Set(['done', 'stopped', 'failed']);
 
 // ============================================================================
 // Utilities
@@ -669,6 +673,10 @@ function resetRightPanelAndStatus() {
 
 export async function selectWorkspace(wid) {
   if (state.activeWorkspaceId === wid) return;
+  if (workspaceTreeRefreshTimer) {
+    clearTimeout(workspaceTreeRefreshTimer);
+    workspaceTreeRefreshTimer = null;
+  }
   if (state.eventSource) {
     state.eventSource.close();
     state.eventSource = null;
@@ -686,38 +694,102 @@ export async function selectWorkspace(wid) {
   await loadConversations(wid);
 }
 
+function treeEntriesEqual(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i]?.path !== b[i]?.path || a[i]?.type !== b[i]?.type) return false;
+  }
+  return true;
+}
+
 export async function loadWorkspaceTree() {
   const wid = state.activeWorkspaceId;
   if (!wid) {
     state.workspaceTree = [];
     state.workspaceTreeFor = null;
-    return;
+    return false;
   }
   const gen = ++state.treeGen;
   state.treeLoadingFor = wid;
   try {
     const data = await api(`/api/workspaces/${encodeURIComponent(wid)}/tree`);
-    if (gen !== state.treeGen || state.activeWorkspaceId !== wid) return;
-    state.workspaceTree = Array.isArray(data?.entries) ? data.entries : [];
+    if (gen !== state.treeGen || state.activeWorkspaceId !== wid) return false;
+    const next = Array.isArray(data?.entries) ? data.entries : [];
+    const changed = state.workspaceTreeFor !== wid || !treeEntriesEqual(state.workspaceTree, next);
+    state.workspaceTree = next;
     state.workspaceTreeFor = wid;
+    return changed;
   } catch {
-    if (gen !== state.treeGen || state.activeWorkspaceId !== wid) return;
+    if (gen !== state.treeGen || state.activeWorkspaceId !== wid) return false;
+    if (state.workspaceTreeFor === wid) return false;
     state.workspaceTree = [];
     state.workspaceTreeFor = wid;
+    return true;
   } finally {
-    if (state.treeLoadingFor === wid) state.treeLoadingFor = null;
+    if (gen === state.treeGen && state.treeLoadingFor === wid) state.treeLoadingFor = null;
   }
+}
+
+function workspaceTreeRowsHtml() {
+  const wid = state.activeWorkspaceId;
+  const ready = state.workspaceTreeFor === wid;
+  if (!wid || (ready && !state.workspaceTree.length)) {
+    return `<div class="file-tree-empty">${escapeHtml(t('file_tree_empty'))}</div>`;
+  }
+  if (!ready) {
+    return `<div class="file-tree-empty">${escapeHtml(t('file_tree_loading'))}</div>`;
+  }
+  return state.workspaceTree.map((ent) => {
+    const depth = String(ent.path || '').split('/').length - 1;
+    const name = String(ent.path || '').split('/').pop();
+    const pad = 8 + depth * 12;
+    if (ent.type === 'dir') {
+      return `<div class="file-tree-row is-dir" style="padding-left:${pad}px">${escapeHtml(name)}/</div>`;
+    }
+    const active = ent.path === state.activeFilePath ? ' active' : '';
+    return `<button type="button" class="file-tree-row${active}" style="padding-left:${pad}px" data-testid="workspace-file" data-action="load-workspace-file" data-path="${escapeHtml(ent.path)}">${escapeHtml(name)}</button>`;
+  }).join('');
+}
+
+function paintWorkspaceTree() {
+  if (state.activeRightTab !== 'file') return;
+  if (state.workspaceTreeFor !== state.activeWorkspaceId) return;
+  const tree = document.querySelector('#right-viewport .file-tree');
+  if (!tree) {
+    renderRightPanel();
+    return;
+  }
+  const top = tree.scrollTop;
+  tree.innerHTML = workspaceTreeRowsHtml();
+  tree.scrollTop = top;
 }
 
 function ensureWorkspaceTree() {
   const wid = state.activeWorkspaceId;
   if (!wid) return;
   if (state.workspaceTreeFor === wid || state.treeLoadingFor === wid) return;
-  loadWorkspaceTree().then(() => {
-    if (state.activeRightTab === 'file' && state.workspaceTreeFor === state.activeWorkspaceId) {
-      renderRightPanel();
-    }
+  loadWorkspaceTree().then((changed) => {
+    if (changed) paintWorkspaceTree();
   });
+}
+
+function toolWritesWorkspace(tool) {
+  return FILE_TREE_TOOLS.has(String(tool?.name || '').trim().toLowerCase());
+}
+
+// write/edit/bash land files before the next paint. Step and run events cover
+// bash-created paths and pipeline handoff, including when the tool row was missed.
+function scheduleWorkspaceTreeRefresh() {
+  const wid = state.activeWorkspaceId;
+  if (!wid) return;
+  if (workspaceTreeRefreshTimer) clearTimeout(workspaceTreeRefreshTimer);
+  workspaceTreeRefreshTimer = setTimeout(() => {
+    workspaceTreeRefreshTimer = null;
+    if (state.activeWorkspaceId !== wid) return;
+    loadWorkspaceTree().then((changed) => {
+      if (changed) paintWorkspaceTree();
+    });
+  }, 120);
 }
 
 export async function selectConversation(cid) {
@@ -908,6 +980,9 @@ export function connectSSE(cid) {
   sse.addEventListener('status', (ev) => {
     try {
       const data = JSON.parse(ev.data);
+      if (state.activeConversationId === cid && FILE_TREE_RUN_DONE.has(data.status)) {
+        scheduleWorkspaceTreeRefresh();
+      }
       if (state.activeConversationData && state.activeConversationId === cid) {
         state.activeConversationData.status = data.status;
         if (data.autoContinues != null) state.activeConversationData.autoContinues = data.autoContinues;
@@ -931,6 +1006,9 @@ export function connectSSE(cid) {
   sse.addEventListener('agent', (ev) => {
     try {
       const data = JSON.parse(ev.data);
+      if (state.activeConversationId === cid && data.status === 'done') {
+        scheduleWorkspaceTreeRefresh();
+      }
       if (!state.activeConversationData || state.activeConversationId !== cid) return;
       state.activeConversationData.agents = state.activeConversationData.agents || [];
       const idx = state.activeConversationData.agents.findIndex((a) => a.id === data.id);
@@ -1002,8 +1080,11 @@ export function connectSSE(cid) {
   sse.addEventListener('tool.end', (ev) => {
     try {
       const data = JSON.parse(ev.data);
-      if (!state.activeConversationData || state.activeConversationId !== cid) return;
       const tool = data.tool;
+      if (state.activeConversationId === cid && toolWritesWorkspace(tool)) {
+        scheduleWorkspaceTreeRefresh();
+      }
+      if (!state.activeConversationData || state.activeConversationId !== cid) return;
       const msgs = state.activeConversationData.messages = state.activeConversationData.messages || [];
       let m = msgs.find((msg) => msg.tool && msg.tool.id === tool.id);
       if (!m) {
@@ -1054,6 +1135,7 @@ export function connectSSE(cid) {
   sse.addEventListener('checkpoint', (ev) => {
     try {
       const data = JSON.parse(ev.data);
+      if (state.activeConversationId === cid) scheduleWorkspaceTreeRefresh();
       if (state.activeConversationData && state.activeConversationId === cid) {
         state.activeConversationData.lastCheckpointAt = data.at;
         state.activeConversationData.currentStep = data.step;
@@ -2129,27 +2211,7 @@ export function renderRightPanel() {
 }
 
 function renderFileBrowserHtml() {
-  const wid = state.activeWorkspaceId;
-  const ready = state.workspaceTreeFor === wid;
-  let treeHtml;
-  if (!wid) {
-    treeHtml = `<div class="file-tree-empty">${escapeHtml(t('file_tree_empty'))}</div>`;
-  } else if (!ready) {
-    treeHtml = `<div class="file-tree-empty">${escapeHtml(t('file_tree_loading'))}</div>`;
-  } else if (!state.workspaceTree.length) {
-    treeHtml = `<div class="file-tree-empty">${escapeHtml(t('file_tree_empty'))}</div>`;
-  } else {
-    treeHtml = state.workspaceTree.map((ent) => {
-      const depth = String(ent.path || '').split('/').length - 1;
-      const name = String(ent.path || '').split('/').pop();
-      const pad = 8 + depth * 12;
-      if (ent.type === 'dir') {
-        return `<div class="file-tree-row is-dir" style="padding-left:${pad}px">${escapeHtml(name)}/</div>`;
-      }
-      const active = ent.path === state.activeFilePath ? ' active' : '';
-      return `<button type="button" class="file-tree-row${active}" style="padding-left:${pad}px" data-testid="workspace-file" data-action="load-workspace-file" data-path="${escapeHtml(ent.path)}">${escapeHtml(name)}</button>`;
-    }).join('');
-  }
+  const treeHtml = workspaceTreeRowsHtml();
 
   let preview;
   if (state.activeFilePath && state.activeFileContent != null && !looksBinary(state.activeFileContent)) {
