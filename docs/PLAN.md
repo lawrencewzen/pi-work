@@ -59,7 +59,7 @@
 | 需求/方案、总控、最终验收 | 小劳（Grok Bot） | 本方案、验收截图 |
 | UI 设计 | Antigravity CLI（agy，Gemini 3.8 Flash） | 先出静态高保真页面（HTML/CSS）给劳伦斯看 |
 | 写代码 | Grok CLI（grok-4.6） | 后端工具与 API、前端实现 |
-| 写测试（在写代码之前完成） | 独立的测试 Agent（Grok Bot 子 Agent，不和写代码的是同一个） | 单元测试（`node:test`）、端到端测试（Playwright） |
+| 写测试、跑验收用例 | Cursor cloud agent（可以和写代码的是同一个，也可以单独派） | 单元测试（`node:test`）、端到端测试（Playwright） |
 | 代码审计 | 独立的审计 Agent | 安全审查（路径穿越、命令注入、鉴权）、恢复逻辑审查、问题清单 |
 
 **流程**
