@@ -308,15 +308,20 @@ function orderedCustom(ctx) {
 function matches(query, role, ctx) {
   const q = String(query || '').trim().toLowerCase();
   if (!q) return true;
-  const title = roleTitle(role, ctx).toLowerCase();
+  const title = listTitle(ctx, role).toLowerCase();
   const desc = String(role.description || '').toLowerCase();
   const name = String(role.name || '').toLowerCase();
   return title.includes(q) || desc.includes(q) || name.includes(q);
 }
 
+function listTitle(ctx, role) {
+  if (isMain(role)) return ctx.t('ag_group_main');
+  return roleTitle(role, ctx);
+}
+
 function itemHtml(ctx, role) {
   const ui = ensureAgentsUi(ctx.state);
-  const title = roleTitle(role, ctx);
+  const title = listTitle(ctx, role);
   const on = !ui.creating && ui.selectedId === role.id;
   const blurb = String(role.description || '').replace(/\s+/g, ' ').trim();
   return (
@@ -553,13 +558,16 @@ function editorHtml(ctx) {
     `<textarea id="ag-desc" data-testid="agent-description" placeholder="${ctx.escapeHtml(ctx.t('ag_when_ph'))}">${ctx.escapeHtml(draft.description || '')}</textarea>` +
     `<div class="ag-hint">${ctx.escapeHtml(ctx.t('ag_when_hint'))}</div></div>`
   );
-  const headTitle = ui.creating ? ctx.t('ag_new_title') : title;
+  const headTitle = ui.creating ? ctx.t('ag_new_title') : (main ? ctx.t('ag_group_main') : title);
   return (
     `<div class="ag-edit" id="ag-edit" data-edit-key="${ctx.escapeHtml(editKey(ui))}">` +
     `<div class="ag-ehead">` +
+    `<div class="ag-ehead-row">` +
     `<div class="ag-av ag-av-lg">${ctx.escapeHtml(ui.creating && !draft.name.trim() ? '＋' : initial(headTitle))}</div>` +
-    `<div class="ag-tt"><div class="ag-titleline"><b>${ctx.escapeHtml(headTitle)}</b>${tag}</div><div>${ctx.escapeHtml(note)}</div></div>` +
+    `<div class="ag-tt"><div class="ag-titleline"><b data-testid="agent-heading">${ctx.escapeHtml(headTitle)}</b>${tag}</div></div>` +
     copy + reset +
+    `</div>` +
+    `<div class="ag-enote" title="${ctx.escapeHtml(note)}">${ctx.escapeHtml(note)}</div>` +
     `</div>` +
     (ui.creating ? starters(ctx) : '') +
     `<div class="ag-row2 ag-sect">` +

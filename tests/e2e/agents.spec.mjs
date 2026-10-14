@@ -135,6 +135,8 @@ test('restores a preset, keeps its model, and hides delete on built-ins', async 
   await openAgents(page);
 
   await selectAgent(page, 'default');
+  await expect(page.locator('[data-testid=agent-item][data-role-id=default] b')).toHaveText('主 Agent');
+  await expect(page.getByTestId('agent-heading')).toHaveText('主 Agent');
   await expect(page.getByTestId('agent-description')).toHaveCount(0);
   await expect(page.getByTestId('agent-delete')).toHaveCount(0);
   await expect(page.getByTestId('agent-preset-tag')).toHaveCount(0);
@@ -142,6 +144,20 @@ test('restores a preset, keeps its model, and hides delete on built-ins', async 
   await expect(page.getByTestId('agent-name')).toHaveValue('默认');
 
   await selectAgent(page, 'coder');
+  const intro = page.locator('.ag-head p');
+  await expect(intro).toHaveText('主 Agent 理解需求、拆任务、汇总结果；子 Agent 是它派活用的角色模板，按这里的模型、工具和提示词生成。');
+  const introLines = await intro.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return range.getClientRects().length;
+  });
+  expect(introLines).toBe(1);
+  await page.setViewportSize({ width: 1000, height: 760 });
+  const note = page.locator('.ag-enote');
+  await expect(note).toHaveAttribute('title', '预设的不能删除；改坏了可以恢复默认');
+  const noteLines = await note.evaluate((el) => el.scrollHeight <= el.clientHeight + 1);
+  expect(noteLines).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.getByTestId('agent-preset-tag')).toHaveText('预设子 Agent');
   await expect(page.getByTestId('agent-delete')).toHaveCount(0);
   await expect(page.getByTestId('agent-reset')).toBeVisible();

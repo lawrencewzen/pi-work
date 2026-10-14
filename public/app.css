@@ -3193,11 +3193,20 @@ button.file-tree-row:hover,
 .ag-foot { padding: 10px 12px; border-top: 1px solid var(--border-subtle); }
 .ag-foot .btn { width: 100%; justify-content: center; }
 .ag-edit { flex: 1; min-width: 0; overflow: auto; padding: 18px 28px 24px; }
-.ag-ehead { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
-.ag-tt { flex: 1; min-width: 180px; }
-.ag-titleline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ag-titleline b { font-size: 15px; font-weight: 600; }
-.ag-tt > div:last-child { color: var(--text-muted); font-size: 12px; }
+.ag-ehead { display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin-bottom: 6px; }
+.ag-ehead-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ag-ehead-row .btn { flex-shrink: 0; }
+.ag-tt { flex: 1; min-width: 0; }
+.ag-titleline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ag-titleline b { font-size: 15px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-enote {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ag-tag {
   font-size: 11px;
   padding: 0 6px;
