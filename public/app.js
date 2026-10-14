@@ -60,6 +60,8 @@ const state = {
   workflowQuery: '',
   expandedTools: new Set(),
   expandedSubagents: new Set(),
+  viewingAgentId: null,
+  viewingAgent: null,
   workspaceTree: [],
   workspaceTreeFor: null,
   treeLoadingFor: null,
@@ -70,6 +72,8 @@ const state = {
 let runningPollInterval = null;
 let convMetaRefreshTimer = null;
 let workspaceTreeRefreshTimer = null;
+let subagentPollTimer = null;
+let viewingRefreshTimer = null;
 
 const FILE_TREE_TOOLS = new Set(['write', 'edit', 'bash']);
 const FILE_TREE_RUN_DONE = new Set(['done', 'stopped', 'failed']);
@@ -839,6 +843,7 @@ export async function selectConversation(cid) {
     state.eventSource.close();
     state.eventSource = null;
   }
+  clearSubagentView();
 
   state.activeConversationId = cid;
   localStorage.setItem('piwork_active_conv', cid);
@@ -856,6 +861,11 @@ export async function selectConversation(cid) {
       if (state.activeConversationData.title) {
         const item = state.conversations.find((c) => c.id === cid);
         if (item) item.title = state.activeConversationData.title;
+      }
+      const item = state.conversations.find((c) => c.id === cid);
+      if (item) {
+        item.status = state.activeConversationData.status || item.status;
+        item.archived = isArchivedConversation(state.activeConversationData);
       }
     }
   } catch {
@@ -954,6 +964,7 @@ export async function refreshConversationMeta(cid) {
           if (item.title) state.activeConversationData.title = item.title;
           if (item.autoContinues != null) state.activeConversationData.autoContinues = item.autoContinues;
           if (item.status) state.activeConversationData.status = item.status;
+          state.activeConversationData.archived = isArchivedConversation(item);
           if (item.lastCheckpointAt) state.activeConversationData.lastCheckpointAt = item.lastCheckpointAt;
         }
       }
@@ -970,6 +981,7 @@ export async function refreshConversationMeta(cid) {
     }
     if (conv.autoContinues != null) state.activeConversationData.autoContinues = conv.autoContinues;
     if (conv.status) state.activeConversationData.status = conv.status;
+    state.activeConversationData.archived = isArchivedConversation(conv);
     if (conv.status === 'failed') {
       if (conv.llmError) state.activeConversationData.llmError = conv.llmError;
     } else if (conv.status && conv.status !== 'recovering') {
@@ -1062,6 +1074,7 @@ export function connectSSE(cid) {
       }
       renderConversations();
       renderChatThread();
+      if (data.id && data.id === state.viewingAgentId) scheduleViewingAgentRefresh(cid);
       scheduleConversationRefresh(cid);
     } catch { /* ignore */ }
   });
@@ -1293,6 +1306,7 @@ runningPollInterval = setInterval(() => {
 // ============================================================================
 export async function sendMessage(text) {
   if (!text || !text.trim()) return;
+  if (isArchivedConversation(state.activeConversationData) || state.viewingAgentId) return;
   if (!state.activeConversationId) {
     // 没有选中的对话时，直接发送即新建一个对话；失败则把内容放回输入框
     const { roleId, pipelineId } = state.draft;
@@ -1342,7 +1356,7 @@ export async function sendMessage(text) {
 }
 
 export async function pauseConversation() {
-  if (!state.activeConversationId) return;
+  if (!state.activeConversationId || isArchivedConversation(state.activeConversationData)) return;
   try {
     const res = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/pause`, 'POST');
     updateConversationStatus(state.activeConversationId, res.status || 'paused');
@@ -1356,7 +1370,7 @@ export async function pauseConversation() {
 }
 
 export async function resumeConversation() {
-  if (!state.activeConversationId) return;
+  if (!state.activeConversationId || isArchivedConversation(state.activeConversationData)) return;
   try {
     const res = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/resume`, 'POST');
     updateConversationStatus(state.activeConversationId, res.status || 'running');
@@ -1370,7 +1384,7 @@ export async function resumeConversation() {
 }
 
 export async function stopConversation() {
-  if (!state.activeConversationId) return;
+  if (!state.activeConversationId || isArchivedConversation(state.activeConversationData)) return;
   try {
     const res = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/stop`, 'POST');
     updateConversationStatus(state.activeConversationId, res.status || 'stopped');
@@ -1487,6 +1501,186 @@ export function renderSidebarWorkspaces() {
     .join('');
 }
 
+export function isArchivedConversation(conv) {
+  return Boolean(conv && (conv.archived === true || conv.status === 'archived'));
+}
+
+export function isRealSubagent(agent) {
+  return String(agent?.id || '').includes(':sub:');
+}
+
+/** The agents payload has no mode. A spawn tool, or a name that is not the role, means background. */
+export function isBackgroundSubagent(agent, conv = state.activeConversationData) {
+  if (!isRealSubagent(agent)) return false;
+  if (agent.mode === 'background') return true;
+  if (agent.mode === 'foreground') return false;
+  const name = String(agent.name || '');
+  for (const message of conv?.messages || []) {
+    const input = message?.tool?.input;
+    if (message?.tool?.name === 'subagent' && String(input?.action || '') === 'spawn' && name && String(input?.name || '') === name) {
+      return true;
+    }
+  }
+  const role = (state.roles || []).find((item) => item.id === agent.roleId);
+  if (!role) return false;
+  return name !== role.name && name !== role.id;
+}
+
+function agentProgressLabel(agent) {
+  if (agent?.totalSteps != null && Number(agent.totalSteps) > 0) return `${agent.step || 0}/${agent.totalSteps}`;
+  if (agent?.step != null && Number(agent.step) > 0) return String(agent.step);
+  return '';
+}
+
+function oneLine(text, max = 72) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  if (flat.length <= max) return flat;
+  return `${flat.slice(0, max - 1)}…`;
+}
+
+function realSubagentName(agent) {
+  if (isBackgroundSubagent(agent)) return agent.name || agent.roleId || t('agent_name');
+  const roleId = String(agent?.roleId || '').toLowerCase();
+  if (ROLE_LABEL_KEYS[roleId]) return localizeRoleLabel(agent.roleId);
+  return agent?.name || localizeRoleLabel(agent?.roleId);
+}
+
+function clearSubagentView() {
+  state.viewingAgentId = null;
+  state.viewingAgent = null;
+  if (subagentPollTimer) {
+    clearTimeout(subagentPollTimer);
+    subagentPollTimer = null;
+  }
+  if (viewingRefreshTimer) {
+    clearTimeout(viewingRefreshTimer);
+    viewingRefreshTimer = null;
+  }
+}
+
+function scheduleSubagentPoll() {
+  if (subagentPollTimer) {
+    clearTimeout(subagentPollTimer);
+    subagentPollTimer = null;
+  }
+  const status = state.viewingAgent?.status;
+  if (!state.viewingAgentId || (status !== 'running' && status !== 'waiting')) return;
+  const cid = state.activeConversationId;
+  const aid = state.viewingAgentId;
+  subagentPollTimer = setTimeout(() => {
+    subagentPollTimer = null;
+    refreshViewingAgent(cid, aid).catch(() => {});
+  }, 1500);
+}
+
+function scheduleViewingAgentRefresh(cid) {
+  if (!state.viewingAgentId || state.activeConversationId !== cid) return;
+  if (viewingRefreshTimer) clearTimeout(viewingRefreshTimer);
+  const aid = state.viewingAgentId;
+  viewingRefreshTimer = setTimeout(() => {
+    viewingRefreshTimer = null;
+    refreshViewingAgent(cid, aid).catch(() => {});
+  }, 200);
+}
+
+export async function refreshViewingAgent(cid, aid) {
+  if (!cid || !aid) return;
+  try {
+    const body = await api(`/api/conversations/${encodeURIComponent(cid)}/agents/${encodeURIComponent(aid)}/messages`);
+    if (state.activeConversationId !== cid || state.viewingAgentId !== aid) return;
+    state.viewingAgent = { ...body, loading: false };
+    const agents = state.activeConversationData?.agents;
+    if (Array.isArray(agents)) {
+      const idx = agents.findIndex((agent) => agent.id === aid);
+      if (idx >= 0) {
+        agents[idx] = {
+          ...agents[idx],
+          status: body.status || agents[idx].status,
+          name: body.name || agents[idx].name,
+          roleId: body.roleId || agents[idx].roleId,
+        };
+      }
+    }
+    renderConversations();
+    renderCenterNotice();
+    renderChatThread();
+    syncComposerLock();
+    scheduleSubagentPoll();
+  } catch {
+    if (state.activeConversationId === cid && state.viewingAgentId === aid && state.viewingAgent) {
+      state.viewingAgent.loading = false;
+      renderChatThread();
+    }
+  }
+}
+
+export async function openSubagent(agentId) {
+  if (!isRealSubagent({ id: agentId }) || !state.activeConversationId) return;
+  const cid = state.activeConversationId;
+  const known = (state.activeConversationData?.agents || []).find((agent) => agent.id === agentId);
+  state.viewingAgentId = agentId;
+  state.viewingAgent = {
+    ...(known || { id: agentId }),
+    messages: state.viewingAgent?.id === agentId ? (state.viewingAgent.messages || []) : [],
+    loading: true,
+  };
+  renderConversations();
+  renderCenterNotice();
+  renderChatThread();
+  syncComposerLock();
+  await refreshViewingAgent(cid, agentId);
+}
+
+export function closeSubagentView() {
+  if (!state.viewingAgentId) return;
+  clearSubagentView();
+  renderConversations();
+  renderCenterNotice();
+  renderChatThread();
+  syncComposerLock();
+}
+
+export async function forkFromHistory() {
+  const cid = state.activeConversationId;
+  if (!cid || !isArchivedConversation(state.activeConversationData)) return;
+  const btn = document.querySelector('[data-testid="archived-fork"]');
+  if (btn) btn.disabled = true;
+  try {
+    const created = await api(`/api/conversations/${encodeURIComponent(cid)}/from-history`, 'POST', {});
+    clearSubagentView();
+    if (created?.id) localStorage.setItem('piwork_active_conv', created.id);
+    if (state.activeWorkspaceId) await loadConversations(state.activeWorkspaceId);
+    if (created?.id && state.activeConversationId !== created.id) await selectConversation(created.id);
+  } catch (err) {
+    showToast(isToastKey(err.message) ? err.message : 'err_archived');
+    renderCenterNotice();
+  }
+}
+
+function renderRealSubagentRow(agent) {
+  const background = isBackgroundSubagent(agent);
+  const name = realSubagentName(agent);
+  const st = agent.status || 'waiting';
+  const progressStr = agentProgressLabel(agent);
+  const last = oneLine(agent.lastText);
+  const open = state.viewingAgentId === agent.id;
+  return (
+    `<div class="sub-agent-row is-real${open ? ' is-open' : ''}" data-testid="subagent-row" data-agent-id="${escapeHtml(agent.id || '')}" data-role-id="${escapeHtml(agent.roleId || '')}" data-mode="${background ? 'background' : 'foreground'}" data-status="${escapeHtml(st)}" data-action="open-subagent" title="${escapeHtml(last || name)}">` +
+    `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
+    `<span class="sub-agent-copy">` +
+    `<span class="sub-agent-line">` +
+    `<span class="sub-agent-name">${escapeHtml(name)}</span>` +
+    (background ? `<span class="sub-agent-bg" data-testid="subagent-background">${escapeHtml(t('subagent_background'))}</span>` : '') +
+    (progressStr ? `<span class="sub-agent-progress" data-testid="subagent-progress">${escapeHtml(progressStr)}</span>` : '<span class="sub-agent-progress"></span>') +
+    `<span class="sub-agent-status status-text-${escapeHtml(st)}">${escapeHtml(t(`status_${st}`) || st)}</span>` +
+    `</span>` +
+    (last ? `<span class="sub-agent-last" data-testid="subagent-last">${escapeHtml(last)}</span>` : '') +
+    `</span>` +
+    `</div>`
+  );
+}
+
 export function renderSidebarAgents(conv) {
   const agents = (state.activeConversationData && state.activeConversationData.id === conv.id && state.activeConversationData.agents)
     ? state.activeConversationData.agents
@@ -1513,14 +1707,13 @@ export function renderSidebarAgents(conv) {
     `<div class="conv-node-agents">` +
     agents
       .map((ag, index) => {
+        if (isRealSubagent(ag)) return renderRealSubagentRow(ag);
         const isDefault = index === 0;
         const name = localizeRoleLabel(ag.roleId || ag.name || '');
         const st = ag.status || (isDefault ? conv.status || 'idle' : 'waiting');
         const statusClass = `dot-${st}`;
         const statusText = t(`status_${st}`) || st;
-        const progressStr = (ag.totalSteps != null && ag.totalSteps > 0)
-          ? `${ag.step || 0}/${ag.totalSteps}`
-          : (ag.step != null && ag.step > 0 ? `${ag.step}` : '');
+        const progressStr = agentProgressLabel(ag);
 
         return (
           `<div class="sub-agent-row" data-agent-id="${escapeHtml(ag.id || '')}">` +
@@ -1544,12 +1737,14 @@ export function renderConversations() {
     .map((conv) => {
       const isActive = conv.id === state.activeConversationId;
       const status = conv.status || 'idle';
+      const archived = isArchivedConversation(conv);
 
       return (
-        `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${escapeHtml(conv.id)}" data-status="${escapeHtml(status)}">` +
+        `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${escapeHtml(conv.id)}" data-status="${escapeHtml(status)}"${archived ? ' data-archived="true"' : ''}>` +
         `<div class="conv-node-header" data-action="select-conversation" data-conv-id="${escapeHtml(conv.id)}" title="${escapeHtml(conv.title || '')}">` +
         `<svg class="conv-node-icon icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>` +
         `<span class="conv-node-title">${escapeHtml(conv.title || t('default_conversation_title'))}</span>` +
+        (archived ? `<span class="conv-archived-badge" data-testid="archived-badge">${escapeHtml(t('archived_badge'))}</span>` : '') +
         (isActive ? `<span class="active-indicator"></span>` : '') +
         `</div>` +
         (isActive ? renderSidebarAgents(conv) : '') +
@@ -1712,6 +1907,11 @@ function toggleAgentMenu() {
     return;
   }
   const status = state.activeConversationId ? (state.activeConversationData?.status || 'idle') : 'idle';
+  if (isArchivedConversation(state.activeConversationData)) {
+    showToast('err_archived');
+    return;
+  }
+  if (state.viewingAgentId) return;
   if (DISPATCH_BUSY.has(status)) {
     showToast('err_role_busy');
     return;
@@ -1831,12 +2031,61 @@ export function renderStatusBar() {
     }
   }
 
+  const archived = isArchivedConversation(conv);
   const btnPause = document.getElementById('btn-pause');
   const btnResume = document.getElementById('btn-resume');
   const btnStop = document.getElementById('btn-stop');
-  if (btnPause) btnPause.disabled = status !== 'running';
-  if (btnResume) btnResume.disabled = status !== 'paused';
-  if (btnStop) btnStop.disabled = status !== 'running' && status !== 'paused' && status !== 'recovering';
+  if (btnPause) btnPause.disabled = archived || status !== 'running';
+  if (btnResume) btnResume.disabled = archived || status !== 'paused';
+  if (btnStop) btnStop.disabled = archived || (status !== 'running' && status !== 'paused' && status !== 'recovering');
+  renderCenterNotice();
+  syncComposerLock();
+}
+
+export function renderCenterNotice() {
+  const host = document.getElementById('center-notice');
+  if (!host) return;
+  const parts = [];
+  const conv = state.activeConversationData;
+  if (state.viewingAgentId) {
+    const agent = state.viewingAgent || (conv?.agents || []).find((item) => item.id === state.viewingAgentId) || {};
+    const name = realSubagentName(agent.id ? agent : { id: state.viewingAgentId, name: agent.name, roleId: agent.roleId });
+    const st = agent.status || 'waiting';
+    parts.push(
+      `<div class="center-notice-row" data-testid="subagent-banner">` +
+      `<span class="center-notice-text" data-testid="subagent-banner-text">${escapeHtml(t('subagent_banner', { name, status: t(`status_${st}`) || st }))}</span>` +
+      `<button type="button" class="btn btn-sm" data-testid="subagent-back" data-action="close-subagent">${escapeHtml(t('subagent_back'))}</button>` +
+      `</div>`
+    );
+  }
+  if (isArchivedConversation(conv) && !state.viewingAgentId) {
+    parts.push(
+      `<div class="center-notice-row" data-testid="archived-banner">` +
+      `<span class="center-notice-text" data-testid="archived-banner-text">${escapeHtml(t('archived_banner'))}</span>` +
+      `<button type="button" class="btn btn-sm" data-testid="archived-fork" data-action="fork-history">${escapeHtml(t('archived_fork'))}</button>` +
+      `</div>`
+    );
+  }
+  host.innerHTML = parts.join('');
+}
+
+export function syncComposerLock() {
+  const conv = state.activeConversationData;
+  const archived = isArchivedConversation(conv);
+  const viewing = Boolean(state.viewingAgentId);
+  const locked = archived || viewing;
+  const input = document.querySelector('[data-testid="chat-input"]');
+  const send = document.querySelector('[data-testid="chat-send"]');
+  if (input) {
+    input.disabled = locked;
+    input.placeholder = archived ? t('archived_input') : (viewing ? t('subagent_input') : t('composer_placeholder'));
+  }
+  if (send) send.disabled = locked;
+  const chip = document.getElementById('composer-agent-chip-btn');
+  if (chip) {
+    chip.disabled = archived || viewing;
+    chip.setAttribute('aria-disabled', archived || viewing ? 'true' : 'false');
+  }
 }
 
 export function renderSubagentCardHtml(sa) {
@@ -1921,11 +2170,17 @@ export function toggleSubagent(agentId) {
 }
 
 export function renderChatThread() {
+  renderCenterNotice();
   const thread = document.getElementById('center-thread');
   if (!thread) return;
 
+  const viewing = Boolean(state.viewingAgentId);
   const conv = state.activeConversationData;
-  if (!conv || !conv.messages || conv.messages.length === 0) {
+  if (viewing && state.viewingAgent?.loading && !(state.viewingAgent.messages || []).length) {
+    thread.innerHTML = `<div class="empty-placeholder" data-testid="subagent-thread"><p style="font-size:12px;color:var(--text-muted);">${escapeHtml(t('subagent_loading'))}</p></div>`;
+    return;
+  }
+  if (!viewing && (!conv || !conv.messages || conv.messages.length === 0)) {
     const errHtml = llmErrorHtml(conv);
     thread.innerHTML = errHtml || `
       <div class="empty-placeholder">
@@ -1940,10 +2195,15 @@ export function renderChatThread() {
   }
 
   const rendered = [];
-  const msgs = dedupeMessages(conv.messages);
+  const msgs = dedupeMessages(viewing ? (state.viewingAgent?.messages || []) : conv.messages);
+  if (viewing && msgs.length === 0) {
+    thread.innerHTML = `<div class="empty-placeholder" data-testid="subagent-thread"><p style="font-size:12px;color:var(--text-muted);">${escapeHtml(t('subagent_empty'))}</p></div>`;
+    return;
+  }
 
-  const allAgents = conv.agents || [];
-  const subagents = allAgents.length > 1 ? allAgents : [];
+  const allAgents = viewing ? [] : (conv?.agents || []);
+  const cardAgents = allAgents.filter((ag) => !isRealSubagent(ag));
+  const subagents = cardAgents.length > 1 ? cardAgents : [];
   let subagentsInserted = false;
 
   for (let i = 0; i < msgs.length; i++) {
@@ -2007,10 +2267,13 @@ export function renderChatThread() {
     }
   }
 
-  const errHtml = llmErrorHtml(conv);
-  if (errHtml) rendered.push(errHtml);
+  if (!viewing) {
+    const errHtml = llmErrorHtml(conv);
+    if (errHtml) rendered.push(errHtml);
+  }
 
-  thread.innerHTML = rendered.join('');
+  const body = rendered.join('');
+  thread.innerHTML = viewing ? `<div data-testid="subagent-thread">${body}</div>` : body;
   thread.scrollTop = thread.scrollHeight;
 }
 
@@ -3457,6 +3720,15 @@ document.addEventListener('click', (e) => {
       break;
     case 'toggle-subagent':
       toggleSubagent(actionEl.getAttribute('data-agent-id'));
+      break;
+    case 'open-subagent':
+      openSubagent(actionEl.getAttribute('data-agent-id'));
+      break;
+    case 'close-subagent':
+      closeSubagentView();
+      break;
+    case 'fork-history':
+      forkFromHistory();
       break;
     case 'toggle-agent-picker':
       toggleAgentMenu();
