@@ -39,7 +39,7 @@
   - `parseSSE(text)` → 事件数组 `{id, event, data}`（data 为解析后的 JSON，若可解析）。往返一致。
 - `src/core/config.mjs`
   - `validateRole(obj)` / `validatePipeline(obj, roles)` → `{ok:true, value}` 或 `{ok:false, errors:[string]}`。
-  - Role：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, systemPrompt:string 非空, tools: 子集 of ['read','write','edit','ls','grep','bash'], model?: string}`；tools 缺省 `['read','ls','grep']`。空字符串 `model` 视为未设置。
+  - Role：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, systemPrompt:string 非空, tools: 子集 of ['read','write','edit','ls','grep','bash'], description?: string, skills?: string[], pluginTools?: boolean}`。tools 缺省 `['read','ls','grep']`。`description` 最长 500，缺省空字符串。`skills` 缺省表示继承全部全局已启用的 Skill；`[]` 表示不用；非空数组只使用其中且全局已启用的那些。`pluginTools` 缺省或 `true` 表示这个角色可以使用已启用的插件工具；`false` 表示不并入、也不能调用。请求里的 `model` 和 `builtin` 一律忽略，不报错。
   - Pipeline：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, steps:[{role:<已存在 role id>, input?:'previous'|'user'}]}`，steps 非空，最多 20 步。
 - `src/core/orchestrator.mjs`
   - `createOrchestrator({llm, store, tools})`：`start(conversationId, opts)`、`pause(id)`、`resume(id)`、`stop(id)`、`status(id)`；多个会话并行运行，彼此消息/工具事件/工作区不串。单测用 `src/llm/faux.mjs` 的 `createFauxLLM(script)` 与 `src/store/memory.mjs` 的 `createMemoryStore()`。
@@ -59,9 +59,10 @@
 | `GET /workspaces/:wid/files?path=` | | `{path, content}`；越界 → 403 `{error:'E_SANDBOX'}` |
 | `PUT /workspaces/:wid/files` | `{path, content}` | `200 {path, added, removed}` |
 | `GET /conversations/:cid/diff?path=` | | `{path, before, after, unified, added, removed}`。`before` 是该文件第一次变更前的基线；`after` 与 `unified` 对的是工作区磁盘上的当前内容，所以右侧手动保存的改动也会出现。文件已删除时 `after` 为空。磁盘读不出来时才退回存储的快照 |
-| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}`。`GET` 对 `planner`、`coder`、`tester`、`auditor` 额外带 `builtin:true`、`defaultPrompt`（`roles/<id>.json` 里的出厂提示词）和 `defaultTools`。库里的 `systemPrompt` 可以和出厂提示词不同。启动时若这四个内置角色的提示词仍是上一版英文出厂稿、且用户没有改过，会换成当前 `roles/<id>.json`；改过的提示词保持不动 |
-| `PUT /roles/:id` | Role | 更新已有角色。不存在 404 `{error:'not_found'}`；路径与 body.id 不一致 400 `{errors:['id mismatch']}` |
-| `DELETE /roles/:id` | | 200 `{ok:true,id}`。`default` 不可删，409 `{error:'protected'}`。被流水线引用 409 `{error:'role_in_use',pipelines:[id]}`。被对话 `roleId` 引用 409 `{error:'role_in_conversations',conversations:n}`。成功删除会写入 catalog tombstone，下次启动不会从 `roles/*.json` 再种回该 id |
+| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}`。`POST` 可以不带 `id`：服务端用名称生成唯一 id（ASCII 小写、数字、横线；纯中文等无法生成合法 id 时用 `agent-` 加 6 位随机）。与已有角色或 tombstone 冲突时在后面加 `-2`、`-3`……。调用方仍然可以显式传合法 `id`。响应带生成的 `id`。`GET` 对预设 `default`、`planner`、`coder`、`tester`、`auditor` 带 `builtin:true`、`defaultPrompt`（`roles/<id>.json` 的出厂提示词）和 `defaultTools`。每个角色都带只读 `effectiveModel:{sourceId, model, follow}`。`follow:true` 表示这个角色没有自己的 `settings.models` 绑定，实际用的是默认角色的绑定，或再退到第一个可用来源的第一个模型；没有可用模型时 `sourceId` 和 `model` 为 `null`。响应不含 `model`。库里的 `systemPrompt` 可以和出厂提示词不同。启动时，预设提示词若仍是已知的旧出厂稿且用户没改过，会换成当前模板；改过的保持不动。预设的 `tools` 若仍等于旧模板值则升到新模板（审计从 `read,write,ls,grep` 改为只读 `read,ls,grep`），改过的保留。`description` 为空时补上模板里的说明 |
+| `PUT /roles/:id` | Role | 更新已有角色，按整份角色替换（没传的 `skills` / `pluginTools` 回到缺省）。不存在 404 `{error:'not_found'}`；路径与 body.id 不一致 400 `{errors:['id mismatch']}`。`model` 被忽略 |
+| `POST /roles/:id/reset` | | 把预设的名称、提示词、工具、`description`、`skills`、`pluginTools` 恢复成 `roles/<id>.json`。不改 `settings.models` 里的绑定。不是预设 400 `{error:'not_builtin'}`；角色不存在 404 `{error:'not_found'}` |
+| `DELETE /roles/:id` | | 200 `{ok:true,id}`。五个预设不可删。被流水线引用时仍是 409 `{error:'role_in_use',pipelines:[id]}`；被对话 `roleId` 引用时 409 `{error:'role_in_conversations',conversations:n}`。没有这些引用时，预设返回 409 `{error:'protected'}`。成功删除会写入 catalog tombstone，下次启动不会从 `roles/*.json` 再种回该 id，并删掉 `settings.models` 里这个角色的绑定 |
 | `GET /pipelines` · `POST /pipelines` | Pipeline | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |
 | `PUT /pipelines/:id` | Pipeline | 同角色更新。步骤里的 role 必须已存在 |
 | `DELETE /pipelines/:id` | | 200 `{ok:true,id}`。被对话 `pipelineId` 引用 409 `{error:'pipeline_in_use',conversations:n}`。成功删除写入 tombstone，下次启动不会从 `pipelines/*.json` 或 `examples/pipelines/*.json` 再种回该 id |
@@ -171,4 +172,10 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true}
 
 `POST /api/sources/test` 带 `sourceId` 时，把请求里的 `vendor` / `baseUrl` / `apiKey` 叠到已保存的来源上再探测，不写回这条来源。origin 变了又没带新密钥，同样 400 `api key required`，不探测。只有请求里完全没有这些覆盖字段时，才把结果写入该来源的 `lastTest`（含 `code` / `status`）。这次如果成功，还按下面的规则改 `models`，并把拉到的完整列表写入 `catalog`：刷新不删除已经启用的模型。当前没有启用任何模型时，`models` 变成拉到的全部；已经有启用模型时 `models` 保持不变，新出现的名字只进 `catalog`、不自动启用。失败不改 `models` 和 `catalog`。
 
-发消息时按角色选来源：该角色的 `{ sourceId, model }`，没有再用 `default`，再没有就用第一个可用的来源上的第一个模型。角色模板上的 `model` 字符串若出现在某个可用的来源列表里，就改走那个来源；否则沿用上面选中的来源，但模型名改成模板里的字符串。目标是 Grok 但拿不到 access token，并且没有别的可用目标时，本轮以 `E_NO_MODEL` / `err_no_model` 失败，而不是拿空的 base URL 去请求。
+发消息时按角色选来源：该角色的 `{ sourceId, model }`，没有再用 `default`，再没有就用第一个可用的来源上的第一个模型。角色记录上不再有 `model`。启动时若库里的角色还留着旧的 `model` 字符串：这个角色还没有绑定时，在某个可用来源的模型列表里能找到同名模型，就写成 `settings.models[roleId]`；找不到就丢掉，并在服务器日志记一行 `PI_WORK_ROLE_MODEL dropped <roleId> model "<name>"`（不含密钥、不含 base URL）。无论找不找得到，这行 `model` 都会从角色记录里删掉。已有绑定不被覆盖。目标是 Grok 但拿不到 access token，并且没有别的可用目标时，本轮以 `E_NO_MODEL` / `err_no_model` 失败，而不是拿空的 base URL 去请求。
+
+## 9. Skills 与按角色生效
+
+`GET /api/skills` 返回全部 Skill：`{id, name, description, version, source, enabled, deletable}`。Agent 页的复选列表用其中 `enabled === true` 的 `id`、`name`、`description`（`description` 是一句说明）。全局开关仍是 `settings.skills[id] === false` 表示关闭，缺省为开启。
+
+运行时：当前角色的 `skills` 缺省时，系统提示词带上全部全局已启用的 Skill；是数组时只带这些 id 里全局仍启用的；`[]` 不带 Skill。主 Agent（`default`）也看它自己的 `skills`。`pluginTools === false` 的角色，工具列表里没有插件工具，模型若仍调用，结果是 `E_UNKNOWN_TOOL`。缺省与现在一样，已启用的插件工具会并进该角色的工具列表。

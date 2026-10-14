@@ -162,7 +162,7 @@ test('new conversation can run the feature pipeline', async ({ page }) => {
 
   await expect.poll(() => fs.readFile(path.join(ws, 'src/add.js'), 'utf8').catch(() => '')).toContain('export function add');
   await expect.poll(() => fs.readFile(path.join(ws, 'src/add.test.js'), 'utf8').catch(() => '')).toContain('add(1, 2)');
-  await expect.poll(() => fs.readFile(path.join(ws, 'AUDIT.md'), 'utf8').catch(() => '')).toContain('No blocking issues');
+  await expect.poll(() => fs.readFile(path.join(ws, 'AUDIT.md'), 'utf8').catch(() => '')).toBe('');
 
   const names = page.locator('.conv-active .sub-agent-name');
   await expect(names).toHaveText(['规划', '编码', '测试', '审计']);

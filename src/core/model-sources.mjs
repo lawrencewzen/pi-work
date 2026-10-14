@@ -384,6 +384,49 @@ export function resolveRoleTarget(settings, { roleId, model, grokSignedIn = fals
   return null;
 }
 
+/**
+ * What the role list should show. `follow` is true when this role has no
+ * binding of its own and therefore uses the default role, or the first
+ * usable source when even that is unset.
+ */
+export function effectiveModelFor(settings, roleId, { grokSignedIn = false } = {}) {
+  const bindings = normalizeRoleModels(settings?.models);
+  const own = roleId ? bindings[roleId] : null;
+  if (own) return { sourceId: own.sourceId, model: own.model, follow: false };
+  const resolved = resolveRoleTarget(settings, { roleId, grokSignedIn });
+  if (!resolved) return { sourceId: null, model: null, follow: true };
+  return { sourceId: resolved.source.id, model: resolved.model, follow: true };
+}
+
+/**
+ * One pass over stored role.model strings. A name that appears on an available
+ * source becomes settings.models[roleId] unless that role already has a binding.
+ * Names that match nothing are dropped. Every role that still has a model
+ * string is listed in clearIds so the caller can delete the field.
+ * Log lines name the role and the model only — never a key or base URL.
+ */
+export function planRoleModelMigration(roles, settings, { grokSignedIn = false } = {}) {
+  const sources = normalizeSources(settings?.sources);
+  const models = { ...normalizeRoleModels(settings?.models) };
+  const clearIds = [];
+  const logs = [];
+  let changed = false;
+  for (const role of roles || []) {
+    const hinted = typeof role?.model === 'string' ? role.model.trim() : '';
+    if (!hinted || !role?.id) continue;
+    clearIds.push(role.id);
+    if (models[role.id]) continue;
+    const source = sources.find((item) => sourceAvailable(item, { grokSignedIn }) && (item.models || []).includes(hinted));
+    if (source) {
+      models[role.id] = { sourceId: source.id, model: hinted };
+      changed = true;
+    } else {
+      logs.push(`PI_WORK_ROLE_MODEL dropped ${role.id} model ${JSON.stringify(hinted)} (not in an available source)`);
+    }
+  }
+  return { models, changed, clearIds, logs };
+}
+
 export function validateRoleModels(settings, models) {
   if (!models || typeof models !== 'object' || Array.isArray(models)) return 'invalid model binding';
   const sources = normalizeSources(settings?.sources);

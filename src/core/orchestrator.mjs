@@ -407,19 +407,19 @@ export function createOrchestrator({
     };
   }
 
-  async function loadExtensions() {
+  async function loadExtensions(role) {
     if (!extensions) return { prompt: '', tools: [] };
     let prompt = '';
     let pluginTools = [];
     try {
       if (typeof extensions.skillPrompt === 'function') {
-        prompt = String((await extensions.skillPrompt()) || '');
+        prompt = String((await extensions.skillPrompt(role)) || '');
       }
     } catch (err) {
       console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
     }
     try {
-      if (typeof extensions.pluginTools === 'function') {
+      if (role?.pluginTools !== false && typeof extensions.pluginTools === 'function') {
         const list = await extensions.pluginTools();
         if (Array.isArray(list)) {
           pluginTools = list.filter((tool) => tool && typeof tool.name === 'string' && typeof tool.handler === 'function');
@@ -617,7 +617,7 @@ export function createOrchestrator({
           continue;
         }
 
-        const ext = await loadExtensions();
+        const ext = await loadExtensions(rt.role);
         const messages = await buildMessages(cid, rt, ext.prompt);
         const roleAllow = Array.isArray(rt.role?.tools) && rt.role.tools.length
           ? rt.role.tools
@@ -643,7 +643,6 @@ export function createOrchestrator({
                 parameters: tool.parameters || { type: 'object', properties: {} },
               },
             })),
-            model: rt.role?.model,
             roleId: rt.role?.id,
           });
           attempt = 1;

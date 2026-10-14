@@ -9,10 +9,11 @@ export function createExtensionHost({ skillDirs = [], pluginDirs = [], getSettin
   }
 
   return {
-    async skillPrompt() {
+    async skillPrompt(role) {
       try {
         const current = await settings();
-        return await buildSkillPrompt(skillDirs, current.skills || {});
+        const allow = role && Array.isArray(role.skills) ? role.skills : undefined;
+        return await buildSkillPrompt(skillDirs, current.skills || {}, allow);
       } catch (err) {
         console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
         return '';

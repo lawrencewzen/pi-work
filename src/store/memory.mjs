@@ -26,6 +26,21 @@ const DEFAULT_ROLE = {
   tools: ['read', 'write', 'edit', 'ls', 'grep', 'bash'],
 };
 
+function storedRole(role) {
+  const next = {
+    id: role.id,
+    name: role.name,
+    systemPrompt: role.systemPrompt,
+    tools: Array.isArray(role.tools) ? role.tools.slice() : [],
+    description: typeof role.description === 'string' ? role.description : '',
+  };
+  if (Array.isArray(role.skills)) next.skills = role.skills.slice();
+  if (role.pluginTools === false) next.pluginTools = false;
+  else if (role.pluginTools === true) next.pluginTools = true;
+  if (typeof role.model === 'string' && role.model) next.model = role.model;
+  return next;
+}
+
 export function createMemoryStore() {
   const workspaces = new Map();
   const conversations = new Map();
@@ -216,13 +231,13 @@ export function createMemoryStore() {
     },
 
     async createRole(role) {
-      roles.set(role.id, { ...role, tools: Array.isArray(role.tools) ? role.tools.slice() : [] });
-      return clone(roles.get(role.id));
+      const next = storedRole(role);
+      roles.set(next.id, next);
+      return clone(next);
     },
     async updateRole(id, role) {
       if (!roles.has(id)) return undefined;
-      const next = { ...role, id, tools: Array.isArray(role.tools) ? role.tools.slice() : [] };
-      if (!next.model) delete next.model;
+      const next = storedRole({ ...role, id });
       roles.set(id, next);
       return clone(next);
     },

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const MESSAGE_META_KEYS = ['kind', 'fromAgent', 'toAgent', 'agentId', 'roleId'];
 
 function chmodSecret(p) {
@@ -164,7 +164,10 @@ export function createSqliteStore(dir) {
       name TEXT,
       system_prompt TEXT,
       tools_json TEXT,
-      model TEXT
+      model TEXT,
+      description TEXT,
+      skills_json TEXT,
+      plugin_tools INTEGER
     );
     CREATE TABLE IF NOT EXISTS pipelines (
       id TEXT PRIMARY KEY,
@@ -207,6 +210,13 @@ export function createSqliteStore(dir) {
   {
     const convCols = new Set(db.prepare('PRAGMA table_info(conversations)').all().map((c) => c.name));
     if (!convCols.has('usage_json')) db.exec('ALTER TABLE conversations ADD COLUMN usage_json TEXT');
+  }
+
+  {
+    const roleCols = new Set(db.prepare('PRAGMA table_info(roles)').all().map((c) => c.name));
+    if (!roleCols.has('description')) db.exec('ALTER TABLE roles ADD COLUMN description TEXT');
+    if (!roleCols.has('skills_json')) db.exec('ALTER TABLE roles ADD COLUMN skills_json TEXT');
+    if (!roleCols.has('plugin_tools')) db.exec('ALTER TABLE roles ADD COLUMN plugin_tools INTEGER');
   }
 
   {
@@ -259,7 +269,9 @@ export function createSqliteStore(dir) {
     maxEvent: db.prepare('SELECT COALESCE(MAX(event_id),0) AS m FROM events WHERE conversation_id = ?'),
     insEvent: db.prepare('INSERT INTO events (conversation_id, event_id, event, data_json) VALUES (?,?,?,?)'),
     listEvents: db.prepare('SELECT * FROM events WHERE conversation_id = ? AND event_id > ? ORDER BY event_id ASC'),
-    insRole: db.prepare('INSERT OR REPLACE INTO roles (id, name, system_prompt, tools_json, model) VALUES (?,?,?,?,?)'),
+    insRole: db.prepare(`INSERT OR REPLACE INTO roles (
+      id, name, system_prompt, tools_json, model, description, skills_json, plugin_tools
+    ) VALUES (?,?,?,?,?,?,?,?)`),
     listRoles: db.prepare('SELECT * FROM roles'),
     getRole: db.prepare('SELECT * FROM roles WHERE id = ?'),
     delRole: db.prepare('DELETE FROM roles WHERE id = ?'),
@@ -275,7 +287,7 @@ export function createSqliteStore(dir) {
   };
 
   if (!q.getRole.get(DEFAULT_ROLE.id)) {
-    q.insRole.run(DEFAULT_ROLE.id, DEFAULT_ROLE.name, DEFAULT_ROLE.systemPrompt, j(DEFAULT_ROLE.tools), null);
+    q.insRole.run(...roleParams(DEFAULT_ROLE));
   }
 
   chmodSecret(dbPath);
@@ -308,10 +320,38 @@ export function createSqliteStore(dir) {
     };
   }
 
+  function roleParams(role) {
+    let plugin = null;
+    if (role.pluginTools === false) plugin = 0;
+    else if (role.pluginTools === true) plugin = 1;
+    return [
+      role.id,
+      role.name,
+      role.systemPrompt,
+      j(role.tools),
+      role.model ?? null,
+      typeof role.description === 'string' ? role.description : '',
+      Array.isArray(role.skills) ? j(role.skills) : null,
+      plugin,
+    ];
+  }
+
   function roleFromRow(row) {
     if (!row) return undefined;
-    const r = { id: row.id, name: row.name, systemPrompt: row.system_prompt, tools: p(row.tools_json) || [] };
+    const r = {
+      id: row.id,
+      name: row.name,
+      systemPrompt: row.system_prompt,
+      tools: p(row.tools_json) || [],
+      description: typeof row.description === 'string' ? row.description : '',
+    };
     if (row.model) r.model = row.model;
+    if (row.skills_json != null && row.skills_json !== '') {
+      const skills = p(row.skills_json);
+      if (Array.isArray(skills)) r.skills = skills;
+    }
+    if (row.plugin_tools === 0) r.pluginTools = false;
+    else if (row.plugin_tools === 1) r.pluginTools = true;
     return r;
   }
 
@@ -554,12 +594,12 @@ export function createSqliteStore(dir) {
     },
 
     async createRole(role) {
-      q.insRole.run(role.id, role.name, role.systemPrompt, j(role.tools), role.model ?? null);
+      q.insRole.run(...roleParams(role));
       return roleFromRow(q.getRole.get(role.id));
     },
     async updateRole(id, role) {
       if (!q.getRole.get(id)) return undefined;
-      q.insRole.run(id, role.name, role.systemPrompt, j(role.tools), role.model ?? null);
+      q.insRole.run(...roleParams({ ...role, id }));
       return roleFromRow(q.getRole.get(id));
     },
     async deleteRole(id) {

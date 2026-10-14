@@ -10,6 +10,6 @@
     { "tool": "write", "args": { "path": "src/add.test.js", "content": "import { add } from './add.js';\nconsole.assert(add(1, 2) === 3);\n" } },
     { "end": true },
     { "text": "Auditor: no blocking issues." },
-    { "tool": "write", "args": { "path": "AUDIT.md", "content": "# Audit\n\nNo blocking issues.\n" } }
+    { "end": true }
   ]
 }
