@@ -14,8 +14,8 @@ const {
   presentContext,
   composerContextText,
 } = await load('public/usage.js');
-const { createFauxLLM } = await load('src/llm/faux.mjs');
-const { createOpenAILLM } = await load('src/llm/openai.mjs');
+const { fauxTurnFromScript } = await load('src/kernel/faux-script.mjs');
+const { applyStampedUsage, reportedUsage } = await load('src/kernel/usage.mjs');
 const { actionFromGrokResponses } = await load('src/core/grok-auth.mjs');
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
 
@@ -80,15 +80,20 @@ test('latest provider usage is shown against the reported or configured window',
   assert.equal(formatContextValue({ total: 0 }, 128000), '0 / 128k');
 });
 
-test('faux and provider adapters pass through real usage only', async () => {
-  const plain = createFauxLLM({ turns: [{ text: 'hi' }] });
-  const plainAction = await plain.next({});
-  assert.equal(plainAction.text, 'hi');
-  assert.equal(Object.hasOwn(plainAction, 'usage'), false);
+test('script turns and grok responses pass through real usage only', () => {
+  const plain = fauxTurnFromScript([{ text: 'hi' }], { messages: [] });
+  applyStampedUsage(plain);
+  assert.equal(plain.content?.[0]?.text, 'hi');
+  assert.equal(reportedUsage(plain), null);
 
-  const scripted = createFauxLLM({ turns: [{ text: 'hi', usage: { total_tokens: 50, prompt_tokens: 40, completion_tokens: 10 } }] });
-  const scriptedAction = await scripted.next({});
-  assert.deepEqual(scriptedAction.usage, { input: 40, output: 10, total: 50 });
+  const scripted = fauxTurnFromScript(
+    [{ text: 'hi', usage: { total_tokens: 50, prompt_tokens: 40, completion_tokens: 10 } }],
+    { messages: [] },
+  );
+  applyStampedUsage(scripted);
+  assert.equal(scripted.usage.input, 40);
+  assert.equal(scripted.usage.output, 10);
+  assert.equal(scripted.usage.totalTokens, 50);
 
   const grok = actionFromGrokResponses({
     output: [{ type: 'message', content: [{ type: 'output_text', text: 'pong' }] }],
@@ -100,27 +105,6 @@ test('faux and provider adapters pass through real usage only', async () => {
     output: [{ type: 'message', content: [{ type: 'output_text', text: 'pong' }] }],
   });
   assert.equal(Object.hasOwn(grokBare, 'usage'), false);
-
-  const llm = createOpenAILLM({ baseUrl: 'http://llm.test/v1', apiKey: 'k', model: 'm' });
-  const original = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    status: 200,
-    async json() {
-      return {
-        choices: [{ message: { content: 'hello' } }],
-        usage: { prompt_tokens: 1200, completion_tokens: 40, total_tokens: 1240 },
-      };
-    },
-  });
-  try {
-    const action = await llm.next({ messages: [{ role: 'user', content: 'hi' }] });
-    assert.equal(action.type, 'text');
-    assert.equal(action.text, 'hello');
-    assert.deepEqual(action.usage, { input: 1200, output: 40, total: 1240 });
-  } finally {
-    globalThis.fetch = original;
-  }
 });
 
 test('sqlite keeps the latest usage across later conversation updates', async () => {

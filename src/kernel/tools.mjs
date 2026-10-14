@@ -3,13 +3,10 @@
 // workspace tools, locks cwd to the conversation workspace, and lets the host
 // record a diff after a successful write. It does not schedule, retry, or checkpoint.
 import { spawn } from 'node:child_process';
-import { appendFileSync, readFileSync } from 'node:fs';
 import { Type } from '@earendil-works/pi-ai';
-import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { defineExtension, defineTool, hook, ToolTask } from '@earendil-works/pi-durable';
 import { diffStats } from '../core/diff.mjs';
 import { bash, edit, grep, ls, read, write } from '../tools/workspace.mjs';
-import { stampScriptTurn } from './usage.mjs';
 
 const OUTPUT_CAP = 1024 * 1024;
 const TRUNCATE_MARKER = '\n[truncated: output exceeded 1 MiB]\n';
@@ -268,95 +265,3 @@ export function createWorkspaceExtension({ onWrote } = {}) {
   });
 }
 
-/** Tool names offered to the model, from the system entries already in the transcript. */
-export function offeredToolNames(context) {
-  const names = [];
-  for (const message of context?.messages || []) {
-    if (!message || message.role !== 'system') continue;
-    for (const tool of message.toolsRemoved || []) {
-      const index = names.indexOf(tool?.name);
-      if (index >= 0) names.splice(index, 1);
-    }
-    for (const tool of message.toolsAdded || []) {
-      if (tool?.name && !names.includes(tool.name)) names.push(tool.name);
-    }
-  }
-  return names;
-}
-
-const scriptFloors = new Map();
-
-/**
- * Retries reuse the request cutoff, so the failed assistant is in the transcript
- * but not in the messages the demo script sees. The floor is that transcript count,
- * keyed by the provider session of the conversation that is about to call the model.
- */
-export function noteScriptAssistants(sessionId, count) {
-  if (!sessionId) return;
-  const next = Number(count) || 0;
-  const prev = scriptFloors.get(sessionId) || 0;
-  if (next > prev) scriptFloors.set(sessionId, next);
-}
-
-export function scriptAssistantFloor(sessionId) {
-  return scriptFloors.get(sessionId) || 0;
-}
-
-function modelTurns(turns) {
-  return (Array.isArray(turns) ? turns : []).filter((turn) => (
-    turn && (turn.tool || turn.text != null || turn.end || turn.error)
-  ));
-}
-
-/**
- * One faux reply chosen by how many assistant messages are already committed.
- * A restarted process sees the same transcript, so it does not repeat an earlier tool call.
- */
-export function fauxTurnFromScript(turns, context) {
-  const pending = modelTurns(turns);
-  const used = (context?.messages || []).filter((message) => message?.role === 'assistant').length;
-  const turn = pending[used];
-  if (!turn) return fauxAssistantMessage('ok');
-  let message;
-  if (turn.error) {
-    message = fauxAssistantMessage('', {
-      stopReason: 'error',
-      errorMessage: String(turn.error),
-    });
-  } else if (turn.tool) {
-    const args = turn.args && typeof turn.args === 'object' ? turn.args : {};
-    const id = turn.id ? { id: String(turn.id) } : {};
-    message = fauxAssistantMessage(
-      [fauxToolCall(String(turn.tool), args, id)],
-      { stopReason: 'toolUse' },
-    );
-  } else if (turn.end) {
-    message = fauxAssistantMessage('');
-  } else {
-    message = fauxAssistantMessage(String(turn.text));
-  }
-  return stampScriptTurn(message, turn);
-}
-
-/** Explicit demo script only. PI_WORK_FAUX_TOOL_LOG records the offered tool names for tests. */
-export function scriptedDemoStep(scriptPath, env = process.env) {
-  const script = JSON.parse(readFileSync(scriptPath, 'utf8'));
-  const turns = modelTurns(script?.turns);
-  const logPath = String(env.PI_WORK_FAUX_TOOL_LOG || '').trim();
-  return async (context, streamOptions) => {
-    if (logPath) appendFileSync(logPath, `${JSON.stringify(offeredToolNames(context))}\n`);
-    const have = (context?.messages || []).filter((message) => message?.role === 'assistant').length;
-    const floor = scriptAssistantFloor(streamOptions?.sessionId);
-    const used = Math.max(have, floor);
-    let messages = context?.messages;
-    if (used > have) {
-      messages = [...(messages || [])];
-      for (let i = have; i < used; i += 1) messages.push({ role: 'assistant', content: '' });
-    }
-    const delay = Number(turns[used]?.delayMs);
-    if (Number.isFinite(delay) && delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-    return fauxTurnFromScript(turns, messages === context?.messages ? context : { ...context, messages });
-  };
-}

@@ -88,6 +88,23 @@ async function request(base, method, apiPath, body) {
   return { status: res.status, body: text ? JSON.parse(text) : null, text };
 }
 
+function chatCompletionSse(text) {
+  const chunk = (delta, finish) => JSON.stringify({
+    id: 'chatcmpl-source',
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta, finish_reason: finish }],
+  });
+  return [
+    `data: ${chunk({ role: 'assistant', content: text }, null)}`,
+    '',
+    `data: ${chunk({}, 'stop')}`,
+    '',
+    'data: [DONE]',
+    '',
+    '',
+  ].join('\n');
+}
+
 function startFake(label) {
   const hits = [];
   const server = http.createServer((req, res) => {
@@ -100,6 +117,11 @@ function startFake(label) {
         authorization: req.headers.authorization || '',
         body: Buffer.concat(chunks).toString('utf8'),
       });
+      if (req.method === 'POST' && String(req.url).includes('/chat/completions')) {
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+        res.end(chatCompletionSse(`reply-${label}`));
+        return;
+      }
       const payload = req.url.endsWith('/models')
         ? { data: [{ id: label }] }
         : { choices: [{ message: { role: 'assistant', content: `reply-${label}` } }] };

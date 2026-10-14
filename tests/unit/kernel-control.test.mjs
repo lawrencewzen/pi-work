@@ -417,6 +417,7 @@ test('a quiet model call submits 继续 and counts it as an auto-continue', { ti
     PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
+    PI_WORK_FAUX_DELAY_TICK: '0',
     PI_WORK_STALL_MS: '300',
   }, { dataDir });
   try {
@@ -1039,6 +1040,29 @@ test('pause finishes the foreground step and leaves the background subagent runn
   } finally {
     await stopProcess(srv.proc);
     await fake.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('a missing model after a finished tool stays failed', { timeout: 30_000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-knomodel-'));
+  const script = await writeScript(dataDir, 'nomodel.json', [
+    { tool: 'ls', args: { path: '.' } },
+    { error: 'E_NO_MODEL' },
+  ]);
+  const srv = await startServer({
+    PI_WORK_LLM: 'faux',
+    PI_WORK_FAUX_SCRIPT: script,
+  }, { dataDir });
+  try {
+    const { conv } = await openConversation(srv.base, { title: 'nomodel' });
+    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'list' })).status, 202);
+    const body = await waitFor(srv.base, conv.id, (row) => row.status === 'failed' || row.status === 'done');
+    assert.equal(body.status, 'failed', `${srv.logs()}\n${JSON.stringify(body.messages)}`);
+    assert.equal(body.llmError?.code, 'E_NO_MODEL');
+    assert.equal(body.messages.some((message) => message.role === 'tool'), true);
+  } finally {
+    await stopProcess(srv.proc);
     await rm(dataDir, { recursive: true, force: true });
   }
 });

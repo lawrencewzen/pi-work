@@ -5,7 +5,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSSE } from '../../src/core/sse.mjs';
-import { fauxTurnFromScript, offeredToolNames, toolsForRole, workspaceTools } from '../../src/kernel/tools.mjs';
+import { fauxTurnFromScript, offeredToolNames } from '../../src/kernel/faux-script.mjs';
+import { toolsForRole, workspaceTools } from '../../src/kernel/tools.mjs';
 import { ROOT } from './_root.mjs';
 
 const TOKEN = 'unit-kernel-tools-token';
@@ -349,62 +350,47 @@ test('kernel path: two conversations write into their own workspaces', { timeout
   }
 });
 
-test('kernel path: write plus edit matches the old path changes and diff', { timeout: 60_000 }, async () => {
-  // basic.json opens with a narration turn. The harness stops when a model reply has no tool
-  // call, so both paths run the fixture's write and edit, which are the turns that touch the file.
-  const basic = JSON.parse(await readFile(BASIC, 'utf8'));
-  const turns = basic.turns.filter((turn) => turn.tool || turn.text === '完成 ✅');
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kdiff-script-'));
-  const script = await writeScript(dataDir, 'write-edit.json', turns);
-
-  async function run(extra) {
-    const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script, ...extra });
-    try {
-      const { conv } = await openConversation(srv.base, { title: 'diff' });
-      const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'please' });
-      assert.equal(sent.status, 202, JSON.stringify(sent.body));
-      const done = await waitFinished(srv.base, conv.id);
-      assert.equal(done.status, 'done', JSON.stringify(done.messages));
-      assert.equal(done.messages.some((message) => message.text === '完成 ✅'), true, JSON.stringify(done.messages));
-      const changes = await request(srv.base, 'GET', `/api/conversations/${conv.id}/changes`);
-      const diff = await request(srv.base, 'GET', `/api/conversations/${conv.id}/diff?path=${encodeURIComponent(README)}`);
-      assert.equal(changes.status, 200, JSON.stringify(changes.body));
-      assert.equal(diff.status, 200, JSON.stringify(diff.body));
-      let events = [];
-      if (extra.PI_WORK_KERNEL === 'durable') {
-        events = await collectSse(srv.base, conv.id, {
-          ready: (list) => list.some((ev) => ev.event === 'tool.end' && ev.data?.tool?.name === 'edit'),
-        });
-      }
-      return { changes: changes.body, diff: diff.body, events };
-    } finally {
-      await stopProcess(srv.proc);
-      await rm(srv.dataDir, { recursive: true, force: true });
+test('kernel path: write plus edit records the diff and tool events', { timeout: 60_000 }, async () => {
+  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: BASIC, PI_WORK_FAUX_DRAIN: '1' });
+  try {
+    const { conv } = await openConversation(srv.base, { title: 'diff' });
+    const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'please' });
+    assert.equal(sent.status, 202, JSON.stringify(sent.body));
+    const done = await waitFinished(srv.base, conv.id);
+    assert.equal(done.status, 'done', JSON.stringify(done.messages));
+    assert.equal(done.messages.some((message) => String(message.text || '').includes('README')), true, JSON.stringify(done.messages));
+    assert.equal(done.messages.some((message) => message.text === '完成 ✅'), true, JSON.stringify(done.messages));
+    const changes = await request(srv.base, 'GET', `/api/conversations/${conv.id}/changes`);
+    const diff = await request(srv.base, 'GET', `/api/conversations/${conv.id}/diff?path=${encodeURIComponent(README)}`);
+    assert.equal(changes.status, 200, JSON.stringify(changes.body));
+    assert.equal(diff.status, 200, JSON.stringify(diff.body));
+    assert.deepEqual(changeView(changes.body), [{ path: README, added: diff.body.added, removed: diff.body.removed }]);
+    assert.equal(diff.body.before, '');
+    assert.equal(diff.body.after, '# Hello\n\nline two\nline3\n');
+    assert.equal(diff.body.added > 0, true);
+    assert.equal(typeof changes.body[0]?.toolCallId, 'string');
+    assert.equal(changes.body[0].toolCallId.length > 0, true);
+    const events = await collectSse(srv.base, conv.id, {
+      ready: (list) => list.some((ev) => ev.event === 'tool.end' && ev.data?.tool?.name === 'edit'),
+    });
+    const ends = events.filter((ev) => ev.event === 'tool.end' && (ev.data?.tool?.name === 'write' || ev.data?.tool?.name === 'edit'));
+    assert.equal(ends.length, 2, JSON.stringify(events.map((ev) => ev.event)));
+    for (const ev of ends) {
+      assert.equal(ev.data.tool.path, README);
+      assert.equal(typeof ev.data.tool.added, 'number');
+      assert.equal(typeof ev.data.tool.removed, 'number');
+      assert.equal(ev.data.tool.status, 'completed');
     }
+    const starts = events.filter((ev) => ev.event === 'tool.start' && (ev.data?.tool?.name === 'write' || ev.data?.tool?.name === 'edit'));
+    assert.equal(starts.length, 2);
+    for (const ev of starts) {
+      assert.equal(ev.data.tool.path, README);
+      assert.equal(ev.data.tool.status, 'running');
+    }
+  } finally {
+    await stopProcess(srv.proc);
+    await rm(srv.dataDir, { recursive: true, force: true });
   }
-
-  const legacy = await run({});
-  const kernel = await run({ PI_WORK_KERNEL: 'durable' });
-  assert.deepEqual(changeView(kernel.changes), changeView(legacy.changes));
-  assert.deepEqual(diffView(kernel.diff), diffView(legacy.diff));
-  assert.equal(typeof kernel.changes[0]?.toolCallId, 'string');
-  assert.equal(kernel.changes[0].toolCallId.length > 0, true);
-  assert.equal(typeof legacy.changes[0]?.toolCallId, 'string');
-  const ends = kernel.events.filter((ev) => ev.event === 'tool.end' && (ev.data?.tool?.name === 'write' || ev.data?.tool?.name === 'edit'));
-  assert.equal(ends.length, 2, JSON.stringify(kernel.events.map((ev) => ev.event)));
-  for (const ev of ends) {
-    assert.equal(ev.data.tool.path, README);
-    assert.equal(typeof ev.data.tool.added, 'number');
-    assert.equal(typeof ev.data.tool.removed, 'number');
-    assert.equal(ev.data.tool.status, 'completed');
-  }
-  const starts = kernel.events.filter((ev) => ev.event === 'tool.start' && (ev.data?.tool?.name === 'write' || ev.data?.tool?.name === 'edit'));
-  assert.equal(starts.length, 2);
-  for (const ev of starts) {
-    assert.equal(ev.data.tool.path, README);
-    assert.equal(ev.data.tool.status, 'running');
-  }
-  await rm(dataDir, { recursive: true, force: true });
 });
 
 test('kernel path: a role without a tool does not offer it and rejects the call', { timeout: 40_000 }, async () => {
@@ -424,7 +410,7 @@ test('kernel path: a role without a tool does not offer it and rejects the call'
     assert.equal(done.status, 'done', JSON.stringify(done.messages));
     const denied = done.messages.filter((message) => message.role === 'tool').map((message) => message.text || '');
     assert.equal(denied.length, 2, JSON.stringify(denied));
-    assert.equal(denied.every((text) => text.includes('not available')), true, JSON.stringify(denied));
+    assert.equal(denied.every((text) => text === 'E_UNKNOWN_TOOL'), true, JSON.stringify(denied));
     await assert.rejects(readFile(path.join(ws.path, 'secret.txt'), 'utf8'));
     const offered = (await readFile(toolLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
     assert.deepEqual(offered[0], ['read', 'ls', 'grep', 'echo', 'delegate', 'subagent']);

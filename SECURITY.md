@@ -30,7 +30,7 @@ Response headers on all replies:
 - `Referrer-Policy: no-referrer`
 - `X-Frame-Options: DENY`
 
-Auth is enforced at the HTTP layer only. In-process unit tests of stores/orchestrator are unchanged.
+Auth is enforced at the HTTP layer only. In-process unit tests of stores and pure helpers are unchanged.
 
 ### bash sandbox (finding 2, 12)
 
@@ -62,7 +62,7 @@ The proxy rejects client versions below `1.0.13`. Requests send `x-grok-client-v
 
 ### Tool name allowlist (finding 5, server half)
 
-Before `tool.start` / execute, the tool name must be in the default registry (`read`, `write`, `edit`, `ls`, `grep`, `bash`) **and** in the role's tools list. Otherwise the orchestrator emits `tool.end` with `E_UNKNOWN_TOOL` and does not run the tool. Frontend XSS escaping in `public/` was already done.
+Before `tool.start` / execute, the tool name must be in the default registry (`read`, `write`, `edit`, `ls`, `grep`, `bash`) **and** in the role's tools list. Otherwise the kernel records `tool.end` with `E_UNKNOWN_TOOL` and does not run the tool. Frontend XSS escaping in `public/` was already done.
 
 ### Git import (finding 6)
 
@@ -98,7 +98,7 @@ Same-origin `EventSource` sends the cookie. `POST /api/sse-ticket` returns `{ ti
 - **Symlink TOCTOU** (finding 9): `resolveInWorkspace` then a later write can still race a `bash`-created symlink. `O_NOFOLLOW` / `openat2 RESOLVE_BENEATH` not implemented.
 - **pi-durable runtime** (finding 8 remainder): custom journal is documented and locked; not replaced.
 - **OS keychain** for the API key: still plaintext in SQLite with `0600`.
-- **Property tests** that crash at each `await` in the orchestrator.
+- **Property tests** that crash at each `await` in a model turn. The custom run loop they targeted is gone; recovery is the Harness resume path.
 
 ## Per-finding status
 

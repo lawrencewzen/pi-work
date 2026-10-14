@@ -176,9 +176,9 @@ SSE 映射（`spike/lib/events.mjs` 已按这个打日志）：
 
 ## 2d. 测试
 
-`pi-ai` 有假模型：`fauxProvider()`。`setResponses` 换掉整条队列，队列在 provider 上共享，不按对话分开。官方示例和这次原型都用它。它和 `src/llm/faux.mjs` 的脚本不是同一种 JSON。
+`pi-ai` 有假模型：`fauxProvider()`。`setResponses` 换掉整条队列，队列在 provider 上共享，不按对话分开。官方示例和这次原型都用它。它和当时 `src/llm/faux.mjs` 的脚本不是同一种 JSON。T5-11 已删除 `src/llm/`；同一份剧本 JSON 现在由 `src/kernel/faux-script.mjs` 转成 `fauxAssistantMessage`。
 
-现有单测大量依赖 `createFauxLLM`：`turns` 里的 `text` / `tool` / `cut` / `delayMs`、`perConversation`、回合上的 `usage`。这些要留到切换默认内核的那一批再改。在那之前，`npm test` 继续打现编排器。
+下面这段是切换前的计划。T5-11 已经把直接 import `createOrchestrator` 的用例改成打 HTTP 或打内核。
 
 新内核的演示模型：写一个适配器，把同一份脚本 JSON 变成 `fauxAssistantMessage`。并行对话不能共用一个游标。原型用的是「看最后一条用户或工具消息」的纯函数路由，重启后仍然成立；脚本适配器也要做成纯函数，或者按 `sessionId`（每个对话在 `pi.provider` 里有持久 UUIDv7）分开队列。`cut` 第一次抛可重试错误、第二次跳过，要对齐 `settings.retry`，否则现有「流被掐断再重试」的用例对不上。
 
@@ -207,11 +207,13 @@ SSE 映射（`spike/lib/events.mjs` 已按这个打日志）：
 | T5-8 | 用量芯片用最近一次调用，`usage` SSE 字段不变 | T5-2、T5-4 | 可与 T5-6、T5-7 并行 | 第二次调用覆盖第一次，不把 `pi.usage` 的累计值显示出来；没有 usage 时芯片是 `—` | 小 |
 | T5-9 | Skills section；插件工具注册、热替换按 README 的「下一阶段生效」 | T5-2、T5-5 | 可与 T5-6 并行 | 现有 skills/plugins 单测在默认路径下仍绿；新路径下启用的 skill 出现在系统提示，禁用的插件不出现在工具列表 | 中 |
 | T5-10 | 旧对话只读归档；新对话走 Harness。不导入旧正文 | T5-2 | 可与 T5-3 之后的批并行 | 旧 id 仍能 `GET` 消息和 diff；对旧 id 发消息得到明确错误；新对话重启后还在 | 读路径分叉。中 |
-| T5-11 | 默认改为 Harness。删除编排器的运行循环。保留 paths、diff、retry 纯函数、sse 格式、config、usage、model-sources | T5-3 到 T5-10 | 最后 | `npm run check`、`npm test`、Playwright 全绿；未配置模型不会落到 faux；进程杀掉后一条带前台子 Agent 的对话能跑完 | 测试改写面大 |
+| T5-11 | 默认改为 Harness。删除编排器的运行循环。保留 paths、diff、retry 纯函数、sse 格式、config、usage、model-sources。**已完成：不再读取 `PI_WORK_KERNEL`，启动只打开 Harness。** | T5-3 到 T5-10 | 最后 | `npm run check`、`npm test`、Playwright 全绿；未配置模型不会落到 faux；进程杀掉后一条带前台子 Agent 的对话能跑完 | 测试改写面大 |
 
 T5-11 之前产品行为就是今天的行为。T5-11 之后产品行为是契约加上 2f 的决定。
 
 ### T5-2 开关
+
+T5-11 之后这只开关已经去掉：启动始终打开 Harness，不再读取 `PI_WORK_KERNEL`，也没有编排器可退回。下面是 T5-2 当时的范围，留作迁移记录。
 
 `PI_WORK_KERNEL=durable` 时，进程启动打开 `<dataDir>/harness/session.sqlite` 上的 Pi Durable Harness，并调用 `harness.resume()`。下面这些接口改走内核，其它接口和默认路径不动：
 
@@ -221,9 +223,9 @@ T5-11 之前产品行为就是今天的行为。T5-11 之后产品行为是契�
 - `POST /api/conversations/:cid/messages`
 - `GET /api/conversations/:cid/events`
 
-未设置，或设成其它值时，这些接口仍走 `src/core/orchestrator.mjs`。Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
+Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
 
-演示模型仍只在 `PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`，不是编排器那份剧本 JSON。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。可选：`PI_WORK_FAUX_TEXT` 指定演示回复（默认 `ok`）；`PI_WORK_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `PI_WORK_FAUX_HOLD_READY` 写出一个就绪文件。
+演示模型仍只在 `PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`。显式剧本（`PI_WORK_FAUX_SCRIPT`）按已提交的助手条数取下一拍；`PI_WORK_FAUX_DRAIN=1` 时，一段说明文字后面如果还有工具或 `{end:true}`，会再提交一次「继续」，用来播放原来一口气跑完的夹具。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。未设置 `PI_WORK_FAUX_TEXT` 时演示回复是空字符串，不会冒出一行 `ok`。`PI_WORK_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `PI_WORK_FAUX_HOLD_READY` 写出一个就绪文件。
 
 ## 2f. 风险和要拍板的决定
 

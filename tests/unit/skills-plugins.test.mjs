@@ -8,11 +8,7 @@ import { load, ROOT } from './_root.mjs';
 
 const { buildSkillPrompt, createSkill, deleteSkill, listSkills, updateSkill, writeSkillFile } = await load('src/core/skills.mjs');
 const { clearPluginCache, describePlugins, installPlugin, pluginHandlers } = await load('src/core/plugins.mjs');
-const { createExtensionHost } = await load('src/core/extensions.mjs');
-const { createOrchestrator } = await load('src/core/orchestrator.mjs');
-const { createMemoryStore } = await load('src/store/memory.mjs');
 const { mergeSettings, normalizeSettings } = await load('src/core/settings.mjs');
-const { selectToolDefs } = await load('src/llm/openai.mjs');
 
 const bundledSkills = [path.join(ROOT, 'skills')];
 const bundledPlugins = [path.join(ROOT, 'plugins')];
@@ -174,74 +170,6 @@ test('plugin import loads a module and rejects metadata, symlinks, and path esca
   );
 });
 
-test('selectToolDefs keeps builtins and adds plugin tools that were requested', () => {
-  const defs = selectToolDefs(['read', 'echo'], [{
-    type: 'function',
-    function: { name: 'echo', description: 'Echo', parameters: { type: 'object', properties: {} } },
-  }]);
-  assert.deepEqual(defs.map((tool) => tool.function.name), ['read', 'echo']);
-  const hidden = selectToolDefs(['read'], [{
-    type: 'function',
-    function: { name: 'echo', description: 'Echo', parameters: { type: 'object', properties: {} } },
-  }]);
-  assert.deepEqual(hidden.map((tool) => tool.function.name), ['read']);
-});
-
-test('orchestrator injects enabled skills and runs an enabled plugin tool', async () => {
-  const skillDir = await tmp();
-  const pluginDir = await tmp();
-  await writeSkillFile(skillDir, {
-    id: 'commit-message',
-    name: 'Commit messages',
-    description: 'commits',
-    body: 'SKILL_MARK_947',
-    source: 'local',
-  });
-  await writePlugin(pluginDir, 'echo', 'echo');
-  clearPluginCache();
-  const store = createMemoryStore();
-  const seen = [];
-  const llm = {
-    async next(req) {
-      seen.push(req);
-      if (seen.length === 1) return { type: 'tool', name: 'echo', args: { text: 'from-plugin' } };
-      return { type: 'end' };
-    },
-  };
-  const host = createExtensionHost({
-    skillDirs: [skillDir],
-    pluginDirs: [pluginDir],
-    getSettings: () => store.getSettings(),
-  });
-  const workspace = await tmp();
-  const orch = createOrchestrator({ llm, store, extensions: host });
-  await orch.start('C', { workspacePath: workspace, text: 'write a commit message' });
-  await waitFor(() => orch.status('C').status === 'done');
-  const system = seen[0].messages.find((message) => message.role === 'system');
-  assert.match(system.content, /SKILL_MARK_947/);
-  assert.equal(seen[0].tools.includes('echo'), true);
-  const messages = await store.getMessages('C');
-  assert.equal(messages.some((message) => message.role === 'tool' && message.text === 'echo:from-plugin'), true);
-
-  await store.putSettings({ skills: { 'commit-message': false }, plugins: { echo: false } });
-  const seenOff = [];
-  const llmOff = {
-    async next(req) {
-      seenOff.push(req);
-      if (seenOff.length === 1) return { type: 'tool', name: 'echo', args: { text: 'nope' } };
-      return { type: 'end' };
-    },
-  };
-  const orchOff = createOrchestrator({ llm: llmOff, store, extensions: host });
-  await orchOff.start('D', { workspacePath: workspace, text: 'again' });
-  await waitFor(() => orchOff.status('D').status === 'done');
-  const systemOff = seenOff[0].messages.find((message) => message.role === 'system');
-  assert.equal(String(systemOff?.content || '').includes('SKILL_MARK_947'), false);
-  const offMessages = await store.getMessages('D');
-  assert.equal(offMessages.some((message) => message.text === 'E_UNKNOWN_TOOL'), true);
-  assert.equal(offMessages.some((message) => message.text === 'nope'), false);
-});
-
 test('http api creates skills, rejects dead plugin metadata, and runs echo', async () => {
   const dataDir = await tmp();
   const scriptPath = path.join(dataDir, 'faux.json');
@@ -252,6 +180,7 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
     ],
   }));
   const token = 'unit-test-token-skills';
+  const record = path.join(dataDir, 'requests.jsonl');
   const proc = spawn(process.execPath, ['server.mjs'], {
     cwd: ROOT,
     env: {
@@ -261,6 +190,7 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
       PI_WORK_TOKEN: token,
       PI_WORK_LLM: 'faux',
       PI_WORK_FAUX_SCRIPT: scriptPath,
+      PI_WORK_FAUX_RECORD: record,
       PI_WORK_RETRY_BASE_MS: '20',
       PI_WORK_STALL_MS: '5000',
     },
@@ -349,7 +279,12 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
     const done = await waitConv(request, conv.body.id);
     assert.equal(done.status, 'done');
     assert.equal(done.messages.some((message) => message.role === 'tool' && message.text === 'from-plugin'), true);
+    const calls = (await fs.readFile(record, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    const skillText = calls[0].sections.find((section) => section.key === 'skills')?.value || '';
+    assert.match(skillText, /Subject line is imperative/);
 
+    const skillOff = await request('PUT', '/api/skills/commit-message', { enabled: false });
+    assert.equal(skillOff.status, 200);
     const disabled = await request('PUT', '/api/plugins/echo', { enabled: false });
     assert.equal(disabled.status, 200);
     assert.equal(disabled.body.enabled, false);
@@ -358,6 +293,9 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
     const doneOff = await waitConv(request, conv2.body.id);
     assert.equal(doneOff.messages.some((message) => message.text === 'E_UNKNOWN_TOOL'), true);
     assert.equal(doneOff.messages.some((message) => message.text === 'from-plugin'), false);
+    const later = (await fs.readFile(record, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    const shut = later[later.length - 1].sections.find((section) => section.key === 'skills')?.value || '';
+    assert.equal(shut.includes('Subject line is imperative'), false);
   } finally {
     await stopProcess(proc);
   }
@@ -370,15 +308,6 @@ async function waitConv(request, id) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`conversation ${id} did not finish`);
-}
-
-async function waitFor(fn, ms = 5000) {
-  const start = Date.now();
-  while (Date.now() - start < ms) {
-    if (await fn()) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error('timeout');
 }
 
 function stopProcess(proc) {

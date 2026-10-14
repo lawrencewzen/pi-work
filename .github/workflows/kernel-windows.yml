@@ -17,21 +17,6 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - name: Pi Durable kernel unit tests
-        run: node --test tests/unit/kernel.test.mjs
-      - name: Pi Durable conversation HTTP tests
-        run: node --test tests/unit/kernel-conversations.test.mjs
-      - name: Pi Durable archived conversation tests
-        run: node --test tests/unit/kernel-archive.test.mjs
-      - name: Pi Durable workspace tool tests
-        run: node --test tests/unit/kernel-tools.test.mjs
-      - name: Pi Durable model source tests
-        run: node --test tests/unit/kernel-models.test.mjs
-      - name: Pi Durable role and pipeline tests
-        run: node --test tests/unit/kernel-roles.test.mjs
-      - name: Pi Durable usage chip and plugin reload tests
-        run: node --test tests/unit/kernel-usage-plugins.test.mjs
-      - name: Pi Durable subagent tests
-        run: node --test tests/unit/kernel-subagents.test.mjs
-      - name: Pi Durable pause, stall, retry, and tool limit tests
-        run: node --test tests/unit/kernel-control.test.mjs
+      - name: Unit tests
+        shell: bash
+        run: node --test tests/unit/*.test.mjs

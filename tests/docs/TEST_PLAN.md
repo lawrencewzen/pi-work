@@ -16,7 +16,7 @@
 | U4 | 单元 | 重试策略：可重试/不可重试错误、次数上限、指数退避封顶；自动续跑决策 continue/wait/give_up | unit/retry |
 | U5 | 单元 | SSE：格式、缺 id、对象内换行单行、多行字符串、往返含中文 | unit/sse |
 | U6 | 单元 | Role/Pipeline 校验：合法、默认工具、非法 id/空提示词/未知工具、空步骤/未知角色/超 20 步 | unit/config |
-| U7 | 单元 | 编排器：两个会话真并行且消息与工作区隔离；暂停一个不影响另一个；stop 终态；断流重试后完成 | unit/orchestrator |
+| U7 | 单元 | 内核：两个会话并行且工作区隔离；暂停一个不影响另一个；stop 终态；断流重试后完成 | unit/kernel-control、unit/kernel-tools |
 | E1 | E2E | 新建工作区+会话，发消息，Markdown（h2/strong/代码块）渲染，状态点 done | e2e/ui |
 | E2 | E2E | 工具行折叠：路径含 `…`、`+3 −0`，点击展开详情 | e2e/ui |
 | E3 | E2E | 点改动文件 → diff；打开 md 编辑器编辑保存 → 落盘，刷新仍在 | e2e/ui |

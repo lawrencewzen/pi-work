@@ -55,19 +55,31 @@ function usageEvent(entry) {
 }
 
 function errorForSubmission(record) {
-  if (record.reason === 'no_model') return { code: 'E_NO_MODEL', message: 'err_no_model' };
   const detail = typeof record.detail === 'string' ? record.detail : '';
+  if (record.reason === 'no_model' || /\bE_NO_MODEL\b/.test(detail)) {
+    return { code: 'E_NO_MODEL', message: 'err_no_model' };
+  }
   return {
     code: record.reason === 'model_error' ? 'E_LLM' : (record.reason || 'E_LLM'),
     message: redactAuthText(detail || record.reason || 'model error'),
   };
 }
 
+function unavailableTool(entry) {
+  const diagnostics = entry?.data?.diagnostics;
+  return Array.isArray(diagnostics) && diagnostics.some((item) => item?.code === 'tool_unavailable');
+}
+
+function toolOutput(entry, result) {
+  if (unavailableTool(entry)) return 'E_UNKNOWN_TOOL';
+  return result ? textOf(result.content) : undefined;
+}
+
 function toolEnd(ev, ctx) {
   const args = ctx.toolInputs.get(ev.toolCallId) || {};
   const diff = ctx.toolDiffs.get(ev.toolCallId);
   const result = ev.entry?.model?.[0];
-  const output = result ? textOf(result.content) : undefined;
+  const output = toolOutput(ev.entry, result);
   const status = result ? (result.isError ? 'error' : 'completed') : 'error';
   ctx.step += 1;
   return [
@@ -205,7 +217,7 @@ function toolFromResultEntry(entry, ctx) {
         name: result.toolName,
         status: result.isError ? 'error' : 'completed',
         input: args,
-        output: textOf(result.content),
+        output: toolOutput(entry, result),
         path: args.path,
         added: diff?.added,
         removed: diff?.removed,
@@ -277,6 +289,7 @@ export function messagesFromEntries(entries) {
   for (const entry of entries || []) {
     if (entry?.kind === 'pi.user' || entry?.kind === 'pi.assistant') {
       const text = textOf(entry.model?.[0]?.content);
+      if (entry.kind === 'pi.assistant' && !text) continue;
       const msg = { id: String(entry.id), role: entry.kind === 'pi.user' ? 'user' : 'assistant' };
       if (text) msg.text = text;
       messages.push(msg);
@@ -291,7 +304,7 @@ export function messagesFromEntries(entries) {
       name: result.toolName,
       status: result.isError ? 'error' : 'completed',
       input,
-      output: textOf(result.content),
+      output: toolOutput(entry, result),
       path: input.path,
     });
     messages.push({ id: String(entry.id), role: 'tool', text: tool.output || '', tool });

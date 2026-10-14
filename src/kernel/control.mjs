@@ -20,12 +20,13 @@ import {
   explorePathOf,
   exploreTarget,
   toolSignature,
-} from '../core/orchestrator.mjs';
+} from '../core/explore.mjs';
 import { createRetryPolicy, decideAutoContinue } from '../core/retry.mjs';
 import { archivedMutation, isArchivedConversation } from './archive.mjs';
 import { messagesFromEntries, textOf } from './events.mjs';
 import { Roster } from './subagents.mjs';
-import { noteScriptAssistants, workspaceTools } from './tools.mjs';
+import { loadScriptTurns, noteScriptAssistants, scriptMessages, scriptShouldContinue } from './faux-script.mjs';
+import { workspaceTools } from './tools.mjs';
 
 const CONTINUE_TEXT = '继续';
 const STREAM_NOTE = '模型连接中断。已按完成的工具结果结束本步。';
@@ -376,7 +377,19 @@ export function createControlExtension(bridge) {
           const cid = await conversationId(api);
           bridge.touch?.(cid, Date.now());
         },
-        async onYield(_answer, api, context) {
+        async onYield(answer, api, context) {
+          const snap = plainDoc(await api.snapshot(ControlDoc, api.conversationId, context));
+          if (snap?.paused || snap?.stopped || snap?.gaveUp) return undefined;
+          // Demo scripts stop on a text answer, matching a real model. PI_WORK_FAUX_DRAIN
+          // keeps going into the next tool or `{end:true}`, which is how the old loop
+          // played fixtures such as basic.json in one user message.
+          const drain = String(bridge.env?.PI_WORK_FAUX_DRAIN || '') === '1';
+          const turns = drain ? loadScriptTurns(bridge.env) : null;
+          if (turns && typeof api.context === 'function') {
+            const full = await api.context(api.conversationId, context);
+            const messages = scriptMessages(full?.entries || [], answer);
+            if (scriptShouldContinue(turns, { messages })) return { continue: CONTINUE_TEXT };
+          }
           if (typeof bridge.claimYield !== 'function') return undefined;
           const cid = await conversationId(api);
           if (!cid) return undefined;
@@ -469,6 +482,7 @@ export function createControlHost({
   const softened = new Set();
   bridge.limits = limits;
   bridge.store = store;
+  bridge.env = env;
   bridge.touch = (cid, at = Date.now()) => {
     if (cid) progress.set(cid, at);
   };

@@ -4,13 +4,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createOrchestrator } from '../../src/core/orchestrator.mjs';
 import { presentContext } from '../../src/core/usage.mjs';
-import { createFauxLLM } from '../../src/llm/faux.mjs';
 import { createMapContext, mapHarnessBatch } from '../../src/kernel/events.mjs';
-import { fauxTurnFromScript } from '../../src/kernel/tools.mjs';
+import { fauxTurnFromScript } from '../../src/kernel/faux-script.mjs';
 import { applyStampedUsage, latestCallUsage } from '../../src/kernel/usage.mjs';
-import { createMemoryStore } from '../../src/store/memory.mjs';
 import { ROOT } from './_root.mjs';
 
 const TOKEN = 'unit-kernel-usage-token';
@@ -227,38 +224,6 @@ test('a script turn replaces the faux estimate and an omitted turn does not clea
   assert.equal(presentContext(null).contextLabel, EM);
 });
 
-async function legacyPresented(script, window) {
-  const prev = process.env.LLM_CONTEXT_WINDOW;
-  process.env.LLM_CONTEXT_WINDOW = window;
-  const dir = await mkdtemp(path.join(tmpdir(), 'piw-kuse-legacy-'));
-  try {
-    const store = createMemoryStore();
-    const events = [];
-    const orch = createOrchestrator({
-      llm: createFauxLLM(script),
-      store,
-      toolNudgeAfter: 100,
-      maxToolCalls: 15,
-    });
-    orch.subscribe('U', (ev) => events.push(ev));
-    await orch.start('U', { workspacePath: dir, text: 'go' });
-    const started = Date.now();
-    while (orch.status('U').status !== 'done' && orch.status('U').status !== 'failed' && Date.now() - started < 5000) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    const conv = await store.getConversation('U');
-    return {
-      status: orch.status('U').status,
-      presented: presentContext(conv?.usage ?? null),
-      usageEvents: events.filter((ev) => ev.event === 'usage').map((ev) => ev.data),
-    };
-  } finally {
-    if (prev == null) delete process.env.LLM_CONTEXT_WINDOW;
-    else process.env.LLM_CONTEXT_WINDOW = prev;
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 async function kernelPresented(script, window) {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kuse-'));
   const scriptPath = path.join(dataDir, 'faux.json');
@@ -291,17 +256,9 @@ async function kernelPresented(script, window) {
 test('kernel usage chip matches the legacy script, including a later call with no usage', { timeout: 40000 }, async () => {
   const usageScript = JSON.parse(await readFile(path.join(ROOT, 'tests', 'fixtures', 'usage.json'), 'utf8'));
   const quietScript = JSON.parse(await readFile(path.join(ROOT, 'tests', 'fixtures', 'no-usage.json'), 'utf8'));
-  const legacyUsage = await legacyPresented(usageScript, '200000');
-  const legacyQuiet = await legacyPresented(quietScript, '200000');
-  assert.equal(legacyUsage.status, 'done');
-  assert.equal(legacyUsage.presented.contextLabel, '16.4k / 200k');
-  assert.equal(legacyUsage.presented.usage.total, 16400);
-  assert.equal(legacyQuiet.presented.usage, null);
-  assert.equal(legacyQuiet.presented.contextLabel, EM);
-
   const [kernelUsage] = await kernelPresented(usageScript, '200000');
-  assert.equal(kernelUsage.contextLabel, legacyUsage.presented.contextLabel);
-  assert.equal(kernelUsage.usage.total, legacyUsage.presented.usage.total);
+  assert.equal(kernelUsage.contextLabel, '16.4k / 200k');
+  assert.equal(kernelUsage.usage.total, 16400);
   assert.equal(kernelUsage.contextWindow, 200000);
 
   const [kernelQuiet] = await kernelPresented(quietScript, '200000');
@@ -315,14 +272,6 @@ test('kernel usage chip matches the legacy script, including a later call with n
       { text: 'plain' },
     ],
   };
-  const legacyOverwrite = await legacyPresented(overwrite, '128000');
-  assert.equal(legacyOverwrite.presented.contextLabel, '1.5k / 128k');
-  assert.equal(legacyOverwrite.presented.usage.total, 1520);
-  assert.equal(legacyOverwrite.usageEvents.length, 2);
-  assert.equal(legacyOverwrite.usageEvents[0].contextLabel, '1k / 128k');
-  assert.equal(legacyOverwrite.usageEvents[1].usage.total, 1520);
-  assert.notEqual(legacyOverwrite.presented.usage.total, 1010 + 1520);
-
   const kernelBodies = await kernelPresented(overwrite, '128000');
   assert.equal(kernelBodies[0].contextLabel, '1k / 128k');
   assert.equal(kernelBodies[0].usage.total, 1010);
