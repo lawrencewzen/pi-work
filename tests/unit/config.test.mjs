@@ -9,6 +9,9 @@ test('valid role; default tools', () => {
   const r = validateRole({ id: 'reader', name: 'R', systemPrompt: 'x' });
   assert.equal(r.ok, true);
   assert.deepEqual(r.value.tools, ['read', 'ls', 'grep']);
+  const trimmed = validateRole({ id: 'reader', name: 'R', systemPrompt: 'x', model: '  ' });
+  assert.equal(trimmed.ok, true);
+  assert.equal(trimmed.value.model, undefined);
 });
 test('invalid roles', () => {
   for (const bad of [{ ...role, id: 'Bad Id' }, { ...role, id: '' }, { ...role, systemPrompt: '' },
@@ -25,4 +28,8 @@ test('pipeline validation', () => {
   assert.equal(validatePipeline({ id: 'p', name: 'P', steps: [{ role: 'ghost' }] }, roles).ok, false);
   assert.equal(validatePipeline({ id: 'p', name: 'P', steps: [{ role: 'coder', input: 'weird' }] }, roles).ok, false);
   assert.equal(validatePipeline({ id: 'p', name: 'P', steps: Array(21).fill({ role: 'coder' }) }, roles).ok, false);
+  assert.equal(validatePipeline({ id: 'Bad', name: 'P', steps: [{ role: 'coder' }] }, roles).ok, false);
+  const kept = validatePipeline({ id: 'tdd', name: 'TDD', steps: [{ role: 'coder', input: 'user', extra: true }] }, roles);
+  assert.equal(kept.ok, true);
+  assert.deepEqual(kept.value.steps, [{ role: 'coder', input: 'user' }]);
 });

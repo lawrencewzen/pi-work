@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const MESSAGE_META_KEYS = ['kind', 'fromAgent', 'toAgent', 'agentId', 'roleId'];
 
 function chmodSecret(p) {
@@ -171,6 +171,11 @@ export function createSqliteStore(dir) {
       name TEXT,
       steps_json TEXT
     );
+    CREATE TABLE IF NOT EXISTS catalog_tombstones (
+      kind TEXT NOT NULL,
+      id TEXT NOT NULL,
+      PRIMARY KEY (kind, id)
+    );
     CREATE TABLE IF NOT EXISTS schema_version (
       version INTEGER NOT NULL
     );
@@ -257,9 +262,16 @@ export function createSqliteStore(dir) {
     insRole: db.prepare('INSERT OR REPLACE INTO roles (id, name, system_prompt, tools_json, model) VALUES (?,?,?,?,?)'),
     listRoles: db.prepare('SELECT * FROM roles'),
     getRole: db.prepare('SELECT * FROM roles WHERE id = ?'),
+    delRole: db.prepare('DELETE FROM roles WHERE id = ?'),
     insPipe: db.prepare('INSERT OR REPLACE INTO pipelines (id, name, steps_json) VALUES (?,?,?)'),
     listPipes: db.prepare('SELECT * FROM pipelines'),
     getPipe: db.prepare('SELECT * FROM pipelines WHERE id = ?'),
+    delPipe: db.prepare('DELETE FROM pipelines WHERE id = ?'),
+    insTomb: db.prepare('INSERT OR IGNORE INTO catalog_tombstones (kind, id) VALUES (?, ?)'),
+    delTomb: db.prepare('DELETE FROM catalog_tombstones WHERE kind = ? AND id = ?'),
+    hasTomb: db.prepare('SELECT 1 AS ok FROM catalog_tombstones WHERE kind = ? AND id = ?'),
+    countRoleRefs: db.prepare('SELECT COUNT(*) AS n FROM conversations WHERE role_id = ?'),
+    countPipeRefs: db.prepare('SELECT COUNT(*) AS n FROM conversations WHERE pipeline_id = ?'),
   };
 
   if (!q.getRole.get(DEFAULT_ROLE.id)) {
@@ -543,7 +555,16 @@ export function createSqliteStore(dir) {
 
     async createRole(role) {
       q.insRole.run(role.id, role.name, role.systemPrompt, j(role.tools), role.model ?? null);
-      return role;
+      return roleFromRow(q.getRole.get(role.id));
+    },
+    async updateRole(id, role) {
+      if (!q.getRole.get(id)) return undefined;
+      q.insRole.run(id, role.name, role.systemPrompt, j(role.tools), role.model ?? null);
+      return roleFromRow(q.getRole.get(id));
+    },
+    async deleteRole(id) {
+      q.delRole.run(id);
+      return !q.getRole.get(id);
     },
     async listRoles() {
       return q.listRoles.all().map(roleFromRow);
@@ -554,7 +575,16 @@ export function createSqliteStore(dir) {
 
     async createPipeline(pipeline) {
       q.insPipe.run(pipeline.id, pipeline.name, j(pipeline.steps));
-      return pipeline;
+      return this.getPipeline(pipeline.id);
+    },
+    async updatePipeline(id, pipeline) {
+      if (!q.getPipe.get(id)) return undefined;
+      q.insPipe.run(id, pipeline.name, j(pipeline.steps));
+      return this.getPipeline(id);
+    },
+    async deletePipeline(id) {
+      q.delPipe.run(id);
+      return !q.getPipe.get(id);
     },
     async listPipelines() {
       return q.listPipes.all().map((r) => ({ id: r.id, name: r.name, steps: p(r.steps_json) }));
@@ -562,6 +592,21 @@ export function createSqliteStore(dir) {
     async getPipeline(id) {
       const r = q.getPipe.get(id);
       return r ? { id: r.id, name: r.name, steps: p(r.steps_json) } : undefined;
+    },
+
+    async tombstoneCatalog(kind, id) {
+      q.insTomb.run(kind, id);
+    },
+    async clearCatalogTombstone(kind, id) {
+      q.delTomb.run(kind, id);
+    },
+    async hasCatalogTombstone(kind, id) {
+      return Boolean(q.hasTomb.get(kind, id));
+    },
+    async countConversationsReferencing({ roleId, pipelineId } = {}) {
+      if (roleId) return Number(q.countRoleRefs.get(roleId)?.n || 0);
+      if (pipelineId) return Number(q.countPipeRefs.get(pipelineId)?.n || 0);
+      return 0;
     },
 
     async getSettings() {

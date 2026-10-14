@@ -1,0 +1,15 @@
+{
+  "turns": [
+    { "text": "Planner: add src/add.js and a test that checks add(1, 2)." },
+    { "tool": "ls", "args": { "path": "." } },
+    { "end": true },
+    { "text": "Coder: wrote src/add.js." },
+    { "tool": "write", "args": { "path": "src/add.js", "content": "export function add(a, b) {\n  return a + b;\n}\n" } },
+    { "end": true },
+    { "text": "Tester: wrote src/add.test.js." },
+    { "tool": "write", "args": { "path": "src/add.test.js", "content": "import { add } from './add.js';\nconsole.assert(add(1, 2) === 3);\n" } },
+    { "end": true },
+    { "text": "Auditor: no blocking issues." },
+    { "tool": "write", "args": { "path": "AUDIT.md", "content": "# Audit\n\nNo blocking issues.\n" } }
+  ]
+}

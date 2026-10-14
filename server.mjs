@@ -200,6 +200,14 @@ function isSsePath(p) {
   return /^\/api\/conversations\/[^/]+\/events$/.test(p);
 }
 
+const CATALOG_ID = /^[a-z][a-z0-9-]{0,31}$/;
+
+function parseCatalogId(raw) {
+  let id = raw;
+  try { id = decodeURIComponent(raw); } catch { return null; }
+  return CATALOG_ID.test(id) ? id : null;
+}
+
 const store = createSqliteStore(DATA_DIR);
 
 function shutdown() {
@@ -214,6 +222,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 }
 
 await loadRoleTemplates(store, path.join(ROOT, 'roles'));
+await loadPipelineTemplates(store, path.join(ROOT, 'pipelines'));
 await loadPipelineTemplates(store, path.join(ROOT, 'examples', 'pipelines'));
 
 {
@@ -734,8 +743,39 @@ async function routeApi(req, res, url) {
     const body = await readBody(req);
     const v = validateRole(body);
     if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
+    if (await store.getRole(v.value.id)) { sendJson(res, 409, { error: 'exists' }); return; }
+    await store.clearCatalogTombstone('role', v.value.id);
     const role = await store.createRole(v.value);
     sendJson(res, 201, role);
+    return;
+  }
+
+  match = p.match(/^\/api\/roles\/([^/]+)$/);
+  if (match && (m === 'PUT' || m === 'DELETE')) {
+    const id = parseCatalogId(match[1]);
+    if (!id) { sendJson(res, 400, { errors: ['invalid id'] }); return; }
+    if (m === 'DELETE') {
+      if (id === 'default') { sendJson(res, 409, { error: 'protected' }); return; }
+      const existing = await store.getRole(id);
+      if (!existing) { sendJson(res, 404, { error: 'not_found' }); return; }
+      const usedBy = (await store.listPipelines())
+        .filter((pipe) => (pipe.steps || []).some((step) => step.role === id))
+        .map((pipe) => pipe.id);
+      if (usedBy.length) { sendJson(res, 409, { error: 'role_in_use', pipelines: usedBy }); return; }
+      const conversations = await store.countConversationsReferencing({ roleId: id });
+      if (conversations > 0) { sendJson(res, 409, { error: 'role_in_conversations', conversations }); return; }
+      await store.deleteRole(id);
+      await store.tombstoneCatalog('role', id);
+      sendJson(res, 200, { ok: true, id });
+      return;
+    }
+    const body = await readBody(req);
+    if (body?.id != null && body.id !== id) { sendJson(res, 400, { errors: ['id mismatch'] }); return; }
+    if (!(await store.getRole(id))) { sendJson(res, 404, { error: 'not_found' }); return; }
+    const v = validateRole({ ...body, id });
+    if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
+    await store.clearCatalogTombstone('role', id);
+    sendJson(res, 200, await store.updateRole(id, v.value));
     return;
   }
 
@@ -748,8 +788,35 @@ async function routeApi(req, res, url) {
     const roles = await store.listRoles();
     const v = validatePipeline(body, roles);
     if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
+    if (await store.getPipeline(v.value.id)) { sendJson(res, 409, { error: 'exists' }); return; }
+    await store.clearCatalogTombstone('pipeline', v.value.id);
     const pipe = await store.createPipeline(v.value);
     sendJson(res, 201, pipe);
+    return;
+  }
+
+  match = p.match(/^\/api\/pipelines\/([^/]+)$/);
+  if (match && (m === 'PUT' || m === 'DELETE')) {
+    const id = parseCatalogId(match[1]);
+    if (!id) { sendJson(res, 400, { errors: ['invalid id'] }); return; }
+    if (m === 'DELETE') {
+      const existing = await store.getPipeline(id);
+      if (!existing) { sendJson(res, 404, { error: 'not_found' }); return; }
+      const conversations = await store.countConversationsReferencing({ pipelineId: id });
+      if (conversations > 0) { sendJson(res, 409, { error: 'pipeline_in_use', conversations }); return; }
+      await store.deletePipeline(id);
+      await store.tombstoneCatalog('pipeline', id);
+      sendJson(res, 200, { ok: true, id });
+      return;
+    }
+    const body = await readBody(req);
+    if (body?.id != null && body.id !== id) { sendJson(res, 400, { errors: ['id mismatch'] }); return; }
+    if (!(await store.getPipeline(id))) { sendJson(res, 404, { error: 'not_found' }); return; }
+    const roles = await store.listRoles();
+    const v = validatePipeline({ ...body, id }, roles);
+    if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
+    await store.clearCatalogTombstone('pipeline', id);
+    sendJson(res, 200, await store.updatePipeline(id, v.value));
     return;
   }
 

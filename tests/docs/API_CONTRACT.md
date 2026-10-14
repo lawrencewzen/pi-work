@@ -32,8 +32,8 @@
   - `parseSSE(text)` → 事件数组 `{id, event, data}`（data 为解析后的 JSON，若可解析）。往返一致。
 - `src/core/config.mjs`
   - `validateRole(obj)` / `validatePipeline(obj, roles)` → `{ok:true, value}` 或 `{ok:false, errors:[string]}`。
-  - Role：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, systemPrompt:string 非空, tools: 子集 of ['read','write','edit','ls','grep','bash'], model?: string}`；tools 缺省 `['read','ls','grep']`。
-  - Pipeline：`{id, name, steps:[{role:<已存在 role id>, input?:'previous'|'user'}]}`，steps 非空，最多 20 步。
+  - Role：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, systemPrompt:string 非空, tools: 子集 of ['read','write','edit','ls','grep','bash'], model?: string}`；tools 缺省 `['read','ls','grep']`。空字符串 `model` 视为未设置。
+  - Pipeline：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, steps:[{role:<已存在 role id>, input?:'previous'|'user'}]}`，steps 非空，最多 20 步。
 - `src/core/orchestrator.mjs`
   - `createOrchestrator({llm, store, tools})`：`start(conversationId, opts)`、`pause(id)`、`resume(id)`、`stop(id)`、`status(id)`；多个会话并行运行，彼此消息/工具事件/工作区不串。单测用 `src/llm/faux.mjs` 的 `createFauxLLM(script)` 与 `src/store/memory.mjs` 的 `createMemoryStore()`。
 
@@ -52,8 +52,12 @@
 | `GET /workspaces/:wid/files?path=` | | `{path, content}`；越界 → 403 `{error:'E_SANDBOX'}` |
 | `PUT /workspaces/:wid/files` | `{path, content}` | `200 {path, added, removed}` |
 | `GET /conversations/:cid/diff?path=` | | `{path, before, after, unified, added, removed}` |
-| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}` |
-| `GET /pipelines` · `POST /pipelines` | Pipeline | 同上 |
+| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |
+| `PUT /roles/:id` | Role | 更新已有角色。不存在 404 `{error:'not_found'}`；路径与 body.id 不一致 400 `{errors:['id mismatch']}` |
+| `DELETE /roles/:id` | | 200 `{ok:true,id}`。`default` 不可删，409 `{error:'protected'}`。被流水线引用 409 `{error:'role_in_use',pipelines:[id]}`。被对话 `roleId` 引用 409 `{error:'role_in_conversations',conversations:n}`。成功删除会写入 catalog tombstone，下次启动不会从 `roles/*.json` 再种回该 id |
+| `GET /pipelines` · `POST /pipelines` | Pipeline | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |
+| `PUT /pipelines/:id` | Pipeline | 同角色更新。步骤里的 role 必须已存在 |
+| `DELETE /pipelines/:id` | | 200 `{ok:true,id}`。被对话 `pipelineId` 引用 409 `{error:'pipeline_in_use',conversations:n}`。成功删除写入 tombstone，下次启动不会从 `pipelines/*.json` 或 `examples/pipelines/*.json` 再种回该 id |
 status 取值：`idle | running | waiting | paused | recovering | failed | done | stopped`。
 
 消息 `messages[]`：`{id, role:'user'|'assistant'|'tool', text?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。

@@ -11,7 +11,12 @@ export PATH=$HOME/.local/node22/bin:$PATH
 PORT=3000 PI_WORK_LLM=faux PI_WORK_FAUX_SCRIPT=examples/faux/subagents.json node server.mjs
 ```
 
-Startup loads `roles/*.json` and `examples/pipelines/*.json` (pipeline id `demo`) into the store if they are not already present.
+Startup seeds the store from JSON templates when that id is not already stored and was not deleted in the UI:
+
+- Roles: `roles/*.json` (`default`, `coder`, `tester`, `auditor`, `planner`, …)
+- Pipelines: `pipelines/*.json`, then `examples/pipelines/*.json`
+
+Shipped pipelines are `feature` (planner → coder → tester → auditor) and `demo` (coder → tester → auditor). A delete records a tombstone, so the template is not copied back on the next start. Edits stay in SQLite and are not written back over the template files.
 
 Create a workspace and a conversation that uses that pipeline, then send a message:
 

@@ -36,6 +36,7 @@ export function createMemoryStore() {
   const eventSeq = new Map();
   const roles = new Map([[DEFAULT_ROLE.id, { ...DEFAULT_ROLE }]]);
   const pipelines = new Map();
+  const tombstones = new Set();
   let settings = normalizeSettings(DEFAULT_SETTINGS);
 
   const convMsgs = (cid) => {
@@ -215,8 +216,18 @@ export function createMemoryStore() {
     },
 
     async createRole(role) {
-      roles.set(role.id, { ...role });
-      return clone(role);
+      roles.set(role.id, { ...role, tools: Array.isArray(role.tools) ? role.tools.slice() : [] });
+      return clone(roles.get(role.id));
+    },
+    async updateRole(id, role) {
+      if (!roles.has(id)) return undefined;
+      const next = { ...role, id, tools: Array.isArray(role.tools) ? role.tools.slice() : [] };
+      if (!next.model) delete next.model;
+      roles.set(id, next);
+      return clone(next);
+    },
+    async deleteRole(id) {
+      return roles.delete(id);
     },
     async listRoles() {
       return [...roles.values()].map(clone);
@@ -226,14 +237,48 @@ export function createMemoryStore() {
     },
 
     async createPipeline(pipeline) {
-      pipelines.set(pipeline.id, { ...pipeline });
-      return clone(pipeline);
+      pipelines.set(pipeline.id, {
+        ...pipeline,
+        steps: (pipeline.steps || []).map((step) => ({ ...step })),
+      });
+      return clone(pipelines.get(pipeline.id));
+    },
+    async updatePipeline(id, pipeline) {
+      if (!pipelines.has(id)) return undefined;
+      const next = {
+        ...pipeline,
+        id,
+        steps: (pipeline.steps || []).map((step) => ({ ...step })),
+      };
+      pipelines.set(id, next);
+      return clone(next);
+    },
+    async deletePipeline(id) {
+      return pipelines.delete(id);
     },
     async listPipelines() {
       return [...pipelines.values()].map(clone);
     },
     async getPipeline(id) {
       return clone(pipelines.get(id));
+    },
+
+    async tombstoneCatalog(kind, id) {
+      tombstones.add(`${kind}:${id}`);
+    },
+    async clearCatalogTombstone(kind, id) {
+      tombstones.delete(`${kind}:${id}`);
+    },
+    async hasCatalogTombstone(kind, id) {
+      return tombstones.has(`${kind}:${id}`);
+    },
+    async countConversationsReferencing({ roleId, pipelineId } = {}) {
+      let n = 0;
+      for (const conv of conversations.values()) {
+        if (roleId && conv.roleId === roleId) n += 1;
+        if (pipelineId && conv.pipelineId === pipelineId) n += 1;
+      }
+      return n;
     },
 
     async getSettings() {
