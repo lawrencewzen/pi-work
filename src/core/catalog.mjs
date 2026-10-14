@@ -27,6 +27,13 @@ async function readJson(fp) {
   }
 }
 
+export function catalogError(status, code, message) {
+  const err = new Error(message);
+  err.status = status;
+  err.catalogCode = code;
+  return err;
+}
+
 export async function scanPlugins(dir) {
   let entries;
   try {
@@ -56,6 +63,9 @@ export async function scanPlugins(dir) {
       description: String(manifest.description || ''),
       version: String(manifest.version || ''),
       source: String(manifest.source || 'local'),
+      location: e.isDirectory() ? path.join(dir, e.name) : '',
+      main: typeof manifest.main === 'string' ? manifest.main : '',
+      toolSpecs: Array.isArray(manifest.tools) ? manifest.tools : [],
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
@@ -95,6 +105,7 @@ export async function scanSkills(dir) {
       description: String(meta.description || firstLine.replace(/^#+\s*/, '').slice(0, 160)),
       version: String(meta.version || ''),
       source: String(meta.source || 'local'),
+      body: body.trim(),
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));

@@ -18,6 +18,8 @@ const state = {
   pipelines: [],
   plugins: [],
   skills: [],
+  pluginQuery: '',
+  skillQuery: '',
   about: {},
   allConversations: {}, // { [wid]: [conv, ...] }
   allRunningList: [],
@@ -1742,10 +1744,45 @@ function pipelineOptionLabel(pipe) {
 
 function pluginSourceLabel(src) {
   const s = String(src || '').toLowerCase();
-  if (s === 'builtin' || s === 'built-in' || s === '内置') return t('plugin_source_builtin');
+  if (s === 'builtin' || s === 'built-in' || s === 'bundled' || s === '内置') return t('plugin_source_builtin');
   if (s === 'community' || s === '社区') return t('plugin_source_community');
   if (s === 'local' || s === 'imported' || s === '本地导入' || s === '本地') return t('plugin_source_local');
   return src || t('plugin_source_local');
+}
+
+function catalogQuery(q) {
+  return String(q || '').trim().toLowerCase();
+}
+
+function matchesCatalogQuery(item, q) {
+  const query = catalogQuery(q);
+  if (!query) return true;
+  const tools = (item?.tools || []).map((tool) => tool?.name || '').join(' ');
+  const hay = `${item?.name || ''} ${item?.id || ''} ${item?.description || ''} ${tools}`.toLowerCase();
+  return hay.includes(query);
+}
+
+function extensionError(err, fallbackKey) {
+  const code = err?.body?.code;
+  const detail = String(err?.body?.error || '').trim();
+  if (code && t(code) !== code) {
+    const translated = t(code);
+    if (detail && (code === 'err_plugin_not_loadable' || code === 'err_plugin_invalid') && !translated.includes(detail)) {
+      return `${translated} — ${detail}`;
+    }
+    return translated;
+  }
+  return detail || err?.message || t(fallbackKey);
+}
+
+function showModalError(id, message) {
+  const el = document.getElementById(id);
+  if (!el) {
+    showToast(message);
+    return;
+  }
+  el.textContent = message;
+  el.classList.add('is-visible');
 }
 
 export function toggleToolDetail(id) {
@@ -2268,32 +2305,37 @@ function renderSettingsTabContent(tab) {
   }
 
   if (tab === 'plugins') {
+    const query = state.pluginQuery || '';
+    const list = (state.plugins || []).filter((item) => matchesCatalogQuery(item, query));
     return `
       <h2>${escapeHtml(t('settings_tab_plugins'))}</h2>
       <div style="display:flex;gap:10px;margin-bottom:18px">
         <div style="flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--border-strong);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--text-muted);background:var(--bg-surface)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input type="text" id="plugin-search-input" placeholder="${escapeHtml(t('search_plugins_placeholder'))}" style="border:none;background:transparent;outline:none;width:100%;color:var(--text-primary);font-size:13px;" />
+          <input type="text" id="plugin-search-input" value="${escapeHtml(query)}" placeholder="${escapeHtml(t('search_plugins_placeholder'))}" style="border:none;background:transparent;outline:none;width:100%;color:var(--text-primary);font-size:13px;" />
         </div>
         <button class="btn p" data-action="open-import-plugin" style="padding:0 14px;border-radius:8px">${escapeHtml(t('btn_import_plugin'))}</button>
       </div>
       <div id="plugins-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-        ${renderPluginsListHtml(state.plugins)}
+        ${renderPluginsListHtml(list, Boolean(catalogQuery(query)))}
       </div>
     `;
   }
 
   if (tab === 'skills') {
+    const query = state.skillQuery || '';
+    const list = (state.skills || []).filter((item) => matchesCatalogQuery(item, query));
     return `
       <h2>${escapeHtml(t('settings_tab_skills'))}</h2>
       <div style="display:flex;gap:10px;margin-bottom:18px">
         <div style="flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--border-strong);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--text-muted);background:var(--bg-surface)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input type="text" id="skill-search-input" placeholder="${escapeHtml(t('search_skills_placeholder'))}" style="border:none;background:transparent;outline:none;width:100%;color:var(--text-primary);font-size:13px;" />
+          <input type="text" id="skill-search-input" value="${escapeHtml(query)}" placeholder="${escapeHtml(t('search_skills_placeholder'))}" style="border:none;background:transparent;outline:none;width:100%;color:var(--text-primary);font-size:13px;" />
         </div>
+        <button class="btn p" data-action="open-new-skill" data-testid="btn-new-skill" style="padding:0 14px;border-radius:8px">${escapeHtml(t('btn_new_skill'))}</button>
       </div>
       <div id="skills-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-        ${renderSkillsListHtml(state.skills)}
+        ${renderSkillsListHtml(list, Boolean(catalogQuery(query)))}
       </div>
     `;
   }
@@ -2344,6 +2386,11 @@ function renderPluginsListHtml(list, searching = false) {
     .map((pl) => {
       const letter = (pl.name || pl.id || 'P').slice(0, 1).toUpperCase();
       const isOn = pl.enabled !== false;
+      const toolNames = (pl.tools || []).map((tool) => tool.name).filter(Boolean);
+      const toolLine = toolNames.length ? `${t('plugin_tools_label')}: ${toolNames.join(', ')}` : '';
+      const problem = !pl.loaded && (pl.error || pl.errorCode)
+        ? `${t(pl.errorCode && t(pl.errorCode) !== pl.errorCode ? pl.errorCode : 'plugin_not_loaded')}${pl.error ? ` — ${pl.error}` : ''}`
+        : '';
       return (
         `<div style="border:1px solid var(--border-subtle);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--bg-surface)">` +
         `<div style="display:flex;align-items:center;gap:10px">` +
@@ -2352,6 +2399,8 @@ function renderPluginsListHtml(list, searching = false) {
         `<div class="tg ${isOn ? 'on' : ''}" data-action="toggle-plugin" data-plugin-id="${escapeHtml(pl.id)}" data-enabled="${!isOn}"></div>` +
         `</div>` +
         `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5;min-height:36px">${escapeHtml(pl.description || '')}</div>` +
+        (toolLine ? `<div style="font-size:11px;color:var(--text-muted)">${escapeHtml(toolLine)}</div>` : '') +
+        (problem ? `<div style="font-size:11px;color:var(--status-failed);line-height:1.4">${escapeHtml(problem)}</div>` : '') +
         `<div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px"><span>${escapeHtml(pluginSourceLabel(pl.source))}</span>${pl.version ? `<span>·</span><span>${escapeHtml(pl.version)}</span>` : ''}</div>` +
         `</div>`
       );
@@ -2367,11 +2416,13 @@ function renderSkillsListHtml(list, searching = false) {
   return list
     .map((sk) => {
       const letter = (sk.name || sk.id || 'S').slice(0, 1).toUpperCase();
+      const isOn = sk.enabled !== false;
       return (
         `<div style="border:1px solid var(--border-subtle);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--bg-surface)">` +
         `<div style="display:flex;align-items:center;gap:10px">` +
         `<div style="width:30px;height:30px;border-radius:8px;background:var(--bg-surface-subtle);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary)">${escapeHtml(letter)}</div>` +
         `<b style="font-size:13px;font-weight:500;flex:1">${escapeHtml(sk.name || sk.id)}</b>` +
+        `<div class="tg ${isOn ? 'on' : ''}" data-action="toggle-skill" data-skill-id="${escapeHtml(sk.id)}" data-enabled="${!isOn}"></div>` +
         `</div>` +
         `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5;min-height:36px">${escapeHtml(sk.description || '')}</div>` +
         `<div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px"><span>${escapeHtml(pluginSourceLabel(sk.source))}</span>${sk.version ? `<span>·</span><span>${escapeHtml(sk.version)}</span>` : ''}</div>` +
@@ -2555,33 +2606,44 @@ export async function saveModelsSettings() {
 
 export async function togglePlugin(id, enabled) {
   try {
-    await api(`/api/plugins/${encodeURIComponent(id)}`, 'PUT', { enabled });
+    const saved = await api(`/api/plugins/${encodeURIComponent(id)}`, 'PUT', { enabled });
     const p = state.plugins.find((item) => item.id === id);
-    if (p) p.enabled = enabled;
+    if (p && saved && typeof saved === 'object') Object.assign(p, saved);
+    else if (p) p.enabled = enabled;
     renderSettingsModal();
   } catch (err) {
-    showToast(err.message || 'err_plugin_update');
+    showToast(extensionError(err, 'err_plugin_update'));
+  }
+}
+
+export async function toggleSkill(id, enabled) {
+  try {
+    const saved = await api(`/api/skills/${encodeURIComponent(id)}`, 'PUT', { enabled });
+    const skill = state.skills.find((item) => item.id === id);
+    if (skill && saved && typeof saved === 'object') Object.assign(skill, saved);
+    else if (skill) skill.enabled = enabled;
+    renderSettingsModal();
+  } catch (err) {
+    showToast(extensionError(err, 'err_skill_save'));
   }
 }
 
 export function filterPlugins(q) {
+  state.pluginQuery = q;
   const grid = document.getElementById('plugins-grid');
   if (!grid) return;
-  const filtered = state.plugins.filter((p) =>
-    (p.name || p.id).toLowerCase().includes(q.toLowerCase()) ||
-    (p.description || '').toLowerCase().includes(q.toLowerCase())
-  );
-  grid.innerHTML = renderPluginsListHtml(filtered, Boolean(q && q.trim()));
+  const query = catalogQuery(q);
+  const filtered = (state.plugins || []).filter((item) => matchesCatalogQuery(item, query));
+  grid.innerHTML = renderPluginsListHtml(filtered, Boolean(query));
 }
 
 export function filterSkills(q) {
+  state.skillQuery = q;
   const grid = document.getElementById('skills-grid');
   if (!grid) return;
-  const filtered = state.skills.filter((s) =>
-    (s.name || s.id).toLowerCase().includes(q.toLowerCase()) ||
-    (s.description || '').toLowerCase().includes(q.toLowerCase())
-  );
-  grid.innerHTML = renderSkillsListHtml(filtered, Boolean(q && q.trim()));
+  const query = catalogQuery(q);
+  const filtered = (state.skills || []).filter((item) => matchesCatalogQuery(item, query));
+  grid.innerHTML = renderSkillsListHtml(filtered, Boolean(query));
 }
 
 // Modal dialog helpers
@@ -2827,17 +2889,11 @@ export function openImportPluginModal() {
     <div class="modal-dialog">
       <h3>${escapeHtml(t('plugin_import_title'))} <span style="cursor:pointer;color:var(--text-muted)" data-action="close-modal">×</span></h3>
       <div class="form-group">
-        <label>${escapeHtml(t('plugin_id_label'))}</label>
-        <input id="plug-id-input" placeholder="my-custom-plugin" />
+        <label>${escapeHtml(t('plugin_path_label'))}</label>
+        <input id="plug-path-input" data-testid="plugin-path-input" placeholder="${escapeHtml(t('plugin_path_placeholder'))}" />
       </div>
-      <div class="form-group">
-        <label>${escapeHtml(t('plugin_desc_label'))}</label>
-        <input id="plug-desc-input" placeholder="Plugin functionality" />
-      </div>
-      <div class="form-group">
-        <label>${escapeHtml(t('plugin_ver_label'))}</label>
-        <input id="plug-ver-input" value="1.0.0" />
-      </div>
+      <p style="margin:0;font-size:12px;line-height:1.45;color:var(--text-muted)">${escapeHtml(t('plugin_path_hint'))}</p>
+      <div id="plug-modal-error" class="modal-inline-error"></div>
       <div class="modal-actions">
         <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
         <button class="btn p" data-action="submit-import-plugin">${escapeHtml(t('btn_import_plugin'))}</button>
@@ -2847,18 +2903,67 @@ export function openImportPluginModal() {
 }
 
 export async function submitImportPlugin() {
-  const name = document.getElementById('plug-id-input')?.value.trim();
-  const desc = document.getElementById('plug-desc-input')?.value.trim();
-  const ver = document.getElementById('plug-ver-input')?.value.trim();
-  if (!name) return;
+  const pluginPath = document.getElementById('plug-path-input')?.value.trim();
+  if (!pluginPath) {
+    showModalError('plug-modal-error', t('err_plugin_path_required'));
+    return;
+  }
   try {
-    const pl = await api('/api/plugins', 'POST', { name, description: desc, version: ver });
-    showToast(`Plugin ${pl.name} imported`);
+    const pl = await api('/api/plugins', 'POST', { path: pluginPath });
+    showToast('plugin_imported', { name: pl.name });
     closeModal();
     state.plugins = await api('/api/plugins');
     renderSettingsModal();
   } catch (err) {
-    showToast(err.message || 'Import failed');
+    showModalError('plug-modal-error', extensionError(err, 'err_import'));
+  }
+}
+
+export function openNewSkillModal() {
+  openModal(`
+    <div class="modal-dialog">
+      <h3>${escapeHtml(t('skill_new_title'))} <span style="cursor:pointer;color:var(--text-muted)" data-action="close-modal">×</span></h3>
+      <div class="form-group">
+        <label>${escapeHtml(t('skill_name_label'))}</label>
+        <input id="skill-name-input" data-testid="skill-name-input" placeholder="${escapeHtml(t('skill_name_placeholder'))}" />
+      </div>
+      <div class="form-group">
+        <label>${escapeHtml(t('skill_desc_label'))}</label>
+        <input id="skill-desc-input" placeholder="${escapeHtml(t('skill_desc_placeholder'))}" />
+      </div>
+      <div class="form-group">
+        <label>${escapeHtml(t('skill_body_label'))}</label>
+        <textarea id="skill-body-input" data-testid="skill-body-input" rows="6" placeholder="${escapeHtml(t('skill_body_placeholder'))}"></textarea>
+      </div>
+      <div id="skill-modal-error" class="modal-inline-error"></div>
+      <div class="modal-actions">
+        <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
+        <button class="btn p" data-action="submit-new-skill" data-testid="skill-create-submit">${escapeHtml(t('btn_new_skill'))}</button>
+      </div>
+    </div>
+  `);
+}
+
+export async function submitNewSkill() {
+  const name = document.getElementById('skill-name-input')?.value.trim();
+  const description = document.getElementById('skill-desc-input')?.value.trim();
+  const body = document.getElementById('skill-body-input')?.value.trim();
+  if (!name) {
+    showModalError('skill-modal-error', t('skill_name_required'));
+    return;
+  }
+  if (!body) {
+    showModalError('skill-modal-error', t('skill_body_required'));
+    return;
+  }
+  try {
+    const created = await api('/api/skills', 'POST', { name, description, body });
+    showToast('skill_created', { name: created?.name || name });
+    closeModal();
+    state.skills = await api('/api/skills');
+    renderSettingsModal();
+  } catch (err) {
+    showModalError('skill-modal-error', extensionError(err, 'err_skill_save'));
   }
 }
 
@@ -2899,6 +3004,7 @@ window.__app = {
   logoutGrok,
   cancelGrokLogin,
   togglePlugin,
+  toggleSkill,
   filterPlugins,
   filterSkills,
   openNewConversationModal,
@@ -2908,6 +3014,8 @@ window.__app = {
   submitWorkspaceModal,
   openImportPluginModal,
   submitImportPlugin,
+  openNewSkillModal,
+  submitNewSkill,
   closeModal,
   toggleToolDetail,
   toggleSubagent,
@@ -3033,11 +3141,20 @@ document.addEventListener('click', (e) => {
     case 'toggle-plugin':
       togglePlugin(actionEl.getAttribute('data-plugin-id'), actionEl.getAttribute('data-enabled') === 'true');
       break;
+    case 'toggle-skill':
+      toggleSkill(actionEl.getAttribute('data-skill-id'), actionEl.getAttribute('data-enabled') === 'true');
+      break;
     case 'open-import-plugin':
       openImportPluginModal();
       break;
     case 'submit-import-plugin':
       submitImportPlugin();
+      break;
+    case 'open-new-skill':
+      openNewSkillModal();
+      break;
+    case 'submit-new-skill':
+      submitNewSkill();
       break;
     case 'toggle-ws-modal-tab':
       toggleWsModalTab(actionEl.getAttribute('data-tab'));

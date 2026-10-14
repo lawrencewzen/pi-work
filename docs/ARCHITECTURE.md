@@ -43,6 +43,8 @@ flowchart LR
 - **Pipeline**：角色有序组合，带交接产物和失败回退。流水线步骤作为会话的 sub-agent 暴露（`GET /api/conversations/:cid` 的 `agents[]`，SSE `agent` 事件）。演示见 [SUBAGENTS.md](SUBAGENTS.md)。
 - **Monitor**：每个 Agent 记录最后进展时间；超时或流中断 → 从最近检查点续跑，计数显示在状态条（↻ N）。
 - **工具沙箱**：所有路径解析后必须位于工作区根目录内；写操作生成 diff 并入库，供右栏展示。`bash` 使用环境变量白名单、进程组 SIGKILL、1 MiB 输出上限；完整 OS 沙箱（bubblewrap）为 v1 之后的工作。
+- **Skills**：`skills/<id>/SKILL.md`（前言里的 `id` / `name` / `description` + 正文）。仓库自带的 Skill 与 `$PI_WORK_DATA_DIR/skills` 中用户新建的 Skill 合并，同名时用户副本优先。`settings.skills[id] === false` 表示关闭，缺省为开启。编排器每次请求模型前，把已开启 Skill 的正文追加到系统提示词。
+- **插件**：`plugins/<id>/plugin.json` 声明 `main`（插件目录内的相对 `.mjs`）和 `tools`。加载器 `import()` 该模块，并按工具名查找导出的函数。只有已开启且加载成功的工具会进入模型工具列表，并在编排器里执行；关闭、冲突或加载失败的名字仍是 `E_UNKNOWN_TOOL`。内置工具白名单不变。导入必须指向本机目录，模块能加载才复制到数据目录；只提交名称和描述会被拒绝。插件代码在进程内运行，没有额外沙箱。
 
 ## 耐久性设计
 

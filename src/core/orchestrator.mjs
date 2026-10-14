@@ -49,6 +49,64 @@ function agentRef(cid, rt) {
   return { roleId, agentId: `${cid}:agent:${idx}` };
 }
 
+function normalizePluginResult(name, result) {
+  if (typeof result === 'string') {
+    return { name, output: result.slice(0, 32_000), status: 'completed' };
+  }
+  const output = result?.output ?? '';
+  const text = typeof output === 'string' ? output : JSON.stringify(output ?? '');
+  return {
+    name,
+    output: text.slice(0, 32_000),
+    status: result?.status === 'error' ? 'error' : 'completed',
+    path: typeof result?.path === 'string' ? result.path : undefined,
+    error: result?.error,
+    code: result?.code,
+  };
+}
+
+async function invokePlugin(tool, args, ctx) {
+  if (ctx.signal?.aborted) throw abortError();
+  let timer;
+  const onAbort = () => {
+    clearTimeout(timer);
+  };
+  ctx.signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    const result = await Promise.race([
+      Promise.resolve().then(() => tool.handler(args || {}, {
+        workspacePath: ctx.workspacePath,
+        conversationId: ctx.conversationId,
+        signal: ctx.signal,
+      })),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error('plugin tool timed out');
+          err.code = 'E_PLUGIN_TIMEOUT';
+          reject(err);
+        }, 10_000);
+        if (ctx.signal?.aborted) {
+          clearTimeout(timer);
+          reject(abortError());
+        }
+      }),
+    ]);
+    return normalizePluginResult(tool.name, result);
+  } catch (err) {
+    if (isAbort(err) || ctx.signal?.aborted) throw abortError();
+    return {
+      name: tool.name,
+      output: String(err?.message || 'plugin tool failed').slice(0, 32_000),
+      status: 'error',
+      error: err?.message,
+      code: err?.code,
+    };
+  } finally {
+    clearTimeout(timer);
+    ctx.signal?.removeEventListener('abort', onAbort);
+  }
+}
+
 export function createOrchestrator({
   llm,
   store,
@@ -56,6 +114,7 @@ export function createOrchestrator({
   retry,
   stallMs,
   maxAutoContinues,
+  extensions,
 } = {}) {
   const retryPolicy = retry || createRetryPolicy({
     maxAttempts: Number(process.env.PI_WORK_RETRY_MAX) || 5,
@@ -206,10 +265,35 @@ export function createOrchestrator({
     };
   }
 
-  async function buildMessages(cid, rt) {
+  async function loadExtensions() {
+    if (!extensions) return { prompt: '', tools: [] };
+    let prompt = '';
+    let pluginTools = [];
+    try {
+      if (typeof extensions.skillPrompt === 'function') {
+        prompt = String((await extensions.skillPrompt()) || '');
+      }
+    } catch (err) {
+      console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
+    }
+    try {
+      if (typeof extensions.pluginTools === 'function') {
+        const list = await extensions.pluginTools();
+        if (Array.isArray(list)) {
+          pluginTools = list.filter((tool) => tool && typeof tool.name === 'string' && typeof tool.handler === 'function');
+        }
+      }
+    } catch (err) {
+      console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
+    }
+    return { prompt, tools: pluginTools };
+  }
+
+  async function buildMessages(cid, rt, skillPrompt = '') {
     const stored = await store.getMessages(cid);
     const msgs = [];
-    if (rt.role?.systemPrompt) msgs.push({ role: 'system', content: rt.role.systemPrompt, text: rt.role.systemPrompt });
+    const system = [rt.role?.systemPrompt || '', String(skillPrompt || '').trim()].filter(Boolean).join('\n\n');
+    if (system) msgs.push({ role: 'system', content: system, text: system });
     for (const m of stored) {
       if (m.role === 'user') msgs.push({ role: 'user', text: m.text || '', content: m.text || '' });
       else if (m.role === 'assistant') msgs.push({ role: 'assistant', text: m.text || '', content: m.text || '' });
@@ -277,7 +361,15 @@ export function createOrchestrator({
           continue;
         }
 
-        const messages = await buildMessages(cid, rt);
+        const ext = await loadExtensions();
+        const messages = await buildMessages(cid, rt, ext.prompt);
+        const roleAllow = Array.isArray(rt.role?.tools) && rt.role.tools.length
+          ? rt.role.tools
+          : TOOL_REGISTRY;
+        const toolNames = [...roleAllow];
+        for (const tool of ext.tools) {
+          if (!toolNames.includes(tool.name)) toolNames.push(tool.name);
+        }
         let action;
         try {
           action = await llm.next({
@@ -286,7 +378,15 @@ export function createOrchestrator({
             messages,
             signal: rt.abort.signal,
             onProgress: () => markProgress(rt),
-            tools: rt.role?.tools,
+            tools: toolNames,
+            toolDefs: ext.tools.map((tool) => ({
+              type: 'function',
+              function: {
+                name: tool.name,
+                description: tool.description || '',
+                parameters: tool.parameters || { type: 'object', properties: {} },
+              },
+            })),
             model: rt.role?.model,
             roleId: rt.role?.id,
           });
@@ -393,10 +493,9 @@ export function createOrchestrator({
           const toolCallId = `${cid}:${rt.currentStep}`;
           markProgress(rt);
           await persist(rt);
-          const roleAllow = Array.isArray(rt.role?.tools) && rt.role.tools.length
-            ? rt.role.tools
-            : TOOL_REGISTRY;
-          if (!TOOL_REGISTRY.includes(action.name) || !roleAllow.includes(action.name)) {
+          const pluginHit = ext.tools.find((tool) => tool.name === action.name);
+          const builtinOk = TOOL_REGISTRY.includes(action.name) && roleAllow.includes(action.name);
+          if (!pluginHit && !builtinOk) {
             const tool = {
               id: toolCallId,
               name: action.name,
@@ -433,13 +532,16 @@ export function createOrchestrator({
             }
             let result;
             try {
-              result = await callTool(action.name, action.args || {}, {
+              const toolCtx = {
                 store,
                 toolCallId,
                 workspacePath: rt.workspacePath,
                 conversationId: cid,
                 signal: rt.abort.signal,
-              });
+              };
+              result = pluginHit
+                ? await invokePlugin(pluginHit, action.args || {}, toolCtx)
+                : await callTool(action.name, action.args || {}, toolCtx);
             } catch (err) {
               if (rt.epoch !== epoch || isAbort(err) || rt.status === 'paused' || rt.status === 'stopped') return;
               result = {
