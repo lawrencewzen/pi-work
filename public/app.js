@@ -1509,21 +1509,9 @@ export function isRealSubagent(agent) {
   return String(agent?.id || '').includes(':sub:');
 }
 
-/** The agents payload has no mode. A spawn tool, or a name that is not the role, means background. */
-export function isBackgroundSubagent(agent, conv = state.activeConversationData) {
-  if (!isRealSubagent(agent)) return false;
-  if (agent.mode === 'background') return true;
-  if (agent.mode === 'foreground') return false;
-  const name = String(agent.name || '');
-  for (const message of conv?.messages || []) {
-    const input = message?.tool?.input;
-    if (message?.tool?.name === 'subagent' && String(input?.action || '') === 'spawn' && name && String(input?.name || '') === name) {
-      return true;
-    }
-  }
-  const role = (state.roles || []).find((item) => item.id === agent.roleId);
-  if (!role) return false;
-  return name !== role.name && name !== role.id;
+/** Quiet 「后台」 mark. Only the kernel mode field counts. */
+export function isBackgroundSubagent(agent) {
+  return isRealSubagent(agent) && agent?.mode === 'background';
 }
 
 function agentProgressLabel(agent) {
@@ -1599,6 +1587,7 @@ export async function refreshViewingAgent(cid, aid) {
           status: body.status || agents[idx].status,
           name: body.name || agents[idx].name,
           roleId: body.roleId || agents[idx].roleId,
+          ...(body.mode === 'background' || body.mode === 'foreground' ? { mode: body.mode } : {}),
         };
       }
     }
@@ -1660,13 +1649,14 @@ export async function forkFromHistory() {
 
 function renderRealSubagentRow(agent) {
   const background = isBackgroundSubagent(agent);
+  const mode = agent?.mode === 'background' || agent?.mode === 'foreground' ? agent.mode : '';
   const name = realSubagentName(agent);
   const st = agent.status || 'waiting';
   const progressStr = agentProgressLabel(agent);
   const last = oneLine(agent.lastText);
   const open = state.viewingAgentId === agent.id;
   return (
-    `<div class="sub-agent-row is-real${open ? ' is-open' : ''}" data-testid="subagent-row" data-agent-id="${escapeHtml(agent.id || '')}" data-role-id="${escapeHtml(agent.roleId || '')}" data-mode="${background ? 'background' : 'foreground'}" data-status="${escapeHtml(st)}" data-action="open-subagent" title="${escapeHtml(last || name)}">` +
+    `<div class="sub-agent-row is-real${open ? ' is-open' : ''}" data-testid="subagent-row" data-agent-id="${escapeHtml(agent.id || '')}" data-role-id="${escapeHtml(agent.roleId || '')}" data-mode="${escapeHtml(mode)}" data-status="${escapeHtml(st)}" data-action="open-subagent" title="${escapeHtml(last || name)}">` +
     `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
     `<span class="sub-agent-copy">` +
     `<span class="sub-agent-line">` +

@@ -426,9 +426,14 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
     assert.ok(scout, JSON.stringify(done.agents));
     assert.equal(scout.name, 'Scout');
     assert.equal(scout.status, 'done');
+    assert.equal(scout.mode, 'foreground');
     assert.match(scout.lastText, /CHILD_MODEL_OK/);
+    for (const chip of done.agents.filter((agent) => !String(agent.id).includes(':sub:'))) {
+      assert.equal(chip.mode, undefined);
+    }
     const messages = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/${encodeURIComponent(scout.id)}/messages`);
     assert.equal(messages.status, 200);
+    assert.equal(messages.body.mode, 'foreground');
     assert.equal(messages.body.messages.filter((message) => message.role === 'user').length, 1);
     assert.match(messages.body.messages.find((message) => message.role === 'assistant')?.text || '', /CHILD_MODEL_OK/);
     const missing = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/missing/messages`);
@@ -441,6 +446,10 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
     assert.equal(deltas.includes('CHILD_MODEL_OK'), false);
     const agentEvent = events.find((ev) => ev.event === 'agent' && ev.data?.roleId === 'scout' && ev.data?.lastText?.includes('CHILD_MODEL_OK'));
     assert.ok(agentEvent, JSON.stringify(events.filter((ev) => ev.event === 'agent')));
+    assert.equal(agentEvent.data.mode, 'foreground');
+    for (const ev of events.filter((item) => item.event === 'agent' && !String(item.data?.id || '').includes(':sub:'))) {
+      assert.equal(ev.data.mode, undefined);
+    }
     console.log(`KERNEL_SUBAGENTS_FOREGROUND ${JSON.stringify({
       model: childHit.model,
       tools: childHit.tools,
@@ -489,10 +498,17 @@ test('background spawn, send, wait, list, stop, and the concurrency cap', { time
     assert.ok(scout, JSON.stringify(done.agents));
     assert.equal(scout.roleId, 'scout');
     assert.equal(scout.status, 'stopped');
+    assert.equal(scout.mode, 'background');
     const child = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/${encodeURIComponent(scout.id)}/messages`);
     assert.equal(child.status, 200);
+    assert.equal(child.body.mode, 'background');
     assert.ok(child.body.messages.some((message) => message.role === 'user' && message.text === 'ping-a'));
     assert.ok(child.body.messages.some((message) => message.role === 'assistant' && message.text === 'SCOUT_PONG'));
+    const events = await collectSse(srv.base, conv.body.id, {
+      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.id === scout.id && ev.data?.mode === 'background'),
+    });
+    const agentEvent = events.find((ev) => ev.event === 'agent' && ev.data?.id === scout.id);
+    assert.equal(agentEvent?.data?.mode, 'background');
     console.log(`KERNEL_SUBAGENTS_BACKGROUND ${JSON.stringify({ tools: toolTexts(done), status: scout.status })}`);
   } finally {
     if (proc) await stopProcess(proc);
