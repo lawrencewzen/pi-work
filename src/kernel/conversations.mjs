@@ -27,8 +27,10 @@ import {
   openFromHistory,
   presentArchived,
 } from './archive.mjs';
+import { installPluginReload } from './plugins.mjs';
 import { createRoleHost, installRoleExtensions } from './roles.mjs';
 import { createWorkspaceExtension, scriptedDemoStep, toolsForRole } from './tools.mjs';
+import { installUsageExtension } from './usage.mjs';
 
 const DEMO_RESPONSE_COUNT = 100;
 
@@ -165,6 +167,8 @@ export async function openConversationKernel({
   }));
   installRoleExtensions(registry, roleBridge);
   installArchiveExtension(registry);
+  installUsageExtension(registry);
+  installPluginReload(registry, roleBridge);
   const kernel = await openKernel({ dataDir, models, registry });
   const { harness, context } = kernel;
 
@@ -369,6 +373,9 @@ export async function openConversationKernel({
       }
       watches.clear();
       await kernel.close();
+    },
+    async reloadPlugins() {
+      if (roles?.reloadPlugins) await roles.reloadPlugins();
     },
     createConversation,
     async present(conv, { includeMessages = false } = {}) {

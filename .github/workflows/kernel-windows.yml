@@ -29,3 +29,5 @@ jobs:
         run: node --test tests/unit/kernel-models.test.mjs
       - name: Pi Durable role and pipeline tests
         run: node --test tests/unit/kernel-roles.test.mjs
+      - name: Pi Durable usage chip and plugin reload tests
+        run: node --test tests/unit/kernel-usage-plugins.test.mjs

@@ -351,6 +351,15 @@ function parseCatalogId(raw) {
 const store = createSqliteStore(DATA_DIR);
 let kernelApi = null;
 
+async function reloadKernelPlugins() {
+  if (typeof kernelApi?.reloadPlugins !== 'function') return;
+  try {
+    await kernelApi.reloadPlugins();
+  } catch (err) {
+    console.error(`PI_WORK_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 function shutdown() {
   try { store.close(); } catch { /* ignore */ }
   try { dataLock?.release?.(); } catch { /* ignore */ }
@@ -1395,6 +1404,7 @@ async function routeApi(req, res, url) {
         baseDir: ROOT,
       });
       await store.putSettings({ plugins: { [installed.id]: true } });
+      await reloadKernelPlugins();
       sendJson(res, 201, installed);
     } catch (err) {
       sendCatalogError(res, err);
@@ -1417,6 +1427,7 @@ async function routeApi(req, res, url) {
     }
     const enabled = body?.enabled !== false;
     await store.putSettings({ plugins: { [id]: enabled } });
+    await reloadKernelPlugins();
     const next = await describePlugins(PLUGIN_DIRS, (await store.getSettings()).plugins || {});
     sendJson(res, 200, next.find((plugin) => plugin.id === id) || { id, enabled });
     return;

@@ -9,6 +9,7 @@ import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/provid
 import { defineExtension, defineTool, hook, ToolTask } from '@earendil-works/pi-durable';
 import { diffStats } from '../core/diff.mjs';
 import { bash, edit, grep, ls, read, write } from '../tools/workspace.mjs';
+import { stampScriptTurn } from './usage.mjs';
 
 const OUTPUT_CAP = 1024 * 1024;
 const TRUNCATE_MARKER = '\n[truncated: output exceeded 1 MiB]\n';
@@ -291,16 +292,20 @@ export function fauxTurnFromScript(turns, context) {
   const used = (context?.messages || []).filter((message) => message?.role === 'assistant').length;
   const turn = pending[used];
   if (!turn) return fauxAssistantMessage('ok');
+  let message;
   if (turn.tool) {
     const args = turn.args && typeof turn.args === 'object' ? turn.args : {};
     const id = turn.id ? { id: String(turn.id) } : {};
-    return fauxAssistantMessage(
+    message = fauxAssistantMessage(
       [fauxToolCall(String(turn.tool), args, id)],
       { stopReason: 'toolUse' },
     );
+  } else if (turn.end) {
+    message = fauxAssistantMessage('');
+  } else {
+    message = fauxAssistantMessage(String(turn.text));
   }
-  if (turn.end) return fauxAssistantMessage('');
-  return fauxAssistantMessage(String(turn.text));
+  return stampScriptTurn(message, turn);
 }
 
 /** Explicit demo script only. PI_WORK_FAUX_TOOL_LOG records the offered tool names for tests. */
