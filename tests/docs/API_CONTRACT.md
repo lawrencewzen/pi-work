@@ -13,8 +13,10 @@
 | `LLM_API` | `faux` 时使用演示模型；其他值不单独打开演示模型 | 测试可设 `faux` |
 | `PI_WORK_RETRY_BASE_MS` / `PI_WORK_RETRY_MAX` | 续跑退避 | 50 / 5 |
 | `PI_WORK_STALL_MS` | 卡住判定 | 2000 |
-| `PI_WORK_MAX_TOOL_CALLS` | 每个流水线步骤（没有流水线时就是这一轮）最多执行多少次工具，默认 25。达到后写入可见说明并结束该步，运行状态为 `done`，不继续空转 | 不设 |
+| `PI_WORK_MAX_TOOL_CALLS` | 每个流水线步骤（没有流水线时就是这一轮）最多执行多少次工具，默认 15。达到后写入可见说明并结束该步，运行状态为 `done`，不继续空转 | 不设 |
 | `PI_WORK_TOOL_LOOP` | 同一工具、同一组参数连续执行多少次后注入「停止调用工具」说明，默认 3。注入后若仍立刻重复，结束该步 | 不设 |
+| `PI_WORK_TOOL_NUDGE` | 本步已执行这么多次工具、且还没有助手文字时，注入「请根据已有结果直接回答」，默认 8。只提醒一次，不立刻结束 | 不设 |
+| `PI_WORK_EXPLORE_REPEAT` | 对同一文件 `read`、或对同一路径 `ls` / `grep`（以及 bash 里列出、搜索、读同一路径），忽略其余参数，执行超过这么多次就注入「不要再重复查看」，默认 2。再重复则结束该步 | 不设 |
 | `PI_WORK_TOKEN` | 可选 Bearer 鉴权；设置后所有 /api 需 `Authorization: Bearer` | 不设 |
 启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。`GET /api/health` → `{ok:true}`。
 
@@ -74,7 +76,7 @@ status 取值：`idle | running | waiting | paused | recovering | failed | done 
 ## 5. 持久性/恢复语义
 - 每个工具调用完成后写检查点；工具调用有稳定 `toolCallId`，恢复时已完成的调用**不得重放**（写文件幂等：同 toolCallId 不重复执行）。
 - 进程重启：status 为 running/recovering 的会话自动恢复，先置 `recovering`，完成后 `done`。
-- 工具结果会随下一轮请求发回模型。输出为空时用 `(no output)`，避免模型以为调用没有发生。同一工具、同一组参数连续达到 `PI_WORK_TOOL_LOOP` 后注入一条可见的「停止调用工具」说明并再请求一次；若仍立刻重复，或本步工具次数达到 `PI_WORK_MAX_TOOL_CALLS`，写入可见说明并结束该步（流水线进入下一步）。两种结束都让整条运行走到 `done`。
+- 工具结果会随下一轮请求发回模型。输出为空时用 `(no output)`，避免模型以为调用没有发生。同一工具、同一组参数连续达到 `PI_WORK_TOOL_LOOP` 后注入一条可见的「停止调用工具」说明并再请求一次；若仍立刻重复，或本步工具次数达到 `PI_WORK_MAX_TOOL_CALLS`，写入可见说明并结束该步（流水线进入下一步）。对同一路径的查看（`read` 同一文件，`ls` / `grep` 同一路径，bash 的 `ls` / `grep` / `cat` 等打到同一路径，参数可以不同）达到 `PI_WORK_EXPLORE_REPEAT` 后注入「不要再重复查看」；再重复则结束该步。本步工具已有 `PI_WORK_TOOL_NUDGE` 次且还没有助手文字时，注入一次「请根据已有结果直接回答」，模型仍可继续，直到上限或重复查看把该步结束。这些结束都让整条运行走到 `done`。
 - 写文件已经成功之后，模型连接被掐断（响应体 `terminated`、`E_STREAM_CUT`、`E_EMPTY_OUTPUT`）会先重试；重试仍失败则结束该步并说明「已按完成的工具结果结束本步」，状态是 `done`，不是 `failed` / `E_LLM`。没有成功工具调用时，这类错误仍然 `failed`。`E_NO_MODEL` 不重试，也不改成完成。
 
 ## 6. faux 模型脚本

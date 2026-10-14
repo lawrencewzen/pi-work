@@ -60,6 +60,70 @@ export function toolSignature(name, args) {
   return `${String(name || '')}\u0000${stableStringify(args || {})}`;
 }
 
+const BASH_LIST = new Set(['ls', 'find', 'tree', 'dir']);
+const BASH_SEARCH = new Set(['grep', 'rg', 'ag', 'ack']);
+const BASH_READ = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl']);
+
+function shellWords(command) {
+  const words = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  const s = String(command || '');
+  let m;
+  while ((m = re.exec(s))) words.push(m[1] ?? m[2] ?? m[3]);
+  return words;
+}
+
+export function normalizeExplorePath(value) {
+  let p = String(value ?? '').trim().replaceAll('\\', '/');
+  if (!p || p === '.') return '.';
+  while (p.startsWith('./')) p = p.slice(2);
+  p = p.replace(/\/+/g, '/');
+  if (p.length > 1) p = p.replace(/\/+$/, '');
+  return p || '.';
+}
+
+function bashExplorePath(command) {
+  const raw = String(command || '').trim();
+  if (!raw) return null;
+  const first = raw.split(/\s*(?:&&|\|\||[|;\n])\s*/)[0];
+  const tokens = shellWords(first);
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i += 1;
+  const bin = String(tokens[i] || '').split(/[/\\]/).pop();
+  if (!bin) return null;
+  const rest = tokens.slice(i + 1).filter((t) => t && !t.startsWith('-'));
+  if (BASH_LIST.has(bin)) return normalizeExplorePath(rest[0]);
+  if (BASH_SEARCH.has(bin)) {
+    if (rest.length >= 2) return normalizeExplorePath(rest[rest.length - 1]);
+    return '.';
+  }
+  if (BASH_READ.has(bin)) {
+    if (!rest.length) return null;
+    return normalizeExplorePath(rest[rest.length - 1]);
+  }
+  return null;
+}
+
+/** Same file or directory, ignoring extra args such as grep pattern or ls flags. */
+export function exploreTarget(name, args) {
+  const tool = String(name || '');
+  const obj = args && typeof args === 'object' ? args : {};
+  if (tool === 'read' || tool === 'ls' || tool === 'grep') {
+    return `${tool}\u0000${normalizeExplorePath(obj.path)}`;
+  }
+  if (tool === 'bash') {
+    const pathKey = bashExplorePath(obj.command);
+    return pathKey ? `bash\u0000${pathKey}` : null;
+  }
+  return null;
+}
+
+export function explorePathOf(target) {
+  const raw = String(target || '');
+  const i = raw.indexOf('\u0000');
+  return i === -1 ? raw : raw.slice(i + 1);
+}
+
 /** Empty tool output is easy for the model to treat as "nothing happened" and call again. */
 export function toolResultText(value) {
   const text = stringify(value);
@@ -72,6 +136,10 @@ function resetToolBudget(rt) {
   rt.toolCallsThisStep = 0;
   rt.loopCorrectedSig = '';
   rt.sawToolResult = false;
+  rt.sawTextThisStep = false;
+  rt.nudged = false;
+  rt.exploreCounts = Object.create(null);
+  rt.exploreCorrected = Object.create(null);
 }
 
 function droppedStream(err) {
@@ -156,6 +224,8 @@ export function createOrchestrator({
   extensions,
   maxToolCalls,
   toolLoopLimit,
+  toolNudgeAfter,
+  exploreRepeatLimit,
 } = {}) {
   const retryPolicy = retry || createRetryPolicy({
     maxAttempts: Number(process.env.PI_WORK_RETRY_MAX) || 5,
@@ -164,8 +234,10 @@ export function createOrchestrator({
   });
   const stall = stallMs ?? (Number(process.env.PI_WORK_STALL_MS) || 120_000);
   const maxAC = maxAutoContinues ?? 10;
-  const toolCap = positiveInt(maxToolCalls ?? process.env.PI_WORK_MAX_TOOL_CALLS, 25);
+  const toolCap = positiveInt(maxToolCalls ?? process.env.PI_WORK_MAX_TOOL_CALLS, 15);
   const loopLimit = positiveInt(toolLoopLimit ?? process.env.PI_WORK_TOOL_LOOP, 3);
+  const nudgeAfter = positiveInt(toolNudgeAfter ?? process.env.PI_WORK_TOOL_NUDGE, 8);
+  const exploreLimit = positiveInt(exploreRepeatLimit ?? process.env.PI_WORK_EXPLORE_REPEAT, 2);
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
   const runtimes = new Map();
@@ -400,12 +472,24 @@ export function createOrchestrator({
     if (rt.toolBudgetReady) return;
     rt.toolBudgetReady = true;
     const msgs = await store.getMessages(cid);
+    let start = 0;
     for (let i = msgs.length - 1; i >= 0; i -= 1) {
-      const m = msgs[i];
-      if (m?.kind === 'handoff') break;
-      if (m?.role === 'tool' && m.tool?.status !== 'error') {
-        rt.sawToolResult = true;
+      if (msgs[i]?.kind === 'handoff') {
+        start = i + 1;
         break;
+      }
+    }
+    for (let i = start; i < msgs.length; i += 1) {
+      const m = msgs[i];
+      if (m?.role === 'tool') {
+        if (m.tool?.status !== 'error') rt.sawToolResult = true;
+        rt.toolCallsThisStep += 1;
+        const target = exploreTarget(m.tool?.name, m.tool?.input);
+        if (target) rt.exploreCounts[target] = (rt.exploreCounts[target] || 0) + 1;
+      } else if (m?.role === 'assistant' && String(m.text || '').trim()) {
+        rt.sawTextThisStep = true;
+      } else if (m?.kind === 'correction' && String(m.text || '').includes('请根据已有结果直接回答')) {
+        rt.nudged = true;
       }
     }
   }
@@ -472,9 +556,7 @@ export function createOrchestrator({
     return advancePipelineOrDone(cid, rt, epoch);
   }
 
-  async function injectCorrection(cid, rt, name) {
-    const text = `停止调用工具。你已经用相同参数连续调用「${name}」${loopLimit} 次。请根据已有结果直接回答，不要再调用工具。`;
-    const mid = `${cid}:u:loop:${rt.currentStep}:${rt.toolSigCount}`;
+  async function injectUserNote(cid, rt, mid, text) {
     const stored = await store.getMessages(cid);
     if (!stored.some((m) => m.id === mid)) {
       await store.addMessage(cid, {
@@ -487,6 +569,12 @@ export function createOrchestrator({
       await emit(cid, 'message.done', { messageId: mid, text, role: 'user', kind: 'correction' });
     }
     markProgress(rt);
+  }
+
+  async function injectCorrection(cid, rt, name) {
+    const text = `停止调用工具。你已经用相同参数连续调用「${name}」${loopLimit} 次。请根据已有结果直接回答，不要再调用工具。`;
+    const mid = `${cid}:u:loop:${rt.currentStep}:${rt.toolSigCount}`;
+    await injectUserNote(cid, rt, mid, text);
   }
 
   async function runLoop(cid, epoch) {
@@ -646,9 +734,11 @@ export function createOrchestrator({
           rt.toolSig = '';
           rt.toolSigCount = 0;
           rt.loopCorrectedSig = '';
+          rt.sawTextThisStep = true;
           markProgress(rt);
         } else if (action.type === 'tool') {
           const sig = toolSignature(action.name, action.args || {});
+          const target = exploreTarget(action.name, action.args || {});
           if (rt.toolCallsThisStep >= toolCap) {
             const outcome = await finishWithNote(cid, rt, epoch, `本步工具调用已达上限（${toolCap}），已停止继续调用工具。`);
             if (outcome === 'advanced') continue;
@@ -662,6 +752,32 @@ export function createOrchestrator({
             }
             rt.loopCorrectedSig = sig;
             await injectCorrection(cid, rt, action.name);
+            continue;
+          }
+          if (target && (rt.exploreCounts[target] || 0) >= exploreLimit) {
+            const pathLabel = explorePathOf(target);
+            if (rt.exploreCorrected[target]) {
+              const outcome = await finishWithNote(cid, rt, epoch, `仍在重复查看「${pathLabel}」，本步已停止。`);
+              if (outcome === 'advanced') continue;
+              return;
+            }
+            rt.exploreCorrected[target] = true;
+            await injectUserNote(
+              cid,
+              rt,
+              `${cid}:u:explore:${rt.pipelineStep || 0}:${encodeURIComponent(target)}`,
+              `不要再重复查看同一路径。你已经用「${action.name}」查看「${pathLabel}」${exploreLimit} 次。请根据已有结果直接回答，或说明还缺什么。`,
+            );
+            continue;
+          }
+          if (rt.toolCallsThisStep >= nudgeAfter && !rt.sawTextThisStep && !rt.nudged) {
+            rt.nudged = true;
+            await injectUserNote(
+              cid,
+              rt,
+              `${cid}:u:nudge:${rt.pipelineStep || 0}`,
+              `请根据已有结果直接回答。本步已经调用了 ${rt.toolCallsThisStep} 次工具，还没有写出回复。用已经看到的内容回答；如果还缺关键信息，直接说明缺什么，不要继续翻找。`,
+            );
             continue;
           }
           const toolCallId = `${cid}:${rt.currentStep}`;
@@ -769,6 +885,7 @@ export function createOrchestrator({
             rt.toolSigCount = 1;
             rt.loopCorrectedSig = '';
           }
+          if (target) rt.exploreCounts[target] = (rt.exploreCounts[target] || 0) + 1;
           rt.toolCallsThisStep += 1;
         }
 
