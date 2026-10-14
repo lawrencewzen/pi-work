@@ -92,9 +92,13 @@ export function renderSkillPrompt(skills) {
   return text;
 }
 
-export async function buildSkillPrompt(dirs, enabledMap = {}) {
+export async function buildSkillPrompt(dirs, enabledMap = {}, allowIds) {
   const records = await listSkillRecords(dirs);
-  const enabled = records.filter((skill) => enabledMap[skill.id] !== false);
+  let enabled = records.filter((skill) => enabledMap[skill.id] !== false);
+  if (Array.isArray(allowIds)) {
+    const allow = new Set(allowIds);
+    enabled = enabled.filter((skill) => allow.has(skill.id));
+  }
   return renderSkillPrompt(enabled);
 }
 

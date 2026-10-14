@@ -7,7 +7,7 @@ import { load, ROOT } from './_root.mjs';
 
 const { createMemoryStore } = await load('src/store/memory.mjs');
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
-const { loadRoleTemplates, loadPipelineTemplates, shouldUpgradeBuiltinPrompt } = await load('src/core/roles-load.mjs');
+const { loadRoleTemplates, loadPipelineTemplates, shouldUpgradeBuiltinPrompt, shouldUpgradeBuiltinTools } = await load('src/core/roles-load.mjs');
 
 const scribe = {
   id: 'scribe',
@@ -95,6 +95,9 @@ test('templates seed feature pipeline and honor tombstones', async () => {
   const planner = await store.getRole('planner');
   assert.equal(planner?.name, 'Planner');
   assert.deepEqual(planner.tools, ['read', 'ls', 'grep']);
+  assert.equal(planner.description, '先读仓库，把需求拆成可执行的短计划。只读，不改代码。');
+  assert.deepEqual((await store.getRole('auditor')).tools, ['read', 'ls', 'grep']);
+  assert.deepEqual((await store.getRole('default')).tools, ['read', 'write', 'edit', 'ls', 'grep', 'bash']);
   const feature = await store.getPipeline('feature');
   assert.deepEqual(feature?.steps.map((step) => step.role), ['planner', 'coder', 'tester', 'auditor']);
   assert.ok(await store.getPipeline('demo'));
@@ -156,4 +159,60 @@ test('startup upgrades unedited builtin prompts and keeps edited ones', async ()
   assert.equal((await store.getRole('coder')).systemPrompt, '我改过的提示词');
   await loadRoleTemplates(store, dir);
   assert.equal((await store.getRole('planner')).systemPrompt, shipped);
+});
+
+test('startup upgrades untouched preset tools and fills an empty description', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-roles-'));
+  const oldAuditorPrompt = 'You are a code auditor. Review workspace changes for security (path traversal, command injection, secret leakage), correctness, and recovery/idempotency issues. Report findings clearly. Write an audit note if needed; do not rewrite large amounts of code unless a fix is clearly required.';
+  await fs.writeFile(path.join(dir, 'auditor.json'), JSON.stringify({
+    id: 'auditor',
+    name: 'Auditor',
+    description: '只读审查',
+    systemPrompt: '新的只读提示词',
+    tools: ['read', 'ls', 'grep'],
+  }));
+  await fs.writeFile(path.join(dir, 'coder.json'), JSON.stringify({
+    id: 'coder',
+    name: 'Coder',
+    description: '改代码',
+    systemPrompt: '编码出厂',
+    tools: ['read', 'write', 'edit', 'ls', 'grep', 'bash'],
+  }));
+  const store = createMemoryStore();
+  await store.createRole({
+    id: 'auditor',
+    name: 'Old auditor',
+    systemPrompt: oldAuditorPrompt,
+    tools: ['read', 'write', 'ls', 'grep'],
+    description: '',
+    model: 'keep-binding-source',
+  });
+  await store.createRole({
+    id: 'coder',
+    name: 'My coder',
+    description: '我写的说明',
+    systemPrompt: '我改过的提示词',
+    tools: ['read', 'write'],
+  });
+  const auditorTemplate = {
+    id: 'auditor',
+    systemPrompt: '新的只读提示词',
+    tools: ['read', 'ls', 'grep'],
+  };
+  assert.equal(shouldUpgradeBuiltinTools(await store.getRole('auditor'), auditorTemplate), true);
+  assert.equal(shouldUpgradeBuiltinTools(await store.getRole('coder'), {
+    id: 'coder',
+    tools: ['read', 'write', 'edit', 'ls', 'grep', 'bash'],
+  }), false);
+  await loadRoleTemplates(store, dir);
+  const auditor = await store.getRole('auditor');
+  assert.deepEqual(auditor.tools, ['read', 'ls', 'grep']);
+  assert.equal(auditor.description, '只读审查');
+  assert.equal(auditor.systemPrompt, '新的只读提示词');
+  assert.equal(auditor.name, 'Old auditor');
+  assert.equal(auditor.model, 'keep-binding-source');
+  const coder = await store.getRole('coder');
+  assert.deepEqual(coder.tools, ['read', 'write']);
+  assert.equal(coder.description, '我写的说明');
+  assert.equal(coder.systemPrompt, '我改过的提示词');
 });

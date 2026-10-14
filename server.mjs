@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createOrchestrator } from './src/core/orchestrator.mjs';
 import { createRetryPolicy } from './src/core/retry.mjs';
 import { formatSSE } from './src/core/sse.mjs';
-import { validateRole, validatePipeline, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
+import { validateRole, validatePipeline, allocateRoleId, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
 import { diffStats, liveDiff } from './src/core/diff.mjs';
@@ -16,6 +16,8 @@ import {
   publicSource,
   migrateLegacySettings,
   resolveRoleTarget,
+  effectiveModelFor,
+  planRoleModelMigration,
   hasAvailableSource,
   validateRoleModels,
   createApiSource,
@@ -35,7 +37,7 @@ import { cloneGitRepo, stripGitUrlCredentials } from './src/core/git-import.mjs'
 import { createExtensionHost } from './src/core/extensions.mjs';
 import { describePlugins, installPlugin, PLUGIN_ID } from './src/core/plugins.mjs';
 import { listSkills, listSkillRecords, createSkill, updateSkill, deleteSkill, SKILL_ID } from './src/core/skills.mjs';
-import { loadRoleTemplates, loadPipelineTemplates, readRoleTemplateMap, attachBuiltinPrompts } from './src/core/roles-load.mjs';
+import { loadRoleTemplates, loadPipelineTemplates, readRoleTemplateMap, attachBuiltinPrompts, BUILTIN_ROLE_IDS } from './src/core/roles-load.mjs';
 import { buildAgents } from './src/core/agents.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
 import { loadFauxLLM, createFauxLLM } from './src/llm/faux.mjs';
@@ -373,6 +375,35 @@ await ensureSettings();
       }
     }
   }
+}
+
+await migrateStoredRoleModels();
+
+async function migrateStoredRoleModels() {
+  const [grok, settings, roles] = await Promise.all([currentGrok(), ensureSettings(), store.listRoles()]);
+  const plan = planRoleModelMigration(roles, settings, { grokSignedIn: Boolean(grok?.signedIn) });
+  for (const line of plan.logs) console.warn(line);
+  if (plan.changed) await store.putSettings({ models: plan.models });
+  for (const id of plan.clearIds) {
+    const role = await store.getRole(id);
+    if (!role?.model) continue;
+    const next = { ...role };
+    delete next.model;
+    await store.updateRole(id, next);
+  }
+}
+
+async function presentRoles(roles) {
+  const templates = await readRoleTemplateMap(path.join(ROOT, 'roles'));
+  const [settings, grok] = await Promise.all([ensureSettings(), currentGrok()]);
+  const signedIn = Boolean(grok?.signedIn);
+  return attachBuiltinPrompts(roles, templates).map((role) => {
+    const out = { ...role };
+    delete out.model;
+    if (typeof out.description !== 'string') out.description = '';
+    out.effectiveModel = effectiveModelFor(settings, role.id, { grokSignedIn: signedIn });
+    return out;
+  });
 }
 
 function chatSourceConfig(target) {
@@ -1041,18 +1072,43 @@ async function routeApi(req, res, url) {
   }
 
   if (p === '/api/roles' && m === 'GET') {
-    const templates = await readRoleTemplateMap(path.join(ROOT, 'roles'));
-    sendJson(res, 200, attachBuiltinPrompts(await store.listRoles(), templates));
+    sendJson(res, 200, await presentRoles(await store.listRoles()));
     return;
   }
   if (p === '/api/roles' && m === 'POST') {
     const body = await readBody(req);
-    const v = validateRole(body);
+    const draft = body && typeof body === 'object' && !Array.isArray(body) ? { ...body } : body;
+    if (draft && typeof draft === 'object' && !Array.isArray(draft) && (draft.id == null || draft.id === '')) {
+      draft.id = await allocateRoleId(store, draft.name);
+    }
+    const v = validateRole(draft);
     if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
     if (await store.getRole(v.value.id)) { sendJson(res, 409, { error: 'exists' }); return; }
     await store.clearCatalogTombstone('role', v.value.id);
     const role = await store.createRole(v.value);
-    sendJson(res, 201, role);
+    const [presented] = await presentRoles([role]);
+    sendJson(res, 201, presented);
+    return;
+  }
+
+  match = p.match(/^\/api\/roles\/([^/]+)\/reset$/);
+  if (match && m === 'POST') {
+    const id = parseCatalogId(match[1]);
+    if (!id) { sendJson(res, 400, { errors: ['invalid id'] }); return; }
+    const existing = await store.getRole(id);
+    if (!existing) { sendJson(res, 404, { error: 'not_found' }); return; }
+    const templates = await readRoleTemplateMap(path.join(ROOT, 'roles'));
+    const tpl = templates.get(id);
+    if (!BUILTIN_ROLE_IDS.includes(id) || !tpl) { sendJson(res, 400, { error: 'not_builtin' }); return; }
+    const saved = await store.updateRole(id, {
+      id,
+      name: tpl.name,
+      systemPrompt: tpl.systemPrompt,
+      tools: tpl.tools.slice(),
+      description: tpl.description || '',
+    });
+    const [presented] = await presentRoles([saved]);
+    sendJson(res, 200, presented);
     return;
   }
 
@@ -1061,7 +1117,6 @@ async function routeApi(req, res, url) {
     const id = parseCatalogId(match[1]);
     if (!id) { sendJson(res, 400, { errors: ['invalid id'] }); return; }
     if (m === 'DELETE') {
-      if (id === 'default') { sendJson(res, 409, { error: 'protected' }); return; }
       const existing = await store.getRole(id);
       if (!existing) { sendJson(res, 404, { error: 'not_found' }); return; }
       const usedBy = (await store.listPipelines())
@@ -1070,8 +1125,10 @@ async function routeApi(req, res, url) {
       if (usedBy.length) { sendJson(res, 409, { error: 'role_in_use', pipelines: usedBy }); return; }
       const conversations = await store.countConversationsReferencing({ roleId: id });
       if (conversations > 0) { sendJson(res, 409, { error: 'role_in_conversations', conversations }); return; }
+      if (BUILTIN_ROLE_IDS.includes(id)) { sendJson(res, 409, { error: 'protected' }); return; }
       await store.deleteRole(id);
       await store.tombstoneCatalog('role', id);
+      await store.putSettings({ models: { [id]: null } });
       sendJson(res, 200, { ok: true, id });
       return;
     }
@@ -1081,7 +1138,9 @@ async function routeApi(req, res, url) {
     const v = validateRole({ ...body, id });
     if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
     await store.clearCatalogTombstone('role', id);
-    sendJson(res, 200, await store.updateRole(id, v.value));
+    const saved = await store.updateRole(id, v.value);
+    const [presented] = await presentRoles([saved]);
+    sendJson(res, 200, presented);
     return;
   }
 

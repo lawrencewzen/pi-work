@@ -39,7 +39,12 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
       assert.equal(role?.builtin, true);
       assert.match(role?.defaultPrompt || '', new RegExp(`角色：${{ coder: '编码', tester: '测试', auditor: '审计' }[id]}`));
     }
-    assert.equal(roles.body.find((role) => role.id === 'default')?.builtin, undefined);
+    const main = roles.body.find((role) => role.id === 'default');
+    assert.equal(main?.builtin, true);
+    assert.equal(main?.model, undefined);
+    assert.equal(typeof main?.description, 'string');
+    assert.equal(main?.effectiveModel?.follow, true);
+    assert.deepEqual(roles.body.find((role) => role.id === 'auditor')?.tools, ['read', 'ls', 'grep']);
 
     const pipes = await api(srv.url, 'GET', '/pipelines');
     assert.equal(pipes.status, 200);
@@ -103,7 +108,9 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
     assert.equal(blocked.body.error, 'pipeline_in_use');
 
     assert.equal((await api(srv.url, 'DELETE', '/pipelines/feature')).status, 200);
-    assert.equal((await api(srv.url, 'DELETE', '/roles/planner')).status, 200);
+    const blockedPreset = await api(srv.url, 'DELETE', '/roles/planner');
+    assert.equal(blockedPreset.status, 409);
+    assert.equal(blockedPreset.body.error, 'protected');
   } finally {
     await srv.kill();
   }
@@ -112,7 +119,7 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
   try {
     const roles = await api(restarted.url, 'GET', '/roles');
     const pipes = await api(restarted.url, 'GET', '/pipelines');
-    assert.equal(roles.body.some((role) => role.id === 'planner'), false);
+    assert.equal(roles.body.some((role) => role.id === 'planner'), true);
     assert.equal(roles.body.some((role) => role.id === 'scribe'), true);
     assert.equal(pipes.body.some((pipe) => pipe.id === 'feature'), false);
     assert.equal(pipes.body.some((pipe) => pipe.id === 'demo'), true);
@@ -124,8 +131,8 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
       systemPrompt: 'Plan it.',
       tools: ['read'],
     });
-    assert.equal(again.status, 201);
-    assert.equal(again.body.name, 'Custom planner');
+    assert.equal(again.status, 409);
+    assert.equal(again.body.error, 'exists');
   } finally {
     await restarted.kill();
   }

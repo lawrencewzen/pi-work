@@ -20,7 +20,7 @@
     { "delayMs": 800 },
     { "text": "Auditor: Reviewing hello.js and the test for obvious issues." },
     { "delayMs": 700 },
-    { "tool": "write", "args": { "path": "AUDIT.md", "content": "# Audit\n\n- hello.js is tiny and has no I/O or secrets.\n- Test covers the return value.\n- No blocking issues.\n" } },
+    { "tool": "read", "args": { "path": "hello.js" } },
     { "delayMs": 500 },
     { "text": "Auditor done: no blocking issues." }
   ]
