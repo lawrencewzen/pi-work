@@ -961,6 +961,7 @@ async function routeApi(req, res, url) {
       const installed = await installPlugin(body?.path, USER_PLUGINS, {
         existingIds: new Set(current.map((plugin) => plugin.id)),
         existingToolNames,
+        baseDir: ROOT,
       });
       await store.putSettings({ plugins: { [installed.id]: true } });
       sendJson(res, 201, installed);

@@ -1,0 +1,25 @@
+{
+  "id": "word-count",
+  "name": "Word Count",
+  "description": "统计工作区文本文件里的单词数。Counts words in a workspace text file.",
+  "version": "0.1.0",
+  "source": "example",
+  "main": "index.mjs",
+  "tools": [
+    {
+      "name": "word_count",
+      "description": "Count whitespace-separated words in a UTF-8 text file inside the workspace. Output is the integer count and nothing else. Does not follow paths outside the workspace and does not modify the file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Workspace-relative path to a text file."
+          }
+        },
+        "required": ["path"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

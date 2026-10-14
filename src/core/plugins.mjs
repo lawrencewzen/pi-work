@@ -299,15 +299,32 @@ async function copyPluginTree(src, dest) {
   await walk(src, dest);
 }
 
-async function resolvePluginSource(sourcePath) {
+async function firstRealPath(candidates) {
+  for (const candidate of candidates) {
+    try {
+      return await fs.realpath(candidate);
+    } catch {
+      // Try the next candidate. A relative path may exist under the install directory
+      // when it does not exist under the process working directory.
+    }
+  }
+  return null;
+}
+
+async function resolvePluginSource(sourcePath, baseDir) {
   const raw = String(sourcePath || '').trim();
   if (!raw) throw catalogError(400, 'err_plugin_path_required', 'path is required');
-  let abs;
-  try {
-    abs = await fs.realpath(path.resolve(raw));
-  } catch {
-    throw catalogError(400, 'err_plugin_dir_missing', 'plugin directory not found');
+  const candidates = [];
+  if (path.isAbsolute(raw)) candidates.push(raw);
+  else {
+    candidates.push(path.resolve(raw));
+    if (baseDir) {
+      const fromBase = path.resolve(baseDir, raw);
+      if (fromBase !== candidates[0]) candidates.push(fromBase);
+    }
   }
+  let abs = await firstRealPath(candidates);
+  if (!abs) throw catalogError(400, 'err_plugin_dir_missing', 'plugin directory not found');
   const stat = await fs.stat(abs);
   if (stat.isFile() && path.basename(abs) === 'plugin.json') abs = path.dirname(abs);
   else if (!stat.isDirectory()) throw catalogError(400, 'err_plugin_dir_missing', 'plugin directory not found');
@@ -315,8 +332,8 @@ async function resolvePluginSource(sourcePath) {
   return abs;
 }
 
-export async function installPlugin(sourcePath, destRoot, { existingIds = new Set(), existingToolNames = new Set() } = {}) {
-  const src = await resolvePluginSource(sourcePath);
+export async function installPlugin(sourcePath, destRoot, { existingIds = new Set(), existingToolNames = new Set(), baseDir } = {}) {
+  const src = await resolvePluginSource(sourcePath, baseDir);
   await assertNoSymlinks(src);
   const loaded = await readPlugin(src);
   if (existingIds.has(loaded.id)) throw catalogError(409, 'err_plugin_exists', 'plugin already exists');

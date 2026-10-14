@@ -1898,6 +1898,7 @@ export function renderToolRowHtml(tool) {
     added || removed
       ? `<span class="tool-diff-badge"><span class="add" data-testid="tool-row-added">${escapeHtml(added)}</span> <span class="del" data-testid="tool-row-removed">${escapeHtml(removed)}</span></span>`
       : `<span class="tool-diff-badge"><span class="add" data-testid="tool-row-added"></span> <span class="del" data-testid="tool-row-removed"></span></span>`;
+  const preview = pluginResultPreview(tool);
 
   return (
     `<div class="tool-row-wrapper">` +
@@ -1905,6 +1906,7 @@ export function renderToolRowHtml(tool) {
     `<div class="tool-main">` +
     `<span class="tool-prefix">${prefixIcon} ${escapeHtml(toolName)}</span>` +
     `<span class="tool-path" data-testid="tool-row-path">${escapeHtml(displayPath)}</span>` +
+    (preview ? `<span class="tool-result" data-testid="tool-row-output">${escapeHtml(preview)}</span>` : '') +
     diffBadge +
     `</div>` +
     `<div class="tool-meta"><span>${escapeHtml(localizeToolStatus(tool.status))}</span></div>` +
@@ -1982,17 +1984,41 @@ function matchesCatalogQuery(item, q) {
   return hay.includes(query);
 }
 
-function extensionError(err, fallbackKey) {
-  const code = err?.body?.code;
-  const detail = String(err?.body?.error || '').trim();
+const BUILTIN_ROW_TOOLS = new Set(['read', 'write', 'edit', 'ls', 'grep', 'bash']);
+
+function pluginResultPreview(tool) {
+  const name = String(tool?.name || '');
+  if (!name || BUILTIN_ROW_TOOLS.has(name)) return '';
+  if (typeof tool?.output !== 'string') return '';
+  const text = tool.output.trim();
+  if (!text || text.includes('\n') || text.length > 80) return '';
+  return text;
+}
+
+function describePluginFailure(code, detail) {
+  const text = String(detail || '').trim();
+  const missingTool = text.match(/^tool ([a-z][a-z0-9_]*) is not exported$/);
+  if (missingTool) return t('err_plugin_tool_missing', { name: missingTool[1] });
+  if (text === 'plugin main module was not found' || text.startsWith('plugin main must be a relative .mjs')) {
+    return t('err_plugin_main_missing');
+  }
+  if (text === 'plugin.json is not valid JSON') return t('err_plugin_json');
+  const taken = text.match(/^tool ([a-z][a-z0-9_]*) is already registered$/);
+  if (taken) return t('err_plugin_tool_taken', { name: taken[1] });
   if (code && t(code) !== code) {
     const translated = t(code);
-    if (detail && (code === 'err_plugin_not_loadable' || code === 'err_plugin_invalid') && !translated.includes(detail)) {
-      return `${translated} — ${detail}`;
+    if (text && (code === 'err_plugin_not_loadable' || code === 'err_plugin_invalid') && !translated.includes(text)) {
+      return `${translated} — ${text}`;
     }
     return translated;
   }
-  return detail || err?.message || t(fallbackKey);
+  return text;
+}
+
+function extensionError(err, fallbackKey) {
+  const mapped = describePluginFailure(err?.body?.code, err?.body?.error);
+  if (mapped) return mapped;
+  return err?.message || t(fallbackKey);
 }
 
 function showModalError(id, message) {
@@ -2614,14 +2640,14 @@ function renderPluginsListHtml(list, searching = false) {
       const toolNames = (pl.tools || []).map((tool) => tool.name).filter(Boolean);
       const toolLine = toolNames.length ? `${t('plugin_tools_label')}: ${toolNames.join(', ')}` : '';
       const problem = !pl.loaded && (pl.error || pl.errorCode)
-        ? `${t(pl.errorCode && t(pl.errorCode) !== pl.errorCode ? pl.errorCode : 'plugin_not_loaded')}${pl.error ? ` — ${pl.error}` : ''}`
+        ? describePluginFailure(pl.errorCode, pl.error)
         : '';
       return (
-        `<div style="border:1px solid var(--border-subtle);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--bg-surface)">` +
+        `<div data-testid="plugin-card" data-plugin-id="${escapeHtml(pl.id)}" style="border:1px solid var(--border-subtle);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--bg-surface)">` +
         `<div style="display:flex;align-items:center;gap:10px">` +
         `<div style="width:30px;height:30px;border-radius:8px;background:var(--bg-surface-subtle);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--text-secondary)">${escapeHtml(letter)}</div>` +
         `<b style="font-size:13px;font-weight:500;flex:1">${escapeHtml(pl.name || pl.id)}</b>` +
-        `<div class="tg ${isOn ? 'on' : ''}" data-action="toggle-plugin" data-plugin-id="${escapeHtml(pl.id)}" data-enabled="${!isOn}"></div>` +
+        `<div class="tg ${isOn ? 'on' : ''}" data-testid="plugin-toggle" data-action="toggle-plugin" data-plugin-id="${escapeHtml(pl.id)}" data-enabled="${!isOn}"></div>` +
         `</div>` +
         `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5;min-height:36px">${escapeHtml(pl.description || '')}</div>` +
         (toolLine ? `<div style="font-size:11px;color:var(--text-muted)">${escapeHtml(toolLine)}</div>` : '') +
@@ -3190,29 +3216,44 @@ export function openImportPluginModal() {
         <input id="plug-path-input" data-testid="plugin-path-input" placeholder="${escapeHtml(t('plugin_path_placeholder'))}" />
       </div>
       <p style="margin:0;font-size:12px;line-height:1.45;color:var(--text-muted)">${escapeHtml(t('plugin_path_hint'))}</p>
-      <div id="plug-modal-error" class="modal-inline-error"></div>
+      <div id="plug-modal-error" class="modal-inline-error" role="alert" data-testid="plugin-import-error"></div>
       <div class="modal-actions">
-        <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
-        <button class="btn p" data-action="submit-import-plugin">${escapeHtml(t('btn_import_plugin'))}</button>
+        <button type="button" class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
+        <button type="button" class="btn p" data-action="submit-import-plugin" data-testid="plugin-import-submit">${escapeHtml(t('btn_import_plugin'))}</button>
       </div>
     </div>
   `);
+  document.getElementById('plug-path-input')?.focus();
 }
 
+let pluginImporting = false;
+
 export async function submitImportPlugin() {
+  if (pluginImporting) return;
   const pluginPath = document.getElementById('plug-path-input')?.value.trim();
   if (!pluginPath) {
     showModalError('plug-modal-error', t('err_plugin_path_required'));
     return;
   }
+  pluginImporting = true;
+  const btn = document.querySelector('[data-testid="plugin-import-submit"]');
+  if (btn) btn.disabled = true;
   try {
     const pl = await api('/api/plugins', 'POST', { path: pluginPath });
-    showToast('plugin_imported', { name: pl.name });
+    showToast('plugin_imported', { name: pl.name || pl.id });
     closeModal();
-    state.plugins = await api('/api/plugins');
+    try {
+      state.plugins = await api('/api/plugins');
+    } catch {
+      const rest = (state.plugins || []).filter((item) => item.id !== pl.id);
+      state.plugins = [...rest, pl];
+    }
     renderSettingsModal();
   } catch (err) {
     showModalError('plug-modal-error', extensionError(err, 'err_import'));
+    if (btn) btn.disabled = false;
+  } finally {
+    pluginImporting = false;
   }
 }
 
@@ -3541,6 +3582,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target?.id === 'plug-path-input') {
+      e.preventDefault();
+      submitImportPlugin();
+      return;
+    }
     if (e.key === 'Escape') {
       if (confirmPending) {
         finishConfirm(false);
