@@ -35,7 +35,8 @@ import {
 import { installPluginReload } from './plugins.mjs';
 import { createRoleHost, installRoleExtensions } from './roles.mjs';
 import { createSubagentExtension, createSubagentHost, maxSubagents } from './subagents.mjs';
-import { createWorkspaceExtension, scriptedDemoStep, toolsForRole } from './tools.mjs';
+import { scriptedDemoStep } from './faux-script.mjs';
+import { createWorkspaceExtension, toolsForRole } from './tools.mjs';
 import { installUsageExtension } from './usage.mjs';
 
 const DEMO_RESPONSE_COUNT = 100;

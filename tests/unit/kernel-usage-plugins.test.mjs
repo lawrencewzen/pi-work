@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { presentContext } from '../../src/core/usage.mjs';
 import { createMapContext, mapHarnessBatch } from '../../src/kernel/events.mjs';
-import { fauxTurnFromScript } from '../../src/kernel/tools.mjs';
+import { fauxTurnFromScript } from '../../src/kernel/faux-script.mjs';
 import { applyStampedUsage, latestCallUsage } from '../../src/kernel/usage.mjs';
 import { ROOT } from './_root.mjs';
 

@@ -168,6 +168,7 @@ test('refresh rewrites the session and keeps the api-key scope', async () => {
   assert.equal(disk[GROK_AUTH_SCOPE].refresh_token, 'refresh-new');
   assert.equal(disk[GROK_AUTH_SCOPE].email, 'ada@example.com');
   assert.equal(disk[GROK_API_KEY_SCOPE].key, 'sk-keep-this');
+  // Windows does not store POSIX mode bits; the user directory ACL protects the file.
   if (process.platform !== 'win32') {
     const mode = (await fs.stat(file)).mode & 0o777;
     assert.equal(mode, 0o600);

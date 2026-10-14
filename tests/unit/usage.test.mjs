@@ -14,7 +14,7 @@ const {
   presentContext,
   composerContextText,
 } = await load('public/usage.js');
-const { fauxTurnFromScript } = await load('src/kernel/tools.mjs');
+const { fauxTurnFromScript } = await load('src/kernel/faux-script.mjs');
 const { applyStampedUsage, reportedUsage } = await load('src/kernel/usage.mjs');
 const { actionFromGrokResponses } = await load('src/core/grok-auth.mjs');
 const { createSqliteStore } = await load('src/store/sqlite.mjs');

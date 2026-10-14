@@ -25,7 +25,8 @@ import { createRetryPolicy, decideAutoContinue } from '../core/retry.mjs';
 import { archivedMutation, isArchivedConversation } from './archive.mjs';
 import { messagesFromEntries, textOf } from './events.mjs';
 import { Roster } from './subagents.mjs';
-import { loadScriptTurns, noteScriptAssistants, scriptMessages, scriptShouldContinue, workspaceTools } from './tools.mjs';
+import { loadScriptTurns, noteScriptAssistants, scriptMessages, scriptShouldContinue } from './faux-script.mjs';
+import { workspaceTools } from './tools.mjs';
 
 const CONTINUE_TEXT = '继续';
 const STREAM_NOTE = '模型连接中断。已按完成的工具结果结束本步。';

@@ -5,7 +5,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSSE } from '../../src/core/sse.mjs';
-import { fauxTurnFromScript, offeredToolNames, toolsForRole, workspaceTools } from '../../src/kernel/tools.mjs';
+import { fauxTurnFromScript, offeredToolNames } from '../../src/kernel/faux-script.mjs';
+import { toolsForRole, workspaceTools } from '../../src/kernel/tools.mjs';
 import { ROOT } from './_root.mjs';
 
 const TOKEN = 'unit-kernel-tools-token';

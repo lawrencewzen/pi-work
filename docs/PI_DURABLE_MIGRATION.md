@@ -176,7 +176,7 @@ SSE 映射（`spike/lib/events.mjs` 已按这个打日志）：
 
 ## 2d. 测试
 
-`pi-ai` 有假模型：`fauxProvider()`。`setResponses` 换掉整条队列，队列在 provider 上共享，不按对话分开。官方示例和这次原型都用它。它和当时 `src/llm/faux.mjs` 的脚本不是同一种 JSON。T5-11 已删除 `src/llm/`；同一份剧本 JSON 现在由 `src/kernel/tools.mjs` 转成 `fauxAssistantMessage`。
+`pi-ai` 有假模型：`fauxProvider()`。`setResponses` 换掉整条队列，队列在 provider 上共享，不按对话分开。官方示例和这次原型都用它。它和当时 `src/llm/faux.mjs` 的脚本不是同一种 JSON。T5-11 已删除 `src/llm/`；同一份剧本 JSON 现在由 `src/kernel/faux-script.mjs` 转成 `fauxAssistantMessage`。
 
 下面这段是切换前的计划。T5-11 已经把直接 import `createOrchestrator` 的用例改成打 HTTP 或打内核。
 
