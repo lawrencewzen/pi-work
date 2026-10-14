@@ -12,7 +12,8 @@ test.beforeEach(async () => {
 });
 test.afterEach(async () => { await srv?.kill(); });
 
-const FILE = 'docs/deep/nested/folder/README.md';
+// 43 characters. truncatePath inserts … only past 40, so the collapsed row shows an ellipsis.
+const FILE = 'docs/deep/nested/folder/structure/README.md';
 
 test('create workspace & conversation, markdown rendered', async ({ page }) => {
   await openApp(page, srv);
@@ -36,8 +37,7 @@ test('tool row collapsed with truncated path and +N -M, expands', async ({ page 
   const row = page.locator('[data-testid=tool-row][data-tool=write]').first();
   await expect(row).toBeVisible({ timeout: 20000 });
   await expect(row).toHaveAttribute('data-path', FILE);
-  // 33 characters: truncatePath only inserts … past 40, so the row shows the full path.
-  await expect(row.getByTestId('tool-row-path')).toHaveText(FILE);
+  await expect(row.getByTestId('tool-row-path')).toContainText('…');
   await expect(row.getByTestId('tool-row-added')).toHaveText(/\+3/);
   await expect(row.getByTestId('tool-row-removed')).toHaveText(/−0|-0/);
   await expect(row.getByTestId('tool-row-detail')).toBeHidden();
