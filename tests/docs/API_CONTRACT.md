@@ -52,7 +52,7 @@
 | `GET /workspaces/:wid/files?path=` | | `{path, content}`；越界 → 403 `{error:'E_SANDBOX'}` |
 | `PUT /workspaces/:wid/files` | `{path, content}` | `200 {path, added, removed}` |
 | `GET /conversations/:cid/diff?path=` | | `{path, before, after, unified, added, removed}` |
-| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |
+| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}`。`GET` 对 `planner`、`coder`、`tester`、`auditor` 额外带 `builtin:true`、`defaultPrompt`（`roles/<id>.json` 里的出厂提示词）和 `defaultTools`。库里的 `systemPrompt` 可以和出厂提示词不同 |
 | `PUT /roles/:id` | Role | 更新已有角色。不存在 404 `{error:'not_found'}`；路径与 body.id 不一致 400 `{errors:['id mismatch']}` |
 | `DELETE /roles/:id` | | 200 `{ok:true,id}`。`default` 不可删，409 `{error:'protected'}`。被流水线引用 409 `{error:'role_in_use',pipelines:[id]}`。被对话 `roleId` 引用 409 `{error:'role_in_conversations',conversations:n}`。成功删除会写入 catalog tombstone，下次启动不会从 `roles/*.json` 再种回该 id |
 | `GET /pipelines` · `POST /pipelines` | Pipeline | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |

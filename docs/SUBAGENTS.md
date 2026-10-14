@@ -16,7 +16,7 @@ Startup seeds the store from JSON templates when that id is not already stored a
 - Roles: `roles/*.json` (`default`, `coder`, `tester`, `auditor`, `planner`, …)
 - Pipelines: `pipelines/*.json`, then `examples/pipelines/*.json`
 
-Shipped pipelines are `feature` (planner → coder → tester → auditor) and `demo` (coder → tester → auditor). A delete records a tombstone, so the template is not copied back on the next start. Edits stay in SQLite and are not written back over the template files.
+Shipped pipelines are `feature` (planner → coder → tester → auditor) and `demo` (coder → tester → auditor). A delete records a tombstone, so the template is not copied back on the next start. Edits stay in SQLite and are not written back over the template files. The planner, coder, tester, and auditor prompts in `roles/*.json` are the shipped defaults. Settings can start a new role from one of those prompts, or restore that role's prompt from the file without rewriting the file.
 
 Create a workspace and a conversation that uses that pipeline, then send a message:
 

@@ -2,6 +2,7 @@
 
 const TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'bash'];
 const ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
+const BUILTIN_ROLE_ORDER = ['planner', 'coder', 'tester', 'auditor'];
 const CANONICAL_ROLE_NAMES = {
   coder: 'Coder',
   tester: 'Tester',
@@ -22,6 +23,15 @@ export function pipelineTitle(pipe, ctx) {
   if (pipe?.id === 'demo' && /^demo$/i.test(stored)) return ctx.t('pipeline_demo_title');
   if (pipe?.id === 'feature' && /^feature$/i.test(stored)) return ctx.t('pipeline_feature_title');
   return stored.replace(/\b(coder|tester|auditor|default|planner)\b/gi, (part) => ctx.localizeRoleLabel(part));
+}
+
+function builtinRoles(ctx) {
+  const byId = new Map(
+    (ctx.state.roles || [])
+      .filter((role) => role.builtin && role.defaultPrompt)
+      .map((role) => [role.id, role]),
+  );
+  return BUILTIN_ROLE_ORDER.map((id) => byId.get(id)).filter(Boolean);
 }
 
 function preferredRoleId(roles) {
@@ -148,7 +158,7 @@ function roleCard(ctx, role) {
     `<article class="wf-card" data-testid="workflow-role-card" data-id="${ctx.escapeHtml(role.id)}">` +
     `<div class="wf-card-head">` +
     `<div class="wf-avatar">${ctx.escapeHtml(letter)}</div>` +
-    `<div class="wf-card-id"><b>${ctx.escapeHtml(title)}</b><span>${ctx.escapeHtml(role.id)}</span></div>` +
+    `<div class="wf-card-id"><span class="wf-title-row"><b>${ctx.escapeHtml(title)}</b>${role.builtin ? `<span class="wf-tag" data-testid="workflow-builtin-tag">${ctx.escapeHtml(ctx.t('wf_builtin_tag'))}</span>` : ''}</span><span class="wf-id">${ctx.escapeHtml(role.id)}</span></div>` +
     `</div>` +
     `<div class="wf-prompt">${ctx.escapeHtml(prompt)}</div>` +
     `<div class="wf-chips">${chips}</div>` +
@@ -197,6 +207,44 @@ function editorShell(ctx, title, body) {
   );
 }
 
+function starterButtons(ctx, action) {
+  return builtinRoles(ctx).map((role) => {
+    const selected = action === 'workflow-role-copy' && ctx.state.workflowEditor?.starter?.id === role.id;
+    return `<button type="button" class="btn${selected ? ' p' : ''}" data-action="${action}" data-template="${ctx.escapeHtml(role.id)}" data-testid="${action}-${ctx.escapeHtml(role.id)}">${ctx.escapeHtml(roleTitle(role, ctx))}</button>`;
+  }).join('');
+}
+
+function renderRoleStarters(ctx) {
+  if (!builtinRoles(ctx).length) return '';
+  const blankOn = ctx.state.workflowEditor?.starter?.mode !== 'copy';
+  return (
+    `<div class="wf-starters" data-testid="workflow-role-starters">` +
+    `<div class="wf-starter-label">${ctx.escapeHtml(ctx.t('wf_starter'))}</div>` +
+    `<div class="wf-starter-row"><button type="button" class="btn${blankOn ? ' p' : ''}" data-action="workflow-role-blank" data-testid="workflow-role-blank">${ctx.escapeHtml(ctx.t('wf_starter_blank'))}</button></div>` +
+    `<div class="wf-starter-label">${ctx.escapeHtml(ctx.t('wf_starter_use'))}</div>` +
+    `<div class="wf-starter-row">${starterButtons(ctx, 'workflow-role-use')}</div>` +
+    `<div class="wf-starter-label">${ctx.escapeHtml(ctx.t('wf_starter_copy'))}</div>` +
+    `<div class="wf-starter-row">${starterButtons(ctx, 'workflow-role-copy')}</div>` +
+    `<span class="wf-field-hint">${ctx.escapeHtml(ctx.t('wf_starter_hint'))}</span>` +
+    `</div>`
+  );
+}
+
+function renderBuiltinStepChoices(ctx) {
+  const roles = builtinRoles(ctx);
+  if (!roles.length) return '';
+  const buttons = roles.map((role) => (
+    `<button type="button" class="btn" data-action="workflow-add-builtin" data-template="${ctx.escapeHtml(role.id)}" data-testid="workflow-add-builtin-${ctx.escapeHtml(role.id)}">${ctx.escapeHtml(roleTitle(role, ctx))}</button>`
+  )).join('');
+  return (
+    `<div class="wf-starters" data-testid="workflow-pipeline-builtins">` +
+    `<div class="wf-starter-label">${ctx.escapeHtml(ctx.t('wf_pipeline_builtins'))}</div>` +
+    `<div class="wf-starter-row">${buttons}</div>` +
+    `<span class="wf-field-hint">${ctx.escapeHtml(ctx.t('wf_pipeline_builtin_hint'))}</span>` +
+    `</div>`
+  );
+}
+
 function renderRoleEditor(ctx) {
   const editor = ctx.state.workflowEditor;
   const draft = editor.draft || emptyRoleDraft();
@@ -208,11 +256,19 @@ function renderRoleEditor(ctx) {
   )).join('');
   const idField = editing
     ? `<input id="wf-role-id" data-testid="workflow-role-id" value="${ctx.escapeHtml(draft.id)}" disabled />`
-    : `<input id="wf-role-id" data-testid="workflow-role-id" value="${ctx.escapeHtml(draft.id)}" placeholder="planner" autocomplete="off" />`;
+    : `<input id="wf-role-id" data-testid="workflow-role-id" value="${ctx.escapeHtml(draft.id)}" placeholder="reviewer" autocomplete="off" />`;
+  const current = editing ? (ctx.state.roles || []).find((role) => role.id === editor.id) : null;
+  const restore = current?.builtin && current.defaultPrompt
+    ? `<button type="button" class="btn" data-action="workflow-restore-prompt" data-testid="workflow-restore-prompt">${ctx.escapeHtml(ctx.t('wf_restore_prompt'))}</button>`
+    : '';
+  const copied = !editing && editor.starter?.mode === 'copy'
+    ? `<span class="wf-field-hint">${ctx.escapeHtml(ctx.t('wf_copied_hint', { name: editor.starter.name || '' }))}</span>`
+    : '';
   const body = (
+    (editing ? '' : renderRoleStarters(ctx)) +
     `<div class="form-group"><label>${ctx.escapeHtml(ctx.t('wf_id'))}</label>${idField}<span class="wf-field-hint">${ctx.escapeHtml(ctx.t('wf_id_hint'))}</span></div>` +
     `<div class="form-group"><label>${ctx.escapeHtml(ctx.t('wf_name'))}</label><input id="wf-role-name" data-testid="workflow-role-name" value="${ctx.escapeHtml(draft.name)}" autocomplete="off" /></div>` +
-    `<div class="form-group"><label>${ctx.escapeHtml(ctx.t('wf_prompt'))}</label><textarea id="wf-role-prompt" data-testid="workflow-role-prompt">${ctx.escapeHtml(draft.systemPrompt)}</textarea></div>` +
+    `<div class="form-group"><div class="wf-label-row"><label>${ctx.escapeHtml(ctx.t('wf_prompt'))}</label>${restore}</div><textarea id="wf-role-prompt" data-testid="workflow-role-prompt">${ctx.escapeHtml(draft.systemPrompt)}</textarea>${copied}</div>` +
     `<div class="form-group"><label>${ctx.escapeHtml(ctx.t('wf_tools'))}</label><div class="wf-tools">${toolBoxes}</div></div>` +
     `<div class="form-group"><label>${ctx.escapeHtml(ctx.t('wf_model'))}</label><input id="wf-role-model" data-testid="workflow-role-model" value="${ctx.escapeHtml(draft.model)}" placeholder="${ctx.escapeHtml(ctx.t('wf_model_placeholder'))}" autocomplete="off" /><span class="wf-field-hint">${ctx.escapeHtml(ctx.t('wf_model_hint'))}</span></div>`
   );
@@ -230,6 +286,7 @@ function renderPipelineEditor(ctx) {
   const steps = (draft.steps || []).map((step, index) => stepRow(ctx, step, index, draft.steps.length)).join('');
   const atLimit = (draft.steps || []).length >= 20;
   const body = (
+    (editing ? '' : renderBuiltinStepChoices(ctx)) +
     `<div class="form-group"><label>${ctx.escapeHtml(ctx.t('wf_id'))}</label>${idField}<span class="wf-field-hint">${ctx.escapeHtml(ctx.t('wf_id_hint'))}</span></div>` +
     `<div class="form-group"><label>${ctx.escapeHtml(ctx.t('wf_name'))}</label><input id="wf-pipe-name" data-testid="workflow-pipeline-name" value="${ctx.escapeHtml(draft.name)}" autocomplete="off" /></div>` +
     `<div class="form-group"><label>${ctx.escapeHtml(ctx.t('wf_steps'))}</label><div id="wf-steps">${steps}</div>` +
@@ -363,6 +420,7 @@ function openPipelineEditor(ctx, mode, id, draft, returnTo) {
     id: id || '',
     draft: draft || emptyPipelineDraft(ctx.state.roles),
     returnTo: returnTo || null,
+    stepsUntouched: mode === 'create' && draft == null,
   };
   ctx.render();
 }
@@ -384,6 +442,95 @@ function mutateSteps(ctx, fn) {
   } finally {
     if (ctx.state.workflowEditor) ctx.state.workflowEditor.skipCapture = false;
   }
+}
+
+function replaceRoleDraft(ctx, draft, starter) {
+  const editor = ctx.state.workflowEditor;
+  if (!editor || editor.kind !== 'role') return;
+  editor.draft = draft;
+  editor.starter = starter;
+  editor.skipCapture = true;
+  try {
+    ctx.render();
+  } finally {
+    if (ctx.state.workflowEditor) ctx.state.workflowEditor.skipCapture = false;
+  }
+}
+
+function findTemplateRole(ctx, id) {
+  return builtinRoles(ctx).find((role) => role.id === id) || null;
+}
+
+function appendRoleStep(draft, roleId) {
+  const steps = Array.isArray(draft.steps) ? draft.steps : [];
+  if (steps.length >= 20) return;
+  steps.push({ role: roleId, input: steps.length ? 'previous' : 'user' });
+  draft.steps = steps;
+}
+
+function useBuiltinRole(el, ctx) {
+  const role = findTemplateRole(ctx, el.getAttribute('data-template'));
+  if (!role) return;
+  const back = ctx.state.workflowEditor?.returnTo;
+  if (back) {
+    const draft = back.draft || emptyPipelineDraft(ctx.state.roles);
+    appendRoleStep(draft, role.id);
+    openPipelineEditor(ctx, back.mode, back.id, draft);
+    return;
+  }
+  ctx.state.workflowEditor = null;
+  ctx.showToast('wf_use_builtin', { name: roleTitle(role, ctx) });
+  ctx.render();
+}
+
+function copyBuiltinRole(el, ctx) {
+  const role = findTemplateRole(ctx, el.getAttribute('data-template'));
+  if (!role) return;
+  const name = roleTitle(role, ctx);
+  const tools = Array.isArray(role.defaultTools) && role.defaultTools.length
+    ? role.defaultTools.slice()
+    : (Array.isArray(role.tools) ? role.tools.slice() : ['read', 'ls', 'grep']);
+  replaceRoleDraft(ctx, {
+    id: '',
+    name: '',
+    systemPrompt: role.defaultPrompt,
+    tools,
+    model: '',
+  }, { mode: 'copy', id: role.id, name });
+}
+
+function restoreDefaultPrompt(ctx) {
+  const editor = ctx.state.workflowEditor;
+  if (!editor || editor.kind !== 'role' || editor.mode !== 'edit') return;
+  const role = (ctx.state.roles || []).find((item) => item.id === editor.id);
+  if (!role?.defaultPrompt) return;
+  const draft = readRoleDraft(ctx);
+  draft.systemPrompt = role.defaultPrompt;
+  editor.draft = draft;
+  editor.skipCapture = true;
+  try {
+    ctx.render();
+  } finally {
+    if (ctx.state.workflowEditor) ctx.state.workflowEditor.skipCapture = false;
+  }
+}
+
+function addBuiltinStep(el, ctx) {
+  const role = findTemplateRole(ctx, el.getAttribute('data-template'));
+  if (!role) return;
+  const editor = ctx.state.workflowEditor;
+  mutateSteps(ctx, (steps) => {
+    const placeholder = editor?.stepsUntouched && steps.length === 1
+      && steps[0].role === preferredRoleId(ctx.state.roles)
+      && steps[0].input !== 'previous';
+    if (placeholder) {
+      steps[0] = { role: role.id, input: 'user' };
+      return;
+    }
+    if (steps.length >= 20) return;
+    steps.push({ role: role.id, input: steps.length ? 'previous' : 'user' });
+  });
+  if (ctx.state.workflowEditor) ctx.state.workflowEditor.stepsUntouched = false;
 }
 
 export function handleWorkflowAction(action, el, ctx) {
@@ -431,6 +578,21 @@ export function handleWorkflowAction(action, el, ctx) {
         const [item] = steps.splice(index, 1);
         steps.splice(next, 0, item);
       });
+      return true;
+    case 'workflow-role-blank':
+      replaceRoleDraft(ctx, emptyRoleDraft(), { mode: 'blank' });
+      return true;
+    case 'workflow-role-use':
+      useBuiltinRole(el, ctx);
+      return true;
+    case 'workflow-role-copy':
+      copyBuiltinRole(el, ctx);
+      return true;
+    case 'workflow-restore-prompt':
+      restoreDefaultPrompt(ctx);
+      return true;
+    case 'workflow-add-builtin':
+      addBuiltinStep(el, ctx);
       return true;
     case 'workflow-new-role': {
       const draft = readPipelineDraft(ctx);
