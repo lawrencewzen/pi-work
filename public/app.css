@@ -2051,6 +2051,65 @@ button.file-tree-row:hover,
   line-height: 1.5;
 }
 
+/* Grok Build sign-in */
+.grok-auth-card {
+  margin: 0 0 14px;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.grok-auth-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.grok-device {
+  margin: 4px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-surface-subtle);
+}
+.grok-device-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.grok-url {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  word-break: break-all;
+  color: var(--text-primary);
+}
+.grok-user-code {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.grok-wait {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.grok-key-fallback {
+  margin: 4px 0 8px;
+}
+.grok-key-fallback summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 /* Model API Key Warning Box */
 .cfg-warn-box {
   background: rgba(245, 158, 11, 0.08);

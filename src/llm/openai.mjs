@@ -1,3 +1,5 @@
+import { actionFromGrokResponses, toGrokResponsesBody } from '../core/grok-auth.mjs';
+
 const TOOL_DEFS = [
   {
     type: 'function',
@@ -81,7 +83,8 @@ function abortError() {
 function redactProviderBody(body) {
   return String(body ?? '')
     .slice(0, 500)
-    .replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-***');
+    .replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-***')
+    .replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, 'jwt-***');
 }
 
 function httpError(status, body) {
@@ -146,38 +149,61 @@ export function createOpenAILLM({
         ? TOOL_DEFS.filter((t) => tools.includes(t.function.name))
         : TOOL_DEFS;
 
-      const url = `${root}/chat/completions`;
-      let res;
-      try {
-        res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(key ? { authorization: `Bearer ${key}` } : {}),
-          },
-          body: JSON.stringify({
+      const grok = cfg.api === 'grok-responses';
+      const url = grok ? `${root}/responses` : `${root}/chat/completions`;
+      const headers = {
+        'content-type': 'application/json',
+        ...(grok && cfg.headers && typeof cfg.headers === 'object' ? cfg.headers : {}),
+        ...(key ? { authorization: `Bearer ${key}` } : {}),
+      };
+      const body = grok
+        ? toGrokResponsesBody(messages, allowed, mdl)
+        : {
             model: mdl,
             messages: toOpenAIMessages(messages),
             tools: allowed,
             stream: !!stream,
-          }),
-          signal,
-        });
-      } catch (err) {
-        if (err?.name === 'AbortError' || signal?.aborted) throw abortError();
-        if (err?.code) throw err;
-        const wrapped = new Error(err?.message || 'LLM request failed');
-        wrapped.code = err?.cause?.code || 'ECONNRESET';
-        throw wrapped;
+          };
+
+      const post = async (postHeaders) => {
+        try {
+          return await fetch(url, {
+            method: 'POST',
+            headers: postHeaders,
+            body: JSON.stringify(body),
+            signal,
+          });
+        } catch (err) {
+          if (err?.name === 'AbortError' || signal?.aborted) throw abortError();
+          if (err?.code) throw err;
+          const wrapped = new Error(err?.message || 'LLM request failed');
+          wrapped.code = err?.cause?.code || 'ECONNRESET';
+          throw wrapped;
+        }
+      };
+
+      let res = await post(headers);
+      if (res.status === 401 && grok && typeof cfg.onUnauthorized === 'function') {
+        try { await res.text(); } catch { /* drain */ }
+        const refreshed = await cfg.onUnauthorized();
+        if (refreshed?.apiKey) {
+          const nextHeaders = {
+            ...headers,
+            ...(refreshed.headers || {}),
+            authorization: `Bearer ${refreshed.apiKey}`,
+          };
+          res = await post(nextHeaders);
+        }
       }
 
       if (!res.ok) {
-        let body = '';
-        try { body = await res.text(); } catch { /* ignore */ }
-        throw httpError(res.status, body);
+        let errBody = '';
+        try { errBody = await res.text(); } catch { /* ignore */ }
+        throw httpError(res.status, errBody);
       }
 
       const json = await res.json();
+      if (grok) return actionFromGrokResponses(json);
       const msg = json?.choices?.[0]?.message;
       const toolCalls = msg?.tool_calls;
       if (toolCalls?.length) {

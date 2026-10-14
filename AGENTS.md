@@ -20,6 +20,10 @@ pi-work 是基于 Pi Durable（`@earendil-works/pi-durable`，作为库嵌入）
 - **Auditor**：独立 Agent，只做代码审计与报告，不直接改代码。
 - **设计**：Antigravity（`--model gemini-3.8-flash-high`）出设计稿；设计稿和架构由用户确认。
 
+## Grok 登录
+
+模型调用优先复用本机 Grok Build 会话 `~/.grok/auth.json`（与 `grok login` 相同的 access / refresh）。设置 → 模型里的「用 Grok 登录」走 `grok login --device-auth` 同款设备码：页面显示网址和用户码，服务端轮询完成后把令牌写回该文件（0600）。会话有效时请求发往订阅代理 `https://cli-chat-proxy.grok.com/v1/responses`，模型默认 `grok-build`，不走按量的 `api.x.ai`。API Key 仍是没有会话时的回退，会话有效时密钥框收起。退出登录只删除 OIDC 会话，保留 `xai::api_key`。不要把 `auth.json` 提交进仓库。`PI_WORK_LLM=faux` 时仍走本地剧本；未设置时，一旦有会话或 API Key 就改用真实模型。
+
 ## 约束
 - 只改任务范围内的文件；新增依赖需说明理由。保持原生 ESM。
 - 不读取、不打印 `.env` 和密钥；不访问未授权的远程服务器。

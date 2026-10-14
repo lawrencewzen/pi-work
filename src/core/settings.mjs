@@ -49,6 +49,8 @@ export function normalizeSettings(raw = {}) {
   if (typeof out.provider !== 'string' || !out.provider) out.provider = 'openai';
   if (typeof out.baseUrl !== 'string') out.baseUrl = '';
   if (typeof out.apiKey !== 'string') out.apiKey = '';
+  // Grok session lives in ~/.grok/auth.json, never in the settings row.
+  delete out.grok;
   return out;
 }
 
