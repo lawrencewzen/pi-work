@@ -1,3 +1,5 @@
+// Optional local extra. Acceptance is tests/e2e/workflow.md, run by a person.
+// This file is not part of CI and does not install a browser.
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';

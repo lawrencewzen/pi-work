@@ -26,6 +26,7 @@
 | [grok-login.md](grok-login.md) | Grok 登录与模型设置 |
 | [skills.md](skills.md) | 新建 Skill、开关、启用后影响回复 |
 | [plugins.md](plugins.md) | Echo 列表、开关、调用工具、空导入被拒绝 |
+| [workflow.md](workflow.md) | 角色与流水线：新建、编辑、删除、占用拒绝、功能交付 |
 | [appearance.md](appearance.md) | 语言与主题 |
 
 ## 记录
