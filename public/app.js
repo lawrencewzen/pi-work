@@ -485,6 +485,10 @@ export async function loadInitialData() {
   try {
     state.settings = await api('/api/settings');
     rememberSavedSettings(state.settings);
+    if (state.settings?.grok?.pending?.loginId) {
+      state.grokPending = state.settings.grok.pending;
+      scheduleGrokPoll(state.settings.grok.pending.interval);
+    }
     if (state.settings.theme) state.theme = state.settings.theme;
     if (state.settings.appearance) state.appearance = state.settings.appearance;
     if (state.settings.language) setLocale(state.settings.language);
@@ -1803,9 +1807,199 @@ export function switchRightTab(tab) {
 // ============================================================================
 // Settings Modal
 // ============================================================================
+function grokErrorKey(code) {
+  if (code === 'denied') return 'grok_err_denied';
+  if (code === 'expired' || code === 'no_login') return 'grok_err_expired';
+  if (code === 'device_unavailable' || code === 'bad_verification_uri' || code === 'bad_user_code') return 'grok_err_unavailable';
+  return 'grok_err_failed';
+}
+
+function safeGrokHttps(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.protocol !== 'https:') return '';
+    const host = u.hostname.toLowerCase();
+    if (host !== 'x.ai' && !host.endsWith('.x.ai')) return '';
+    return u.href;
+  } catch {
+    return '';
+  }
+}
+
+function formatGrokExpiry(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  try { return d.toLocaleString(); } catch { return ''; }
+}
+
+function grokAuthCardHtml() {
+  const g = state.settings?.grok || {};
+  const pending = state.grokPending || g.pending;
+  if (g.signedIn && !pending) {
+    const account = g.account || g.email || '';
+    const exp = formatGrokExpiry(g.expiresAt);
+    const detail = [account, exp ? t('grok_expires', { time: exp }) : ''].filter(Boolean).join(' · ');
+    return (
+      `<div id="grok-auth-card" class="grok-auth-card" data-testid="grok-auth-card">` +
+      `<div class="row">` +
+      `<div class="l"><b>${escapeHtml(t('grok_signed_in'))}</b><span>${escapeHtml(detail)}</span></div>` +
+      `<button class="btn" type="button" data-action="grok-logout" data-testid="grok-logout">${escapeHtml(t('grok_logout'))}</button>` +
+      `</div>` +
+      `<p class="grok-auth-note">${escapeHtml(t('grok_proxy_note'))}</p>` +
+      `</div>`
+    );
+  }
+  const url = safeGrokHttps(pending?.verificationUri);
+  const code = pending?.userCode || '';
+  const err = state.grokError ? t(state.grokError) : '';
+  return (
+    `<div id="grok-auth-card" class="grok-auth-card" data-testid="grok-auth-card">` +
+    `<div class="row">` +
+    `<div class="l"><b>${escapeHtml(t('grok_sign_in'))}</b><span>${escapeHtml(t('grok_sign_in_desc'))}</span></div>` +
+    `<button class="btn p" type="button" data-action="grok-signin" data-testid="grok-sign-in"${pending ? ' disabled' : ''}>${escapeHtml(t('grok_sign_in_btn'))}</button>` +
+    `</div>` +
+    (pending
+      ? `<div class="grok-device" data-testid="grok-device">` +
+        `<div class="grok-device-label">${escapeHtml(t('grok_open_url'))}</div>` +
+        (url ? `<a class="grok-url" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>` : '') +
+        `<div class="grok-device-label">${escapeHtml(t('grok_user_code'))}</div>` +
+        `<div class="grok-user-code" data-testid="grok-user-code">${escapeHtml(code)}</div>` +
+        `<div class="grok-wait">${escapeHtml(t('grok_waiting'))}</div>` +
+        `<button class="btn" type="button" data-action="grok-cancel">${escapeHtml(t('grok_cancel'))}</button>` +
+        `</div>`
+      : '') +
+    (err ? `<div class="cfg-warn-box" data-testid="grok-error">${escapeHtml(err)}</div>` : '') +
+    `</div>`
+  );
+}
+
+let grokPollTimer = null;
+
+function stopGrokPoll() {
+  if (grokPollTimer) {
+    clearTimeout(grokPollTimer);
+    grokPollTimer = null;
+  }
+}
+
+function scheduleGrokPoll(seconds) {
+  stopGrokPoll();
+  const ms = Math.max(1, Number(seconds) || 5) * 1000;
+  grokPollTimer = setTimeout(() => { pollGrokLogin(); }, ms);
+}
+
+function captureModelsDraft() {
+  if (!state.settings) state.settings = {};
+  const base = document.getElementById('cfg-base-url');
+  if (base) state.settings.baseUrl = base.value;
+  const keyEl = document.getElementById('cfg-api-key');
+  if (keyEl) state._draftApiKey = keyEl.value;
+  const roleInputs = document.querySelectorAll('[data-role-id]');
+  if (!state.settings.models || typeof state.settings.models !== 'object') state.settings.models = {};
+  roleInputs.forEach((inp) => {
+    const rid = inp.getAttribute('data-role-id');
+    if (rid) state.settings.models[rid] = inp.value.trim();
+  });
+}
+
+function paintGrok() {
+  const ov = document.getElementById('settings-overlay');
+  const open = ov && ov.style.display !== 'none' && state.activeSettingsTab === 'models';
+  if (!open) return;
+  captureModelsDraft();
+  renderSettingsModal();
+}
+
+async function refreshGrokStatus() {
+  try {
+    const grok = await api('/api/grok/session');
+    if (!state.settings) state.settings = {};
+    state.settings.grok = grok;
+    if (grok?.pending) {
+      state.grokPending = grok.pending;
+      scheduleGrokPoll(grok.pending.interval);
+    }
+    paintGrok();
+  } catch { /* status stays as last known */ }
+}
+
+export async function startGrokSignIn() {
+  state.grokError = '';
+  try {
+    const started = await api('/api/grok/login', 'POST', {});
+    state.grokPending = started;
+    if (!state.settings) state.settings = {};
+    state.settings.grok = { ...(state.settings.grok || {}), signedIn: false, pending: started };
+    paintGrok();
+    scheduleGrokPoll(started.interval);
+  } catch (err) {
+    state.grokError = grokErrorKey(err.body?.error || err.message);
+    paintGrok();
+  }
+}
+
+async function pollGrokLogin() {
+  const pending = state.grokPending || state.settings?.grok?.pending;
+  if (!pending?.loginId) return;
+  try {
+    const result = await api('/api/grok/login/poll', 'POST', { loginId: pending.loginId });
+    if (result.status === 'done') {
+      stopGrokPoll();
+      state.grokPending = null;
+      state.grokError = '';
+      if (!state.settings) state.settings = {};
+      state.settings.grok = result.grok || { signedIn: true, pending: null };
+      showToast('grok_login_ok');
+      paintGrok();
+      return;
+    }
+    state.grokPending = { ...pending, interval: result.interval || pending.interval, expiresAt: result.expiresAt || pending.expiresAt };
+    if (state.settings) {
+      state.settings.grok = { ...(state.settings.grok || {}), pending: state.grokPending, signedIn: false };
+    }
+    scheduleGrokPoll(result.interval || pending.interval);
+  } catch (err) {
+    stopGrokPoll();
+    state.grokPending = null;
+    if (state.settings?.grok) state.settings.grok.pending = null;
+    state.grokError = grokErrorKey(err.body?.error || err.message);
+    paintGrok();
+  }
+}
+
+export async function logoutGrok() {
+  stopGrokPoll();
+  state.grokPending = null;
+  try {
+    const grok = await api('/api/grok/logout', 'POST', {});
+    if (!state.settings) state.settings = {};
+    state.settings.grok = grok;
+    state.grokError = '';
+    showToast('grok_logged_out');
+    paintGrok();
+  } catch (err) {
+    state.grokError = grokErrorKey(err.body?.error || err.message);
+    paintGrok();
+  }
+}
+
+export async function cancelGrokLogin() {
+  stopGrokPoll();
+  const id = state.grokPending?.loginId || state.settings?.grok?.pending?.loginId;
+  state.grokPending = null;
+  if (state.settings?.grok) state.settings.grok.pending = null;
+  try {
+    const grok = await api('/api/grok/login/cancel', 'POST', { loginId: id || '' });
+    if (state.settings) state.settings.grok = grok;
+  } catch { /* local pending is already cleared */ }
+  paintGrok();
+}
+
 export function openSettings(tab = 'general') {
   state.activeSettingsTab = tab;
   renderSettingsModal();
+  if (tab === 'models') refreshGrokStatus();
 }
 
 export function closeSettings() {
@@ -1904,34 +2098,43 @@ function renderSettingsTabContent(tab) {
     const preset = providerPreset(prov);
     const models = s.models || {};
     const maskedKey = s.apiKey || '';
+    const keyValue = state._draftApiKey != null ? state._draftApiKey : maskedKey;
+    const grokOn = Boolean(s.grok?.signedIn);
+    const modelHint = grokOn ? 'grok-build' : preset.modelHint;
 
     const rolesList = state.roles || [];
-
-    return `
-      <h2>${escapeHtml(t('settings_tab_models'))}</h2>
-      <div class="prov">
-        <span class="${prov === 'xai' ? 'on' : ''}" data-action="set-model-provider" data-provider="xai">xAI</span>
-        <span class="${prov === 'deepseek' ? 'on' : ''}" data-action="set-model-provider" data-provider="deepseek">DeepSeek</span>
-        <span class="${prov === 'openai' ? 'on' : ''}" data-action="set-model-provider" data-provider="openai">${escapeHtml(t('provider_openai'))}</span>
-        <span class="${prov === 'ollama' ? 'on' : ''}" data-action="set-model-provider" data-provider="ollama">${escapeHtml(t('provider_ollama'))}</span>
-      </div>
+    const keyRows = `
       <div class="row">
         <div class="l"><b>${escapeHtml(t('models_base_url_label'))}</b><span>${escapeHtml(t('models_base_url_desc'))}</span></div>
         <input class="in" id="cfg-base-url" type="text" data-original-val="${escapeHtml(s.baseUrl || '')}" value="${escapeHtml(s.baseUrl || '')}" placeholder="${escapeHtml(preset.baseUrl)}" />
       </div>
       <div class="row">
         <div class="l"><b>${escapeHtml(t('models_api_key_label'))}</b><span>${escapeHtml(t('models_api_key_desc'))}</span></div>
-        <input class="in" id="cfg-api-key" type="text" data-original-masked="${escapeHtml(maskedKey)}" value="${escapeHtml(maskedKey)}" placeholder="${escapeHtml(t('models_api_key_placeholder'))}" autocomplete="off" />
+        <input class="in" id="cfg-api-key" type="text" data-original-masked="${escapeHtml(maskedKey)}" value="${escapeHtml(keyValue)}" placeholder="${escapeHtml(t('models_api_key_placeholder'))}" autocomplete="off" />
       </div>
       <div id="cfg-key-warning" class="cfg-warn-box" style="display:none;">
         ${escapeHtml(t('models_key_safety_warn'))}
+      </div>`;
+    const keyBlock = grokOn
+      ? `<details class="grok-key-fallback"><summary>${escapeHtml(t('grok_key_fallback'))}</summary><p class="grok-auth-note">${escapeHtml(t('grok_key_fallback_desc'))}</p>${keyRows}</details>`
+      : keyRows;
+
+    return `
+      <h2>${escapeHtml(t('settings_tab_models'))}</h2>
+      ${grokAuthCardHtml()}
+      <div class="prov">
+        <span class="${prov === 'xai' ? 'on' : ''}" data-action="set-model-provider" data-provider="xai">xAI</span>
+        <span class="${prov === 'deepseek' ? 'on' : ''}" data-action="set-model-provider" data-provider="deepseek">DeepSeek</span>
+        <span class="${prov === 'openai' ? 'on' : ''}" data-action="set-model-provider" data-provider="openai">${escapeHtml(t('provider_openai'))}</span>
+        <span class="${prov === 'ollama' ? 'on' : ''}" data-action="set-model-provider" data-provider="ollama">${escapeHtml(t('provider_ollama'))}</span>
       </div>
+      ${keyBlock}
       ${rolesList
         .map(
           (r) =>
             `<div class="row">` +
             `<div class="l"><b>${escapeHtml(localizeRoleLabel(r.id || r.name))}</b><span>${escapeHtml(r.id)}</span></div>` +
-            `<input class="in" style="min-width:180px" data-role-id="${escapeHtml(r.id)}" value="${escapeHtml(models[r.id] || '')}" placeholder="${escapeHtml(t('model_placeholder_eg', { model: preset.modelHint }))}" />` +
+            `<input class="in" style="min-width:180px" data-role-id="${escapeHtml(r.id)}" value="${escapeHtml(models[r.id] || '')}" placeholder="${escapeHtml(t('model_placeholder_eg', { model: modelHint }))}" />` +
             `</div>`
         )
         .join('')}
@@ -2058,6 +2261,7 @@ function renderSkillsListHtml(list, searching = false) {
 export function setSettingsTab(tab) {
   state.activeSettingsTab = tab;
   renderSettingsModal();
+  if (tab === 'models') refreshGrokStatus();
 }
 
 function applyChromeLabels() {
@@ -2217,6 +2421,7 @@ export async function saveModelsSettings() {
 
   try {
     state.settings = await api('/api/settings', 'PUT', payload);
+    state._draftApiKey = null;
     rememberSavedSettings(state.settings);
     showToast('msg_settings_saved');
     renderSettingsModal();
@@ -2567,6 +2772,9 @@ window.__app = {
   switchFontSize,
   setModelProvider,
   saveModelsSettings,
+  startGrokSignIn,
+  logoutGrok,
+  cancelGrokLogin,
   togglePlugin,
   filterPlugins,
   filterSkills,
@@ -2689,6 +2897,15 @@ document.addEventListener('click', (e) => {
       break;
     case 'save-models-settings':
       saveModelsSettings();
+      break;
+    case 'grok-signin':
+      startGrokSignIn();
+      break;
+    case 'grok-logout':
+      logoutGrok();
+      break;
+    case 'grok-cancel':
+      cancelGrokLogin();
       break;
     case 'toggle-plugin':
       togglePlugin(actionEl.getAttribute('data-plugin-id'), actionEl.getAttribute('data-enabled') === 'true');

@@ -50,6 +50,16 @@ Full OS sandbox (bubblewrap / nsjail) is **deferred**. A `TODO` in `bash()` reco
 
 Changing `baseUrl` or `provider` without a new non-masked `apiKey` **clears** the stored key so the next LLM call cannot exfiltrate it to an attacker host. Custom `baseUrl` is still allowed (openai / x.ai / deepseek / anthropic hosts are the usual ones; this is a documentation hint, not a hard block).
 
+### Grok Build session
+
+Sign-in reuses the Grok CLI credential file (`~/.grok/auth.json`, or `PI_WORK_GROK_AUTH` / `GROK_HOME`). The browser only receives account, expiry, verification URL, and user code. Access tokens, refresh tokens, and the device code stay on the server. The file is written mode `0600` and is not copied into SQLite. Logout deletes the OIDC scope (`https://auth.x.ai::<client id>` and the legacy `https://accounts.x.ai/sign-in` entry) and leaves `xai::api_key` in place.
+
+Device login matches public `grok login --device-auth`: `POST https://auth.x.ai/oauth2/device/code`, then poll `POST https://auth.x.ai/oauth2/token` with the device-code grant. The public client id is `b1a00492-073a-47ea-816f-4c329264a828` (no secret). Verification URLs must be `https` on `x.ai` or a subdomain. Refresh tokens are sent only to an `https` `*.x.ai` issuer.
+
+While that session is valid, model calls go to `https://cli-chat-proxy.grok.com/v1/responses` with `Authorization: Bearer` and `X-XAI-Token-Auth: xai-grok-cli`. The default model id is `grok-build` (`api_backend: responses`, `supported_in_api: false` in the public model catalog). The API-key chat-completions path remains the fallback and is not used for those calls. Provider error bodies are truncated and JWT-shaped strings are redacted.
+
+Hypothesis: the proxy rejects client versions below `0.1.202`. Requests send `x-grok-client-version: 0.1.220` (inspected shell crate version, prerelease stripped; override with `PI_WORK_GROK_CLIENT_VERSION`) plus `x-grok-client-identifier: grok-shell`. Official credential code documents the bearer and `X-XAI-Token-Auth` headers; the extra headers are there because public clients report HTTP 426 without them. When `expires_at` is missing, expiry is the sooner of `create_time` + 30 days (grok's fallback) and an unverified JWT `exp`.
+
 ### Tool name allowlist (finding 5, server half)
 
 Before `tool.start` / execute, the tool name must be in the default registry (`read`, `write`, `edit`, `ls`, `grep`, `bash`) **and** in the role's tools list. Otherwise the orchestrator emits `tool.end` with `E_UNKNOWN_TOOL` and does not run the tool. Frontend XSS escaping in `public/` was already done.

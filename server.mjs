@@ -19,6 +19,14 @@ import { createSqliteStore } from './src/store/sqlite.mjs';
 import { loadFauxLLM, createFauxLLM } from './src/llm/faux.mjs';
 import { createOpenAILLM } from './src/llm/openai.mjs';
 import {
+  createGrokAuth,
+  selectChatRuntime,
+  grokProxyBase,
+  grokProxyHeaders,
+  GROK_SESSION_MODEL,
+  GrokAuthError,
+} from './src/core/grok-auth.mjs';
+import {
   loadOrCreateToken,
   requestAuthorized,
   hostAllowed,
@@ -40,8 +48,6 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const PORT = process.env.PORT !== undefined && process.env.PORT !== '' ? Number(process.env.PORT) : 3000;
 const DATA_DIR = process.env.PI_WORK_DATA_DIR || path.join(ROOT, 'data');
-const LLM_KIND = process.env.PI_WORK_LLM || 'faux';
-
 await fs.mkdir(DATA_DIR, { recursive: true });
 
 let dataLock;
@@ -104,6 +110,22 @@ async function readBody(req, limit = 2_000_000) {
     err.status = 400;
     throw err;
   }
+}
+
+async function settingsResponse(stored) {
+  const body = publicSettings(stored);
+  try {
+    body.grok = await grokAuth.status();
+  } catch {
+    body.grok = { signedIn: false, account: null, email: null, expiresAt: null, authMode: null, source: null, pending: null };
+  }
+  return body;
+}
+
+function sendGrokError(res, err) {
+  const code = err instanceof GrokAuthError ? err.code : 'login_failed';
+  const status = code === 'no_login' ? 404 : 502;
+  sendJson(res, status, { error: code });
 }
 
 function liveStatus(orch, conv) {
@@ -188,19 +210,67 @@ await loadPipelineTemplates(store, path.join(ROOT, 'examples', 'pipelines'));
   if (Object.keys(seed).length) await store.putSettings(seed);
 }
 
-const llm = LLM_KIND === 'openai'
-  ? createOpenAILLM({
-      getConfig: async ({ roleId, model: modelOverride } = {}) => {
-        const s = await store.getSettings();
-        const models = s.models || {};
-        return {
-          baseUrl: s.baseUrl || process.env.LLM_BASE_URL,
-          apiKey: s.apiKey || process.env.LLM_API_KEY,
-          model: modelOverride || (roleId && models[roleId]) || models.default || process.env.LLM_MODEL,
-        };
+const grokAuth = createGrokAuth();
+
+async function llmConfig({ roleId, model: modelOverride } = {}) {
+  const s = await store.getSettings();
+  const models = s.models || {};
+  const configured = modelOverride || (roleId && models[roleId]) || models.default || process.env.LLM_MODEL;
+  let session = null;
+  try {
+    session = await grokAuth.resolveAccessToken();
+  } catch {
+    session = null;
+  }
+  if (session?.accessToken) {
+    const model = configured || GROK_SESSION_MODEL;
+    return {
+      api: 'grok-responses',
+      baseUrl: grokProxyBase(),
+      apiKey: session.accessToken,
+      model,
+      headers: grokProxyHeaders(session.accessToken, model),
+      onUnauthorized: async () => {
+        try {
+          const next = await grokAuth.forceRefresh();
+          if (!next?.accessToken) return null;
+          return { apiKey: next.accessToken, headers: grokProxyHeaders(next.accessToken, model) };
+        } catch {
+          return null;
+        }
       },
-    })
-  : (process.env.PI_WORK_FAUX_SCRIPT ? loadFauxLLM(process.env.PI_WORK_FAUX_SCRIPT) : createFauxLLM({ turns: [] }));
+    };
+  }
+  return {
+    api: 'chat',
+    baseUrl: s.baseUrl || process.env.LLM_BASE_URL,
+    apiKey: s.apiKey || process.env.LLM_API_KEY,
+    model: configured,
+  };
+}
+
+const openaiLlm = createOpenAILLM({ getConfig: llmConfig });
+const fauxLlm = process.env.PI_WORK_FAUX_SCRIPT
+  ? loadFauxLLM(process.env.PI_WORK_FAUX_SCRIPT)
+  : createFauxLLM({ turns: [] });
+
+const llm = {
+  async next(req) {
+    const explicit = process.env.PI_WORK_LLM || '';
+    let kind = explicit === 'faux' || explicit === 'openai' ? explicit : '';
+    if (!kind) {
+      const [grok, settings] = await Promise.all([
+        grokAuth.status().catch(() => ({ signedIn: false })),
+        store.getSettings(),
+      ]);
+      kind = selectChatRuntime('', {
+        hasSession: Boolean(grok?.signedIn),
+        hasApiKey: Boolean(settings?.apiKey || process.env.LLM_API_KEY),
+      });
+    }
+    return (kind === 'openai' ? openaiLlm : fauxLlm).next(req);
+  },
+};
 
 const orch = createOrchestrator({
   llm,
@@ -603,13 +673,48 @@ async function routeApi(req, res, url) {
   }
 
   if (p === '/api/settings' && m === 'GET') {
-    sendJson(res, 200, publicSettings(await store.getSettings()));
+    sendJson(res, 200, await settingsResponse(await store.getSettings()));
     return;
   }
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);
     const saved = await store.putSettings(body || {});
-    sendJson(res, 200, publicSettings(saved));
+    sendJson(res, 200, await settingsResponse(saved));
+    return;
+  }
+
+  if (p === '/api/grok/session' && m === 'GET') {
+    sendJson(res, 200, await grokAuth.status());
+    return;
+  }
+  if (p === '/api/grok/login' && m === 'POST') {
+    try {
+      sendJson(res, 200, await grokAuth.startLogin());
+    } catch (err) {
+      sendGrokError(res, err);
+    }
+    return;
+  }
+  if (p === '/api/grok/login/poll' && m === 'POST') {
+    const body = await readBody(req);
+    try {
+      sendJson(res, 200, await grokAuth.pollLogin(body?.loginId));
+    } catch (err) {
+      sendGrokError(res, err);
+    }
+    return;
+  }
+  if (p === '/api/grok/login/cancel' && m === 'POST') {
+    const body = await readBody(req);
+    sendJson(res, 200, await grokAuth.cancelLogin(body?.loginId));
+    return;
+  }
+  if (p === '/api/grok/logout' && m === 'POST') {
+    try {
+      sendJson(res, 200, await grokAuth.logout());
+    } catch (err) {
+      sendGrokError(res, err);
+    }
     return;
   }
 
