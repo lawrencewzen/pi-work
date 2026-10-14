@@ -58,7 +58,7 @@ Device login matches public `grok login --device-auth`: `POST https://auth.x.ai/
 
 While that session is valid, model calls go to `https://cli-chat-proxy.grok.com/v1/responses` with `Authorization: Bearer` and `X-XAI-Token-Auth: xai-grok-cli`. The default model id is `grok-build` (`api_backend: responses`, `supported_in_api: false` in the public model catalog). The API-key chat-completions path remains the fallback and is not used for those calls. Provider error bodies are truncated and JWT-shaped strings are redacted.
 
-Hypothesis: the proxy rejects client versions below `0.1.202`. Requests send `x-grok-client-version: 0.1.220` (inspected shell crate version, prerelease stripped; override with `PI_WORK_GROK_CLIENT_VERSION`) plus `x-grok-client-identifier: grok-shell`. Official credential code documents the bearer and `X-XAI-Token-Auth` headers; the extra headers are there because public clients report HTTP 426 without them. When `expires_at` is missing, expiry is the sooner of `create_time` + 30 days (grok's fallback) and an unverified JWT `exp`.
+The proxy rejects client versions below `1.0.13`. Requests send `x-grok-client-version` from `grok --version` when that CLI reports a version at least `1.0.13`, otherwise `1.0.50` (override with `PI_WORK_GROK_CLIENT_VERSION`) plus `x-grok-client-identifier: grok-shell`. Official credential code documents the bearer and `X-XAI-Token-Auth` headers; the extra headers are there because public clients report HTTP 426 without them. When `expires_at` is missing, expiry is the sooner of `create_time` + 30 days (grok's fallback) and an unverified JWT `exp`.
 
 ### Tool name allowlist (finding 5, server half)
 

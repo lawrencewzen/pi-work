@@ -29,6 +29,13 @@ const {
   grokProxyHeaders,
   selectChatRuntime,
   redactAuthText,
+  GROK_CLIENT_VERSION_DEFAULT,
+  GROK_CLIENT_VERSION_MIN,
+  grokClientVersion,
+  grokVersionAtLeast,
+  parseGrokVersion,
+  readGrokCliVersion,
+  resetGrokClientVersionCache,
 } = grok;
 
 function jwt(payload) {
@@ -306,12 +313,42 @@ test('responses body maps tools and proxy headers stay on the subscription model
   assert.equal(tool.name, 'read');
   assert.deepEqual(tool.args, { path: 'a.txt' });
 
-  const headers = grokProxyHeaders('test-access-token', 'grok-build', '0.1.220');
+  const headers = grokProxyHeaders('test-access-token', 'grok-build', '1.0.50');
   assert.equal(headers.authorization, 'Bearer test-access-token');
   assert.equal(headers['x-xai-token-auth'], 'xai-grok-cli');
-  assert.equal(headers['x-grok-client-version'], '0.1.220');
+  assert.equal(headers['x-grok-client-version'], '1.0.50');
+  assert.equal(headers['user-agent'], 'xai-grok-cli/1.0.50');
   assert.equal(headers['x-grok-model-override'], 'grok-build');
   assert.equal(redactAuthText(`err ${jwt({ a: 1 })} sk-supersecret`), 'err jwt-*** sk-***');
+});
+
+test('client version prefers grok --version, else a current default, and keeps the env override', () => {
+  assert.equal(parseGrokVersion('grok 1.0.50\n'), '1.0.50');
+  assert.equal(readGrokCliVersion(() => 'grok 1.0.50\n'), '1.0.50');
+  assert.equal(readGrokCliVersion(() => {
+    const err = new Error('missing');
+    err.stdout = 'grok 1.0.13\n';
+    throw err;
+  }), '1.0.13');
+  assert.equal(grokVersionAtLeast(GROK_CLIENT_VERSION_DEFAULT, GROK_CLIENT_VERSION_MIN), true);
+  assert.equal(grokVersionAtLeast('1.0.12', GROK_CLIENT_VERSION_MIN), false);
+  assert.equal(grokVersionAtLeast('1.0.13', GROK_CLIENT_VERSION_MIN), true);
+
+  assert.equal(grokClientVersion({ PI_WORK_GROK_CLIENT_VERSION: '9.9.9' }, () => {
+    throw new Error('cli should not be consulted when the env override is set');
+  }), '9.9.9');
+  assert.equal(grokClientVersion({ PI_WORK_GROK_CLIENT_VERSION: '   ' }, () => 'grok 1.2.3'), '1.2.3');
+  assert.equal(grokClientVersion({}, () => 'grok 1.0.50'), '1.0.50');
+  assert.equal(grokClientVersion({}, () => '0.1.220'), GROK_CLIENT_VERSION_DEFAULT);
+  assert.equal(grokClientVersion({}, () => { throw new Error('grok missing'); }), GROK_CLIENT_VERSION_DEFAULT);
+
+  resetGrokClientVersionCache();
+  const headers = grokProxyHeaders('tok', 'grok-build', grokClientVersion({}, () => 'grok 1.0.50'));
+  assert.equal(headers['x-grok-client-version'], '1.0.50');
+  assert.equal(headers['user-agent'], 'xai-grok-cli/1.0.50');
+
+  resetGrokClientVersionCache();
+  assert.equal(grokVersionAtLeast(grokClientVersion({}), GROK_CLIENT_VERSION_MIN), true);
 });
 
 test('chat runtime prefers a grok session unless faux is explicit', () => {

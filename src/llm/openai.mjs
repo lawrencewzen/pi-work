@@ -1,4 +1,4 @@
-import { actionFromGrokResponses, toGrokResponsesBody } from '../core/grok-auth.mjs';
+import { actionFromGrokResponses, redactAuthText, toGrokResponsesBody } from '../core/grok-auth.mjs';
 
 const TOOL_DEFS = [
   {
@@ -80,18 +80,35 @@ function abortError() {
   return err;
 }
 
-function redactProviderBody(body) {
-  return String(body ?? '')
-    .slice(0, 500)
-    .replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-***')
-    .replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, 'jwt-***');
+function pickProviderMessage(json) {
+  if (!json || typeof json !== 'object') return '';
+  if (typeof json.message === 'string' && json.message.trim()) return json.message.trim();
+  const err = json.error;
+  if (typeof err === 'string' && err.trim()) return err.trim();
+  if (err && typeof err === 'object') {
+    if (typeof err.message === 'string' && err.message.trim()) return err.message.trim();
+  }
+  return '';
+}
+
+export function providerErrorText(body, status) {
+  const raw = String(body ?? '').trim();
+  let text = raw;
+  if (raw.startsWith('{') || raw.startsWith('[')) {
+    try {
+      const picked = pickProviderMessage(JSON.parse(raw));
+      if (picked) text = picked;
+    } catch { /* keep the raw body */ }
+  }
+  const redacted = redactAuthText(text).trim();
+  return redacted || (status ? `LLM HTTP ${status}` : '');
 }
 
 function httpError(status, body) {
-  const redacted = redactProviderBody(body);
-  const err = new Error(redacted || `LLM HTTP ${status}`);
+  const err = new Error(providerErrorText(body, status));
   err.status = status;
   if (status === 429) err.code = 'ETIMEDOUT';
+  else err.code = 'E_LLM';
   return err;
 }
 

@@ -12,9 +12,9 @@
  *   the pay-per-token API (`supported_in_api: false`).
  *
  * Hypotheses (called out where they affect the wire):
- * - Proxy floor rejects client versions below 0.1.202. We send 0.1.220, the
- *   inspected xai-grok-shell crate version with the prerelease stripped.
- *   Override with PI_WORK_GROK_CLIENT_VERSION.
+ * - The subscription proxy rejects client versions below 1.0.13 (HTTP 426).
+ *   Prefer `grok --version` when it reports a version at least that floor.
+ *   Otherwise send 1.0.50. Override with PI_WORK_GROK_CLIENT_VERSION.
  * - Extra proxy headers `x-grok-client-identifier` / `user-agent` are included
  *   because public clients report HTTP 426 without them. Official
  *   grok_auth_credentials.rs documents Authorization + X-XAI-Token-Auth.
@@ -27,6 +27,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 export const GROK_ISSUER = 'https://auth.x.ai';
@@ -39,7 +40,8 @@ export const GROK_DEVICE_CODE_URL = `${GROK_ISSUER}/oauth2/device/code`;
 export const GROK_TOKEN_URL = `${GROK_ISSUER}/oauth2/token`;
 export const GROK_PROXY_BASE = 'https://cli-chat-proxy.grok.com/v1';
 export const GROK_SESSION_MODEL = 'grok-build';
-export const GROK_CLIENT_VERSION_DEFAULT = '0.1.220';
+export const GROK_CLIENT_VERSION_DEFAULT = '1.0.50';
+export const GROK_CLIENT_VERSION_MIN = '1.0.13';
 export const GROK_EARLY_INVALIDATION_MS = 300_000;
 export const GROK_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
@@ -60,9 +62,73 @@ export function grokAuthFilePath(env = process.env, home = os.homedir()) {
   return path.join(dir, 'auth.json');
 }
 
-export function grokClientVersion(env = process.env) {
-  const v = String(env.PI_WORK_GROK_CLIENT_VERSION || GROK_CLIENT_VERSION_DEFAULT).trim();
-  return v || GROK_CLIENT_VERSION_DEFAULT;
+const GROK_VERSION_RE = /(\d+)\.(\d+)\.(\d+)/;
+let cachedCliVersion;
+
+export function parseGrokVersion(text) {
+  const m = String(text ?? '').match(GROK_VERSION_RE);
+  if (!m) return '';
+  return `${Number(m[1])}.${Number(m[2])}.${Number(m[3])}`;
+}
+
+export function grokVersionAtLeast(version, floor = GROK_CLIENT_VERSION_MIN) {
+  const left = parseGrokVersion(version);
+  const right = parseGrokVersion(floor);
+  if (!left || !right) return false;
+  const a = left.split('.').map(Number);
+  const b = right.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return true;
+    if (a[i] < b[i]) return false;
+  }
+  return true;
+}
+
+export function readGrokCliVersion(execFile = execFileSync) {
+  let text = '';
+  try {
+    const out = execFile('grok', ['--version'], {
+      encoding: 'utf8',
+      timeout: 4000,
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    text = typeof out === 'string' ? out : `${out?.stdout || ''}\n${out?.stderr || ''}`;
+  } catch (err) {
+    text = `${err?.stdout || ''}\n${err?.stderr || ''}`;
+  }
+  return parseGrokVersion(text);
+}
+
+export function resetGrokClientVersionCache() {
+  cachedCliVersion = undefined;
+}
+
+/**
+ * Env override wins. Otherwise use `grok --version` when it is at least
+ * GROK_CLIENT_VERSION_MIN. A missing CLI or an older report falls back to
+ * GROK_CLIENT_VERSION_DEFAULT.
+ */
+export function resolveGrokClientVersion(env = process.env, readCli = readGrokCliVersion) {
+  const override = String(env?.PI_WORK_GROK_CLIENT_VERSION ?? '').trim();
+  if (override) return override;
+  let detected = '';
+  try {
+    detected = parseGrokVersion(readCli());
+  } catch {
+    detected = '';
+  }
+  if (detected && grokVersionAtLeast(detected, GROK_CLIENT_VERSION_MIN)) return detected;
+  return GROK_CLIENT_VERSION_DEFAULT;
+}
+
+export function grokClientVersion(env = process.env, readCli) {
+  const override = String(env?.PI_WORK_GROK_CLIENT_VERSION ?? '').trim();
+  if (override) return override;
+  if (typeof readCli === 'function') return resolveGrokClientVersion({}, readCli);
+  if (cachedCliVersion === undefined) cachedCliVersion = resolveGrokClientVersion({});
+  return cachedCliVersion;
 }
 
 export function grokProxyBase(env = process.env) {
