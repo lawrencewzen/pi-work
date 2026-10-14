@@ -20,7 +20,7 @@
 | [chat.md](chat.md) | 左右气泡、Markdown |
 | [context-chip.md](context-chip.md) | 上下文用量：无用量为 —，模型返回后显示已用 / 窗口 |
 | [agent-chip.md](agent-chip.md) | 调度模型芯片与角色菜单 |
-| [files.md](files.md) | 写文件，Diff / 文件 / Markdown |
+| [files.md](files.md) | 写文件，Diff / 文件 / Markdown，工具写入后文件树立即更新 |
 | [tool-loop.md](tool-loop.md) | 相同工具连呼、重复翻找与单步工具上限 |
 | [conversation-control.md](conversation-control.md) | 暂停、继续、终止，终止后再次发送 |
 | [running-overview.md](running-overview.md) | 运行中概览 |
