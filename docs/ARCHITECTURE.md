@@ -1,6 +1,10 @@
 # pi-work 架构
 
-单个 Node 22 进程，浏览器通过 REST + SSE 通信。当前 `src/` 运行时使用自定义 SQLite 日志与编排器做检查点；`@earendil-works/pi-durable` **不**参与 `src/` 热路径，仅 `legacy/` / `lib/` 使用。
+> **目标架构**：内核是 Pi Durable Harness（对话、任务、检查点、子 Agent），模型调用走 pi-ai，见 `AGENTS.md`「内核」。
+>
+> **现状（偏离目标，待迁移）**：2026-10-13 起 `src/` 运行时改成了自定义 SQLite 日志与编排器（`src/core/orchestrator.mjs`），`@earendil-works/pi-durable` 只在 `legacy/` / `lib/` 使用。这次改换内核没有经过用户确认，正在评估迁回（T5）。
+
+单个 Node 22 进程，浏览器通过 REST + SSE 通信。下面描述的是当前（自写编排器）的实现。
 
 ```mermaid
 flowchart LR
