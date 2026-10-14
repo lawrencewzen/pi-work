@@ -1,4 +1,16 @@
 import { expect } from '@playwright/test';
+export async function login(page, url, token) {
+  await page.goto(`${url}/login?token=${encodeURIComponent(token)}`);
+  await expect(page.getByTestId('composer-agent')).toBeVisible();
+}
+
+export async function createConversation(page) {
+  const before = await page.getByTestId('conversation-item').count();
+  await page.getByTestId('conversation-new').click();
+  await page.getByTestId('conversation-create-submit').click();
+  await expect(page.getByTestId('conversation-item')).toHaveCount(before + 1);
+}
+
 export async function createWorkspace(page, name, wsPath) {
   await page.getByTestId('workspace-new').click();
   await page.getByTestId('workspace-name-input').fill(name);

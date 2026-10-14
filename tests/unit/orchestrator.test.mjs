@@ -171,6 +171,22 @@ test('a run with no provider usage does not invent token counts', async () => {
   assert.equal(orch.status('N').usage ?? null, null);
 });
 
+test('a later run can clear a conversation role', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  const store = createMemoryStore();
+  await store.createRole({ id: 'coder', name: 'Coder', systemPrompt: 'code', tools: ['read'] });
+  const llm = { async next() { return { type: 'end' }; } };
+  const orch = createOrchestrator({ llm, store });
+  await orch.start('C', { workspacePath: w, text: 'a', roleId: 'coder', pipelineId: null });
+  await waitFor(() => orch.status('C').status === 'done');
+  assert.equal((await store.getConversation('C')).roleId, 'coder');
+  await orch.start('C', { workspacePath: w, text: 'b', roleId: null, pipelineId: null });
+  await waitFor(() => orch.status('C').status === 'done');
+  const conv = await store.getConversation('C');
+  assert.equal(conv.roleId, null);
+  assert.equal(conv.pipelineId ?? null, null);
+});
+
 test('stream cut is retried and run completes', async () => {
   const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
   const llm = createFauxLLM({ turns: [{ text: 'part1' }, { cut: true }, { text: 'final' }] });

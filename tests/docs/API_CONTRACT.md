@@ -44,8 +44,9 @@
 | `GET /workspaces` | | `[{id,name,path}]` |
 | `POST /workspaces/:wid/conversations` | `{title?, roleId?, pipelineId?}` | `201 {id, workspaceId, title, status:'idle'}` |
 | `GET /workspaces/:wid/conversations?q=` | | 列表，按更新时间倒序 |
-| `GET /conversations/:cid` | | `{id,title,status,autoContinues,lastCheckpointAt,currentStep,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—` |
+| `GET /conversations/:cid` | | `{id,title,status,autoContinues,lastCheckpointAt,currentStep,roleId,pipelineId,pipelineStep,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—` |
 | `POST /conversations/:cid/messages` | `{text}` | `202 {runId}`，开始运行 |
+| `PATCH /conversations/:cid` | `{roleId?, pipelineId?}` | `200 {id, roleId, pipelineId, pipelineStep, status}`。空 `roleId` 表示默认 Agent，并清除流水线。`running` / `recovering` / `paused` 时 409 `{error:'err_role_busy'}`。未知角色或流水线 400 |
 | `POST /conversations/:cid/pause` · `/resume` · `/stop` | | `200 {status}` |
 | `GET /conversations/:cid/changes` | | `[{path, added, removed, toolCallId}]`（按文件聚合） |
 | `GET /workspaces/:wid/files?path=` | | `{path, content}`；越界 → 403 `{error:'E_SANDBOX'}` |
@@ -66,7 +67,7 @@ status 取值：`idle | running | waiting | paused | recovering | failed | done 
 - 进程重启：status 为 running/recovering 的会话自动恢复，先置 `recovering`，完成后 `done`。
 
 ## 6. faux 模型脚本
-JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true} | {"delayMs":N} ]}`，依次产出。`{"cut":true}` 第一次执行时抛 `E_STREAM_CUT`，重试时跳过。可选 `"perConversation": true` 时每个会话独立游标。
+JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true} | {"delayMs":N} ]}`，依次产出。`{"cut":true}` 第一次执行时抛 `E_STREAM_CUT`，重试时跳过。可选 `"perConversation": true` 时每个会话独立游标。回合上的 `usage` 仅在带有数字 token 字段时进入会话用量（例如 `{"text":"ok","usage":{"total_tokens":16400}}`）；没有 `usage` 时作曲栏保持 `—`。
 
 ## 7. data-testid 约定（E2E）
 | testid | 元素 |
@@ -77,6 +78,7 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true}
 | `status-dot` (+`data-status`) | 会话状态点 |
 | `chat-input` / `chat-send` | 输入与发送 |
 | `composer-context` | 作曲栏上下文用量（`—` 或 `1.2k / 128k`） |
+| `composer-agent` / `composer-agent-menu` | 作曲栏当前模型；点击列出角色并可切换 |
 | `message` (+`data-role`) / `message-body` | 消息与渲染体（Markdown → HTML） |
 | `tool-row` (+`data-tool`,`data-path`) / `tool-row-path` / `tool-row-added` / `tool-row-removed` / `tool-row-detail` | 工具行（点击展开 detail） |
 | `status-bar` / `status-text` / `autocontinue-count` / `btn-pause` / `btn-resume` / `btn-stop` | 状态条 |

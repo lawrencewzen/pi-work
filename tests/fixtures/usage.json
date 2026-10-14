@@ -1,0 +1,5 @@
+{
+  "turns": [
+    { "text": "reported usage", "usage": { "prompt_tokens": 16000, "completion_tokens": 400, "total_tokens": 16400 } }
+  ]
+}

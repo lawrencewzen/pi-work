@@ -170,8 +170,16 @@ export function createOrchestrator({
       runtimes.set(id, rt);
     }
     if (opts.workspacePath) rt.workspacePath = opts.workspacePath;
-    if (opts.roleId) rt.roleId = opts.roleId;
-    if (opts.pipelineId) rt.pipelineId = opts.pipelineId;
+    // Explicit null clears a previous role or pipeline. `??` would keep the old value.
+    if (Object.prototype.hasOwnProperty.call(opts, 'roleId')) rt.roleId = opts.roleId || null;
+    if (Object.prototype.hasOwnProperty.call(opts, 'pipelineId')) {
+      const nextPipe = opts.pipelineId || null;
+      if (nextPipe !== (rt.pipelineId || null)) {
+        rt.pipeline = null;
+        rt.pipelineStep = 0;
+      }
+      rt.pipelineId = nextPipe;
+    }
     if (opts.text && !rt.originalText) rt.originalText = opts.text;
     return rt;
   }
@@ -695,8 +703,9 @@ export function createOrchestrator({
       markProgress(rt);
       const firstPatch = {
         workspacePath: opts.workspacePath ?? rt.workspacePath,
-        roleId: opts.roleId ?? rt.roleId,
-        pipelineId: opts.pipelineId ?? rt.pipelineId,
+        roleId: rt.roleId,
+        pipelineId: rt.pipelineId,
+        pipelineStep: rt.pipelineStep,
       };
       if (opts.title) firstPatch.title = opts.title;
       await persist(rt, firstPatch);

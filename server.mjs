@@ -559,11 +559,61 @@ async function routeApi(req, res, url) {
       retries: live.retries,
       lastCheckpointAt: live.lastCheckpointAt,
       currentStep: live.currentStep,
+      roleId: live.roleId || null,
+      pipelineId: live.pipelineId || null,
+      pipelineStep: live.pipelineStep || 0,
       messages,
       agents,
       usage: context.usage,
       contextWindow: context.contextWindow,
       contextLabel: context.contextLabel,
+    });
+    return;
+  }
+  if (match && m === 'PATCH') {
+    const cid = decodeURIComponent(match[1]);
+    const conv = await store.getConversation(cid);
+    if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
+    const live = liveStatus(orch, conv);
+    if (live.status === 'running' || live.status === 'recovering' || live.status === 'paused') {
+      sendJson(res, 409, { error: 'err_role_busy', status: live.status });
+      return;
+    }
+    const body = await readBody(req);
+    const patch = {};
+    if (Object.prototype.hasOwnProperty.call(body, 'roleId')) {
+      if (body.roleId == null || body.roleId === '' || body.roleId === 'default') patch.roleId = null;
+      else {
+        const role = await store.getRole(String(body.roleId));
+        if (!role) { sendJson(res, 400, { errors: ['unknown role'] }); return; }
+        patch.roleId = role.id;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'pipelineId')) {
+      if (body.pipelineId == null || body.pipelineId === '') {
+        patch.pipelineId = null;
+        patch.pipelineStep = 0;
+      } else {
+        const pipe = await store.getPipeline(String(body.pipelineId));
+        if (!pipe) { sendJson(res, 400, { errors: ['unknown pipeline'] }); return; }
+        patch.pipelineId = pipe.id;
+        patch.pipelineStep = 0;
+        if (!Object.prototype.hasOwnProperty.call(patch, 'roleId') && pipe.steps?.[0]?.role) {
+          patch.roleId = pipe.steps[0].role;
+        }
+      }
+    } else if (Object.prototype.hasOwnProperty.call(body, 'roleId')) {
+      patch.pipelineId = null;
+      patch.pipelineStep = 0;
+    }
+    if (!Object.keys(patch).length) { sendJson(res, 400, { error: 'empty patch' }); return; }
+    const next = await store.updateConversation(cid, patch);
+    sendJson(res, 200, {
+      id: next.id,
+      roleId: next.roleId || null,
+      pipelineId: next.pipelineId || null,
+      pipelineStep: next.pipelineStep || 0,
+      status: next.status,
     });
     return;
   }

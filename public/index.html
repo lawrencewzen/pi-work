@@ -120,10 +120,13 @@
           <textarea class="composer-textarea" data-testid="chat-input" data-i18n-placeholder="composer_placeholder" placeholder="向 Agent 补充要求或发送指令... (⌘↵ 发送)"></textarea>
           <div class="composer-bar">
             <div class="composer-chips">
-              <div class="chip-selector" data-i18n-title="chip_agent_title" title="当前调度 Agent">
-                <span class="chip-dot"></span>
-                <span id="composer-agent-chip">Agent</span>
-                <svg class="icon" style="width:11px;height:11px;opacity:0.7;" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              <div class="chip-selector-wrap" id="composer-agent-wrap">
+                <button type="button" class="chip-selector" id="composer-agent-chip-btn" data-action="toggle-agent-picker" data-testid="composer-agent" title="当前调度模型" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="chip-dot"></span>
+                  <span id="composer-agent-chip">Agent</span>
+                  <svg class="icon" style="width:11px;height:11px;opacity:0.7;" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div id="composer-agent-menu" class="chip-menu" role="listbox" data-testid="composer-agent-menu"></div>
               </div>
               <span class="chip-runtime-meta"><span data-i18n="context_tokens">上下文</span>: <span id="composer-context-value" data-testid="composer-context">—</span></span>
             </div>

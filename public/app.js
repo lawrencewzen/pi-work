@@ -1,5 +1,6 @@
 import { t, tPlural, getLocale, setLocale, applyI18n, translations } from './i18n.js';
 import { composerContextText } from './usage.js';
+import { composerAgentPresentation, resolveDispatchModel } from './agent-chip.js';
 
 // Application State
 const state = {
@@ -852,6 +853,9 @@ export async function refreshConversationMeta(cid) {
     if (conv.lastCheckpointAt) state.activeConversationData.lastCheckpointAt = conv.lastCheckpointAt;
     if (conv.usage) state.activeConversationData.usage = conv.usage;
     if (conv.contextWindow != null) state.activeConversationData.contextWindow = conv.contextWindow;
+    if ('roleId' in conv) state.activeConversationData.roleId = conv.roleId || null;
+    if ('pipelineId' in conv) state.activeConversationData.pipelineId = conv.pipelineId || null;
+    if (conv.pipelineStep != null) state.activeConversationData.pipelineStep = conv.pipelineStep;
     if (conv.agents) state.activeConversationData.agents = conv.agents;
     if (Array.isArray(conv.messages)) {
       const local = state.activeConversationData.messages || [];
@@ -1447,8 +1451,154 @@ function renderComposerContext() {
   el.textContent = composerContextText(state.activeConversationData);
 }
 
+const SESSION_MODEL = 'grok-build';
+const DISPATCH_BUSY = new Set(['running', 'recovering', 'paused']);
+
+function dispatchContext() {
+  return {
+    conv: state.activeConversationData,
+    roles: state.roles,
+    pipelines: state.pipelines,
+    models: state.settings?.models || {},
+    agentName: t('agent_name'),
+    sessionModel: state.settings?.grok?.signedIn ? SESSION_MODEL : '',
+  };
+}
+
+function renderComposerAgent() {
+  const label = document.getElementById('composer-agent-chip');
+  const btn = document.getElementById('composer-agent-chip-btn');
+  if (!label) return;
+  const ctx = dispatchContext();
+  const base = composerAgentPresentation(ctx);
+  const roleLabel = base.roleId && base.roleId !== 'default' ? localizeRoleLabel(base.roleId) : '';
+  const view = composerAgentPresentation({ ...ctx, roleLabel });
+  label.textContent = view.text;
+  if (btn) {
+    const detail = view.model
+      ? (roleLabel ? `${roleLabel} · ${view.model}` : view.model)
+      : roleLabel;
+    btn.title = detail ? `${t('chip_agent_title')}: ${detail}` : t('chip_agent_title');
+  }
+}
+
+function modelForDispatchRole(role) {
+  return resolveDispatchModel({
+    role,
+    roleId: role?.id || '',
+    models: state.settings?.models || {},
+    sessionModel: state.settings?.grok?.signedIn ? SESSION_MODEL : '',
+  });
+}
+
+function agentMenuItem({ label, model, selected, attrs }) {
+  return `<button type="button" class="chip-menu-item" role="option" aria-selected="${selected ? 'true' : 'false'}" ${attrs}>` +
+    `<span>${escapeHtml(label)}</span>` +
+    (model ? `<span class="chip-menu-model">${escapeHtml(model)}</span>` : '') +
+    `</button>`;
+}
+
+function renderAgentMenuHtml() {
+  const conv = state.activeConversationData || {};
+  const activePipe = conv.pipelineId || '';
+  const activeRole = activePipe ? '' : ((conv.roleId && conv.roleId !== 'default') ? conv.roleId : '');
+  const roles = (state.roles || []).filter((r) => r && r.id && r.id !== 'default');
+  const pipes = state.pipelines || [];
+  const rows = [
+    agentMenuItem({
+      label: t('conv_default_agent'),
+      model: modelForDispatchRole(null),
+      selected: !activePipe && !activeRole,
+      attrs: 'data-action="pick-dispatch" data-role-id=""',
+    }),
+  ];
+  if (roles.length) {
+    rows.push(`<div class="chip-menu-label">${escapeHtml(t('chip_pick_role'))}</div>`);
+    for (const role of roles) {
+      rows.push(agentMenuItem({
+        label: localizeRoleLabel(role.id || role.name),
+        model: modelForDispatchRole(role),
+        selected: !activePipe && activeRole === role.id,
+        attrs: `data-action="pick-dispatch" data-role-id="${escapeHtml(role.id)}"`,
+      }));
+    }
+  }
+  if (pipes.length) {
+    rows.push(`<div class="chip-menu-label">${escapeHtml(t('chip_pick_pipeline'))}</div>`);
+    for (const pipe of pipes) {
+      const first = pipe.steps?.[0]?.role || '';
+      const role = (state.roles || []).find((r) => r.id === first) || null;
+      rows.push(agentMenuItem({
+        label: pipelineOptionLabel(pipe),
+        model: modelForDispatchRole(role),
+        selected: activePipe === pipe.id,
+        attrs: `data-action="pick-dispatch" data-pipeline-id="${escapeHtml(pipe.id)}" data-role-id="${escapeHtml(first)}"`,
+      }));
+    }
+  }
+  return rows.join('');
+}
+
+function closeAgentMenu() {
+  document.getElementById('composer-agent-menu')?.classList.remove('is-open');
+  document.getElementById('composer-agent-chip-btn')?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleAgentMenu() {
+  const menu = document.getElementById('composer-agent-menu');
+  if (!menu) return;
+  if (menu.classList.contains('is-open')) {
+    closeAgentMenu();
+    return;
+  }
+  if (!state.activeConversationId) {
+    showToast('err_no_conversation');
+    return;
+  }
+  const status = state.activeConversationData?.status || 'idle';
+  if (DISPATCH_BUSY.has(status)) {
+    showToast('err_role_busy');
+    return;
+  }
+  menu.innerHTML = renderAgentMenuHtml();
+  menu.classList.add('is-open');
+  document.getElementById('composer-agent-chip-btn')?.setAttribute('aria-expanded', 'true');
+}
+
+export async function pickDispatchTarget(el) {
+  const cid = state.activeConversationId;
+  if (!cid || !el) return;
+  const patch = {};
+  if (el.hasAttribute('data-pipeline-id')) {
+    patch.pipelineId = el.getAttribute('data-pipeline-id') || null;
+    const roleId = el.getAttribute('data-role-id');
+    if (roleId) patch.roleId = roleId;
+  } else {
+    patch.roleId = el.getAttribute('data-role-id') || null;
+    patch.pipelineId = null;
+  }
+  try {
+    const res = await api(`/api/conversations/${encodeURIComponent(cid)}`, 'PATCH', patch);
+    if (state.activeConversationId === cid && state.activeConversationData) {
+      state.activeConversationData.roleId = res.roleId;
+      state.activeConversationData.pipelineId = res.pipelineId;
+      state.activeConversationData.pipelineStep = res.pipelineStep;
+    }
+    const item = state.conversations.find((c) => c.id === cid);
+    if (item) {
+      item.roleId = res.roleId;
+      item.pipelineId = res.pipelineId;
+    }
+    closeAgentMenu();
+    renderStatusBar();
+  } catch (err) {
+    showToast(isToastKey(err.message) ? err.message : (err.message || 'err_role_switch'));
+  }
+}
+
 export function renderStatusBar() {
   renderComposerContext();
+  renderComposerAgent();
   const bar = document.getElementById('status-bar');
   if (!bar) return;
 
@@ -2619,6 +2769,7 @@ export async function saveModelsSettings() {
     rememberSavedSettings(state.settings);
     showToast('msg_settings_saved');
     renderSettingsModal();
+    renderStatusBar();
   } catch (err) {
     showToast(err.message || 'err_save');
   }
@@ -3047,6 +3198,10 @@ window.__app = {
 // Event Delegation
 // ============================================================================
 document.addEventListener('click', (e) => {
+  const agentMenu = document.getElementById('composer-agent-menu');
+  if (agentMenu?.classList.contains('is-open') && !e.target.closest('#composer-agent-wrap')) {
+    closeAgentMenu();
+  }
   if (e.target.id === 'settings-overlay') {
     closeSettings();
     return;
@@ -3188,6 +3343,12 @@ document.addEventListener('click', (e) => {
     case 'toggle-subagent':
       toggleSubagent(actionEl.getAttribute('data-agent-id'));
       break;
+    case 'toggle-agent-picker':
+      toggleAgentMenu();
+      break;
+    case 'pick-dispatch':
+      pickDispatchTarget(actionEl);
+      break;
     default:
       break;
   }
@@ -3239,6 +3400,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      closeAgentMenu();
       closeSettings();
       closeModal();
     }
