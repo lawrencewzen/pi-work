@@ -1,0 +1,485 @@
+spike smoke node=v22.14.0 platform=linux
+=== 1a storage ===
+1a attach conversation=1 entries=0
+1a root 1
+1a-reopen attach conversation=1 entries=0
+1a reopen root 1 scheduling=running tasks=0
+=== 1b providers ===
+openai attach conversation=1 entries=0
+openai conversation=1 raw=message_start
+openai conversation=1 raw=message_end sse=message.done data={"messageId":7,"kind":"pi.user","text":"ping openai"}
+openai conversation=1 raw=submission
+openai conversation=1 raw=run_start sse=status data={"status":"running"}
+openai conversation=1 raw=turn_start
+openai conversation=1 raw=message_start
+openai conversation=1 raw=message_end sse=message.done data={"messageId":10,"kind":"pi.system","text":""}
+openai conversation=1 raw=message_start
+openai conversation=1 raw=message_end sse=message.done data={"messageId":11,"kind":"pi.assistant","text":"pong-openai"}
+openai conversation=1 raw=turn_end
+openai conversation=1 raw=run_end sse=status data={"status":"idle"}
+openai conversation=1 raw=submission
+openai conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"openai-compat/spike-compat":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1b openai answer pong-openai
+1b openai request {"method":"POST","path":"/v1/chat/completions","tokenGen":"bearer-other","headerNames":["accept","accept-encoding","accept-language","authorization","connection","content-length","content-type","host","sec-fetch-mode","user-agent","x-stainless-arch","x-stainless-lang","x-stainless-os","x-stainless-package-version","x-stainless-retry-count","x-stainless-runtime","x-stainless-runtime-version"],"grokIdentifier":"","grokVersion":"","grokModel":"","tokenAuth":"","keyMatched":true}
+grok attach conversation=1 entries=0
+grok conversation=1 raw=message_start
+grok conversation=1 raw=message_end sse=message.done data={"messageId":7,"kind":"pi.user","text":"ping grok"}
+grok conversation=1 raw=submission
+grok conversation=1 raw=run_start sse=status data={"status":"running"}
+grok conversation=1 raw=turn_start
+grok conversation=1 raw=message_start
+grok conversation=1 raw=message_end sse=message.done data={"messageId":10,"kind":"pi.system","text":""}
+grok conversation=1 raw=message_start
+grok conversation=1 raw=message_end sse=message.done data={"messageId":11,"kind":"pi.assistant","text":"pong-grok"}
+grok conversation=1 raw=turn_end
+grok conversation=1 raw=run_end sse=status data={"status":"idle"}
+grok conversation=1 raw=submission
+grok conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"grok-proxy/grok-build":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":2,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1b grok answer pong-grok
+1b grok refreshes=1 serverRefresh=1
+1b grok requests [{"method":"POST","path":"/v1/responses","tokenGen":"access-1","headerNames":["accept","accept-encoding","accept-language","authorization","connection","content-length","content-type","host","sec-fetch-mode","session_id","user-agent","x-client-request-id","x-grok-client-identifier","x-grok-client-version","x-grok-model-override","x-stainless-arch","x-stainless-lang","x-stainless-os","x-stainless-package-version","x-stainless-retry-count","x-stainless-runtime","x-stainless-runtime-version","x-xai-token-auth"],"grokIdentifier":"grok-shell","grokVersion":"1.0.50","grokModel":"grok-build","tokenAuth":"xai-grok-cli"},{"method":"POST","path":"/oauth2/token","tokenGen":"none","headerNames":["accept","accept-encoding","accept-language","connection","content-length","content-type","host","sec-fetch-mode","user-agent"],"grokIdentifier":"","grokVersion":"","grokModel":"","tokenAuth":""},{"method":"POST","path":"/v1/responses","tokenGen":"access-2","headerNames":["accept","accept-encoding","accept-language","authorization","connection","content-length","content-type","host","sec-fetch-mode","session_id","user-agent","x-client-request-id","x-grok-client-identifier","x-grok-client-version","x-grok-model-override","x-stainless-arch","x-stainless-lang","x-stainless-os","x-stainless-package-version","x-stainless-retry-count","x-stainless-runtime","x-stainless-runtime-version","x-xai-token-auth"],"grokIdentifier":"grok-shell","grokVersion":"1.0.50","grokModel":"grok-build","tokenAuth":"xai-grok-cli"}]
+=== 1c tools and per-conversation cwd ===
+tools attach conversation=1 entries=0
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":7,"kind":"pi.user","text":"TOOL_DEMO"}
+tools conversation=1 raw=submission
+tools conversation=1 raw=run_start sse=status data={"status":"running"}
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":10,"kind":"pi.system","text":""}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":11,"kind":"pi.assistant","text":""}
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":590,"output":11,"cacheRead":0,"cacheWrite":590,"totalTokens":1191,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"w1","name":"write","input":{"path":"hello.txt","content":"hello"}}}
+tools conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"w1","name":"write"}}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":13,"kind":"pi.tool-result","text":"wrote hello.txt (+1 −0)"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":15,"kind":"pi.assistant","text":""}
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":614,"output":18,"cacheRead":590,"cacheWrite":615,"totalTokens":1837,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"r1","name":"read","input":{"path":"hello.txt"}}}
+tools conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"r1","name":"read"}}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":17,"kind":"pi.tool-result","text":"hello"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":19,"kind":"pi.assistant","text":""}
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":629,"output":32,"cacheRead":1204,"cacheWrite":630,"totalTokens":2495,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"e1","name":"edit","input":{"path":"hello.txt","old":"hello","new":"hello!"}}}
+tools conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"e1","name":"edit"}}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":21,"kind":"pi.tool-result","text":"edited hello.txt (+1 −1)"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":23,"kind":"pi.assistant","text":""}
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":656,"output":36,"cacheRead":1833,"cacheWrite":657,"totalTokens":3182,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"l1","name":"ls","input":{"path":"."}}}
+tools conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"l1","name":"ls"}}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":25,"kind":"pi.tool-result","text":"f hello.txt"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":27,"kind":"pi.assistant","text":""}
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":670,"output":45,"cacheRead":2489,"cacheWrite":671,"totalTokens":3875,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"g1","name":"grep","input":{"pattern":"hello!","path":"."}}}
+tools conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"g1","name":"grep"}}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":29,"kind":"pi.tool-result","text":"hello.txt:1:hello!"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":31,"kind":"pi.assistant","text":""}
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":691,"output":53,"cacheRead":3159,"cacheWrite":692,"totalTokens":4595,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"b1","name":"bash","input":{"command":"echo bash-ok"}}}
+tools conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"b1","name":"bash"}}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":33,"kind":"pi.tool-result","text":"{\"stdout\":\"bash-ok\\n\",\"stderr\":\"\",\"code\":0}"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":35,"kind":"pi.assistant","text":""}
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":717,"output":61,"cacheRead":3850,"cacheWrite":718,"totalTokens":5346,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"s1","name":"read","input":{"path":"../outside.txt"}}}
+tools conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"s1","name":"read"}}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":37,"kind":"pi.tool-result","text":"E_SANDBOX: path outside workspace"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":39,"kind":"pi.assistant","text":""}
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":740,"output":74,"cacheRead":4567,"cacheWrite":742,"totalTokens":6123,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"s2","name":"write","input":{"path":"../outside.txt","content":"pwned"}}}
+tools conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"s2","name":"write"}}
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":41,"kind":"pi.tool-result","text":"E_SANDBOX: path outside workspace"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=turn_start
+tools conversation=1 raw=message_start
+tools conversation=1 raw=message_end sse=message.done data={"messageId":43,"kind":"pi.assistant","text":"tools-done"}
+tools conversation=1 raw=turn_end
+tools conversation=1 raw=run_end sse=status data={"status":"idle"}
+tools conversation=1 raw=submission
+tools conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":768,"output":77,"cacheRead":5307,"cacheWrite":771,"totalTokens":6923,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1c answer tools-done
+1c hello.txt "hello!" outside "secret"
+tools attach conversation=44 entries=0
+tools conversation=44 raw=message_start
+tools conversation=44 raw=message_end sse=message.done data={"messageId":50,"kind":"pi.user","text":"WRITE_B"}
+tools conversation=44 raw=submission
+tools conversation=44 raw=run_start sse=status data={"status":"running"}
+tools conversation=44 raw=turn_start
+tools conversation=44 raw=message_start
+tools conversation=44 raw=message_end sse=message.done data={"messageId":53,"kind":"pi.system","text":""}
+tools conversation=44 raw=message_start
+tools conversation=44 raw=message_end sse=message.done data={"messageId":54,"kind":"pi.assistant","text":""}
+tools conversation=44 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":589,"output":12,"cacheRead":0,"cacheWrite":589,"totalTokens":1190,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+tools conversation=44 raw=tool_execution_start sse=tool.start data={"tool":{"id":"wb","name":"write","input":{"path":"hello.txt","content":"from-b"}}}
+tools conversation=44 raw=tool_execution_end sse=tool.end data={"tool":{"id":"wb","name":"write"}}
+tools conversation=44 raw=message_start
+tools conversation=44 raw=message_end sse=message.done data={"messageId":56,"kind":"pi.tool-result","text":"wrote hello.txt (+1 −0)"}
+tools conversation=44 raw=turn_end
+tools conversation=44 raw=turn_start
+tools conversation=44 raw=message_start
+tools conversation=44 raw=message_end sse=message.done data={"messageId":58,"kind":"pi.assistant","text":"wrote-b"}
+tools conversation=44 raw=turn_end
+tools conversation=44 raw=run_end sse=status data={"status":"idle"}
+tools conversation=44 raw=submission
+tools conversation=44 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":614,"output":14,"cacheRead":589,"cacheWrite":614,"totalTokens":1831,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1c cwd-b answer wrote-b fileB "from-b"
+=== 1d foreground subagent from a role ===
+fg attach conversation=1 entries=0
+fg conversation=1 raw=message_start
+fg conversation=1 raw=message_end sse=message.done data={"messageId":7,"kind":"pi.user","text":"FG_CODER"}
+fg conversation=1 raw=submission
+fg conversation=1 raw=run_start sse=status data={"status":"running"}
+fg conversation=1 raw=turn_start
+fg conversation=1 raw=message_start
+fg conversation=1 raw=message_end sse=message.done data={"messageId":10,"kind":"pi.system","text":""}
+fg conversation=1 raw=message_start
+fg conversation=1 raw=message_end sse=message.done data={"messageId":11,"kind":"pi.assistant","text":""}
+fg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":589,"output":18,"cacheRead":0,"cacheWrite":589,"totalTokens":1196,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+fg conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"fg1","name":"delegate","input":{"task":"Reply with the single word CHILD_OK","roleId":"coder"}}}
+fg conversation=1 raw=tool_execution_update
+fg attach conversation=14 entries=0
+fg conversation=14 raw=message_start
+fg conversation=14 raw=message_end sse=message.done data={"messageId":20,"kind":"pi.user","text":"Reply with the single word CHILD_OK"}
+fg conversation=14 raw=submission
+fg conversation=14 raw=run_start sse=status data={"status":"running"}
+fg conversation=14 raw=turn_start
+fg conversation=14 raw=message_start
+fg conversation=14 raw=message_end sse=message.done data={"messageId":23,"kind":"pi.system","text":""}
+fg conversation=14 raw=message_start
+fg conversation=14 raw=message_end sse=message.done data={"messageId":24,"kind":"pi.assistant","text":"CHILD_OK"}
+fg conversation=14 raw=turn_end
+fg conversation=14 raw=run_end sse=status data={"status":"idle"}
+fg conversation=14 raw=submission
+fg conversation=14 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":439,"output":2,"cacheRead":0,"cacheWrite":439,"totalTokens":880,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+fg conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"fg1","name":"delegate"}}
+fg conversation=1 raw=message_start
+fg conversation=1 raw=message_end sse=message.done data={"messageId":25,"kind":"pi.tool-result","text":"CHILD_OK"}
+fg conversation=1 raw=turn_end
+fg conversation=1 raw=turn_start
+fg conversation=1 raw=message_start
+fg conversation=1 raw=message_end sse=message.done data={"messageId":27,"kind":"pi.assistant","text":"parent saw CHILD_OK"}
+fg conversation=1 raw=turn_end
+fg conversation=1 raw=run_end sse=status data={"status":"idle"}
+fg conversation=1 raw=submission
+fg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":618,"output":23,"cacheRead":589,"cacheWrite":618,"totalTokens":1848,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1d answer parent saw CHILD_OK
+1d child tools read,write,edit,ls,grep,bash cwd /tmp/pi-spike-fg-vTTSQG/ws
+=== 1d background subagent, wait/list/stop, concurrency ===
+bg attach conversation=1 entries=0
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":7,"kind":"pi.user","text":"BG_LIMIT"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=run_start sse=status data={"status":"running"}
+bg conversation=1 raw=turn_start
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":10,"kind":"pi.system","text":""}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":11,"kind":"pi.assistant","text":""}
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":589,"output":37,"cacheRead":0,"cacheWrite":589,"totalTokens":1215,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+bg conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"s1","name":"subagent","input":{"action":"spawn","name":"a","message":"PING_A","roleId":"echo"}}}
+bg conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"s2","name":"subagent","input":{"action":"spawn","name":"b","message":"PING_B","roleId":"echo"}}}
+bg conversation=1 raw=tool_execution_update
+bg attach conversation=16 entries=0
+bg conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"s2","name":"subagent"}}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":23,"kind":"pi.tool-result","text":"limit 1"}
+bg conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"s1","name":"subagent"}}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":24,"kind":"pi.tool-result","text":"Started a."}
+bg conversation=16 raw=message_start
+bg conversation=16 raw=message_end sse=message.done data={"messageId":25,"kind":"pi.user","text":"PING_A"}
+bg conversation=16 raw=submission
+bg conversation=16 raw=run_start sse=status data={"status":"running"}
+bg conversation=16 raw=turn_start
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=turn_start
+bg conversation=16 raw=message_start
+bg conversation=16 raw=message_end sse=message.done data={"messageId":29,"kind":"pi.system","text":""}
+bg conversation=16 raw=message_start
+bg conversation=16 raw=message_end sse=message.done data={"messageId":30,"kind":"pi.assistant","text":"echo PING_A"}
+bg conversation=16 raw=turn_end
+bg conversation=16 raw=run_end sse=status data={"status":"idle"}
+bg conversation=16 raw=submission
+bg conversation=16 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":31,"output":3,"cacheRead":0,"cacheWrite":31,"totalTokens":65,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":31,"kind":"pi.assistant","text":"ok-background"}
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=run_end sse=status data={"status":"idle"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":644,"output":41,"cacheRead":589,"cacheWrite":644,"totalTokens":1918,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":32,"kind":"pi.user","text":"[subagent a answered, no reply needed] echo PING_A"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=run_start sse=status data={"status":"running"}
+bg conversation=1 raw=turn_start
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":35,"kind":"pi.assistant","text":"echo PING_A"}
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=run_end sse=status data={"status":"idle"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":665,"output":44,"cacheRead":1233,"cacheWrite":665,"totalTokens":2607,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1d limit answer ok-background
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":36,"kind":"pi.user","text":"BG_LIST"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=run_start sse=status data={"status":"running"}
+bg conversation=1 raw=turn_start
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":39,"kind":"pi.assistant","text":""}
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":674,"output":51,"cacheRead":1898,"cacheWrite":675,"totalTokens":3298,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+bg conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"list1","name":"subagent","input":{"action":"list"}}}
+bg conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"list1","name":"subagent"}}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":41,"kind":"pi.tool-result","text":"a: idle role=echo"}
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=turn_start
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":43,"kind":"pi.assistant","text":"ok-background"}
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=run_end sse=status data={"status":"idle"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":693,"output":55,"cacheRead":2572,"cacheWrite":695,"totalTokens":4015,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1d list answer ok-background
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":44,"kind":"pi.user","text":"BG_WAIT"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=run_start sse=status data={"status":"running"}
+bg conversation=1 raw=turn_start
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":47,"kind":"pi.assistant","text":""}
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":703,"output":65,"cacheRead":3265,"cacheWrite":705,"totalTokens":4738,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+bg conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"wait1","name":"subagent","input":{"action":"wait","name":"a"}}}
+bg conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"wait1","name":"subagent"}}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":49,"kind":"pi.tool-result","text":"echo PING_A"}
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=turn_start
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":51,"kind":"pi.assistant","text":"ok-background"}
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=run_end sse=status data={"status":"idle"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":724,"output":69,"cacheRead":3968,"cacheWrite":726,"totalTokens":5487,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1d wait answer ok-background
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":52,"kind":"pi.user","text":"BG_SEND"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=run_start sse=status data={"status":"running"}
+bg conversation=1 raw=turn_start
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":55,"kind":"pi.assistant","text":""}
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":733,"output":85,"cacheRead":4692,"cacheWrite":736,"totalTokens":6246,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+bg conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"send1","name":"subagent","input":{"action":"send","name":"a","message":"PING_A_AGAIN"}}}
+bg conversation=1 raw=tool_execution_update
+bg conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"send1","name":"subagent"}}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":58,"kind":"pi.tool-result","text":"Sent to a."}
+bg conversation=16 raw=message_start
+bg conversation=16 raw=message_end sse=message.done data={"messageId":59,"kind":"pi.user","text":"PING_A_AGAIN"}
+bg conversation=16 raw=submission
+bg conversation=16 raw=run_start sse=status data={"status":"running"}
+bg conversation=16 raw=turn_start
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=turn_start
+bg conversation=16 raw=message_start
+bg conversation=16 raw=message_end sse=message.done data={"messageId":63,"kind":"pi.assistant","text":"echo PING_A_AGAIN"}
+bg conversation=16 raw=turn_end
+bg conversation=16 raw=run_end sse=status data={"status":"idle"}
+bg conversation=16 raw=submission
+bg conversation=16 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":42,"output":8,"cacheRead":31,"cacheWrite":42,"totalTokens":123,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+bg conversation=1 raw=submission
+bg conversation=1 raw=inbox_update
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":65,"kind":"pi.assistant","text":"ok-background"}
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":66,"kind":"pi.user","text":"[subagent a answered, no reply needed] echo PING_A_AGAIN"}
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=run_end sse=status data={"status":"idle"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=submission
+bg conversation=1 raw=inbox_update
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":760,"output":89,"cacheRead":5425,"cacheWrite":763,"totalTokens":7037,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+bg conversation=1 raw=run_start sse=status data={"status":"running"}
+bg conversation=1 raw=turn_start
+bg conversation=1 raw=message_start
+bg conversation=1 raw=message_end sse=message.done data={"messageId":68,"kind":"pi.assistant","text":"echo PING_A_AGAIN"}
+bg conversation=1 raw=turn_end
+bg conversation=1 raw=run_end sse=status data={"status":"idle"}
+bg conversation=1 raw=submission
+bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":782,"output":94,"cacheRead":6185,"cacheWrite":785,"totalTokens":7846,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+1d send answer ok-background
+=== 1g abort foreground ===
+abort attach conversation=1 entries=0
+abort conversation=1 raw=message_start
+abort conversation=1 raw=message_end sse=message.done data={"messageId":7,"kind":"pi.user","text":"ABORT_FG"}
+abort conversation=1 raw=submission
+abort conversation=1 raw=run_start sse=status data={"status":"running"}
+abort conversation=1 raw=turn_start
+abort conversation=1 raw=message_start
+abort conversation=1 raw=message_end sse=message.done data={"messageId":10,"kind":"pi.system","text":""}
+abort conversation=1 raw=message_start
+abort conversation=1 raw=message_end sse=message.done data={"messageId":11,"kind":"pi.assistant","text":""}
+abort conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":589,"output":13,"cacheRead":0,"cacheWrite":589,"totalTokens":1191,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+abort conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"abort-delegate","name":"delegate","input":{"task":"ABORT_HOLD","roleId":"recover"}}}
+abort conversation=1 raw=tool_execution_update
+abort attach conversation=14 entries=0
+abort conversation=14 raw=message_start
+abort conversation=14 raw=message_end sse=message.done data={"messageId":20,"kind":"pi.user","text":"ABORT_HOLD"}
+abort conversation=14 raw=submission
+abort conversation=14 raw=run_start sse=status data={"status":"running"}
+abort conversation=14 raw=turn_start
+abort conversation=14 raw=message_start
+abort conversation=14 raw=message_end sse=message.done data={"messageId":23,"kind":"pi.system","text":""}
+abort conversation=14 raw=message_start
+abort conversation=14 raw=message_end sse=message.done data={"messageId":24,"kind":"pi.assistant","text":""}
+abort conversation=14 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":98,"output":7,"cacheRead":0,"cacheWrite":98,"totalTokens":203,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+abort conversation=14 raw=tool_execution_start sse=tool.start data={"tool":{"id":"abort-hold","name":"hold","input":{"token":"abort-fg"}}}
+abort conversation=14 raw=tool_execution_end sse=tool.end data={"tool":{"id":"abort-hold","name":"hold"}}
+abort conversation=14 raw=message_start
+abort conversation=14 raw=message_end sse=message.done data={"messageId":26,"kind":"pi.tool-result","text":"<harness>\n[error] Tool hold was aborted\n</harness>"}
+abort conversation=14 raw=turn_end
+abort conversation=14 raw=run_end sse=status data={"status":"idle"}
+abort conversation=14 raw=submission
+abort conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"abort-delegate","name":"delegate"}}
+abort conversation=1 raw=message_start
+abort conversation=1 raw=message_end sse=message.done data={"messageId":27,"kind":"pi.tool-result","text":"<harness>\n[error] Tool delegate was aborted\n</harness>"}
+abort conversation=1 raw=turn_end
+abort conversation=1 raw=run_end sse=status data={"status":"idle"}
+abort conversation=1 raw=submission
+1g foreground status=unanswered reason=aborted
+=== 1g abort background ===
+abort-bg attach conversation=1 entries=0
+abort-bg conversation=1 raw=message_start
+abort-bg conversation=1 raw=message_end sse=message.done data={"messageId":7,"kind":"pi.user","text":"BG_HOLD_SPAWN"}
+abort-bg conversation=1 raw=submission
+abort-bg conversation=1 raw=run_start sse=status data={"status":"running"}
+abort-bg conversation=1 raw=turn_start
+abort-bg conversation=1 raw=message_start
+abort-bg conversation=1 raw=message_end sse=message.done data={"messageId":10,"kind":"pi.system","text":""}
+abort-bg conversation=1 raw=message_start
+abort-bg conversation=1 raw=message_end sse=message.done data={"messageId":11,"kind":"pi.assistant","text":""}
+abort-bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":591,"output":22,"cacheRead":0,"cacheWrite":591,"totalTokens":1204,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+abort-bg conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"holdspawn","name":"subagent","input":{"action":"spawn","name":"sleeper","message":"HOLD_PLEASE","roleId":"recover"}}}
+abort-bg conversation=1 raw=tool_execution_update
+abort-bg attach conversation=15 entries=0
+abort-bg conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"holdspawn","name":"subagent"}}
+abort-bg conversation=1 raw=message_start
+abort-bg conversation=1 raw=message_end sse=message.done data={"messageId":22,"kind":"pi.tool-result","text":"Started sleeper."}
+abort-bg conversation=15 raw=message_start
+abort-bg conversation=15 raw=message_end sse=message.done data={"messageId":23,"kind":"pi.user","text":"HOLD_PLEASE"}
+abort-bg conversation=15 raw=submission
+abort-bg conversation=15 raw=run_start sse=status data={"status":"running"}
+abort-bg conversation=15 raw=turn_start
+abort-bg conversation=1 raw=turn_end
+abort-bg conversation=1 raw=turn_start
+abort-bg conversation=15 raw=message_start
+abort-bg conversation=15 raw=message_end sse=message.done data={"messageId":27,"kind":"pi.system","text":""}
+abort-bg conversation=15 raw=message_start
+abort-bg conversation=15 raw=message_end sse=message.done data={"messageId":28,"kind":"pi.assistant","text":""}
+abort-bg conversation=15 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":99,"output":7,"cacheRead":0,"cacheWrite":99,"totalTokens":205,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+abort-bg conversation=1 raw=message_start
+abort-bg conversation=1 raw=message_end sse=message.done data={"messageId":30,"kind":"pi.assistant","text":"spawned-sleeper"}
+abort-bg conversation=1 raw=turn_end
+abort-bg conversation=1 raw=run_end sse=status data={"status":"idle"}
+abort-bg conversation=1 raw=submission
+abort-bg conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":625,"output":26,"cacheRead":591,"cacheWrite":626,"totalTokens":1868,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+abort-bg conversation=15 raw=tool_execution_start sse=tool.start data={"tool":{"id":"holdbg","name":"hold","input":{"token":"abort-bg"}}}
+1g background ticks before=1 during ordinary abort=4
+abort-bg conversation=15 raw=tool_execution_end sse=tool.end data={"tool":{"id":"holdbg","name":"hold"}}
+abort-bg conversation=15 raw=message_start
+abort-bg conversation=15 raw=message_end sse=message.done data={"messageId":31,"kind":"pi.tool-result","text":"<harness>\n[error] Tool hold was aborted\n</harness>"}
+abort-bg conversation=15 raw=turn_end
+abort-bg conversation=15 raw=run_end sse=status data={"status":"idle"}
+abort-bg conversation=15 raw=submission
+1g background ticks after explicit abort 4 -> 4
+=== 1f kill and resume ===
+worker-crash (node:3558) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+worker-crash (Use `node --trace-warnings ...` to show where the warning was created)
+worker-crash [crash] attach conversation=1 entries=0
+worker-crash [crash] submitting RECOVER_DISPATCH
+worker-crash [crash] conversation=1 raw=message_start
+worker-crash [crash] conversation=1 raw=message_end sse=message.done data={"messageId":7,"kind":"pi.user","text":"RECOVER_DISPATCH"}
+worker-crash [crash] conversation=1 raw=submission
+worker-crash [crash] conversation=1 raw=run_start sse=status data={"status":"running"}
+worker-crash [crash] conversation=1 raw=turn_start
+worker-crash [crash] conversation=1 raw=message_start
+worker-crash [crash] conversation=1 raw=message_end sse=message.done data={"messageId":10,"kind":"pi.system","text":""}
+worker-crash [crash] conversation=1 raw=message_start
+worker-crash [crash] conversation=1 raw=message_end sse=message.done data={"messageId":11,"kind":"pi.assistant","text":""}
+worker-crash [crash] conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":591,"output":13,"cacheRead":0,"cacheWrite":591,"totalTokens":1195,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+worker-crash [crash] conversation=1 raw=tool_execution_start sse=tool.start data={"tool":{"id":"recover-delegate","name":"delegate","input":{"task":"RECOVER_HOLD","roleId":"recover"}}}
+worker-crash [crash] conversation=1 raw=tool_execution_update
+worker-crash [crash] attach conversation=14 entries=0
+worker-crash [crash] conversation=14 raw=message_start
+worker-crash [crash] conversation=14 raw=message_end sse=message.done data={"messageId":20,"kind":"pi.user","text":"RECOVER_HOLD"}
+worker-crash [crash] conversation=14 raw=submission
+worker-crash [crash] conversation=14 raw=run_start sse=status data={"status":"running"}
+worker-crash [crash] conversation=14 raw=turn_start
+worker-crash [crash] conversation=14 raw=message_start
+worker-crash [crash] conversation=14 raw=message_end sse=message.done data={"messageId":23,"kind":"pi.system","text":""}
+worker-crash [crash] conversation=14 raw=message_start
+worker-crash [crash] conversation=14 raw=message_end sse=message.done data={"messageId":24,"kind":"pi.assistant","text":""}
+worker-crash [crash] conversation=14 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":99,"output":6,"cacheRead":0,"cacheWrite":99,"totalTokens":204,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+worker-crash [crash] conversation=14 raw=tool_execution_start sse=tool.start data={"tool":{"id":"recover-hold","name":"hold","input":{"token":"recover"}}}
+1f killing pid 3558
+1f killed code=null signal=SIGKILL
+worker-resume (node:3569) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+worker-resume (Use `node --trace-warnings ...` to show where the warning was created)
+worker-resume [resume] attach conversation=1 entries=3
+worker-resume [resume] snapshot conversation=1 kind=pi.user text=RECOVER_DISPATCH
+worker-resume [resume] conversation=1 raw=tool_execution_update
+worker-resume [resume] conversation=1 raw=tool_execution_update
+worker-resume [resume] attach conversation=14 entries=4
+worker-resume [resume] snapshot conversation=14 kind=pi.user text=RECOVER_HOLD
+worker-resume [resume] snapshot conversation=14 kind=pi.tool-result text=resumed-after-kill
+worker-resume [resume] conversation=14 raw=turn_end
+worker-resume [resume] conversation=14 raw=turn_start
+worker-resume [resume] conversation=14 raw=message_start
+worker-resume [resume] conversation=14 raw=message_end sse=message.done data={"messageId":28,"kind":"pi.assistant","text":"child-finished"}
+worker-resume [resume] conversation=14 raw=turn_end
+worker-resume [resume] conversation=14 raw=run_end sse=status data={"status":"idle"}
+worker-resume [resume] conversation=14 raw=submission
+worker-resume [resume] conversation=14 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":216,"output":10,"cacheRead":0,"cacheWrite":216,"totalTokens":442,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+worker-resume [resume] conversation=1 raw=tool_execution_end sse=tool.end data={"tool":{"id":"recover-delegate","name":"delegate"}}
+worker-resume [resume] conversation=1 raw=message_start
+worker-resume [resume] conversation=1 raw=message_end sse=message.done data={"messageId":29,"kind":"pi.tool-result","text":"child-finished"}
+worker-resume [resume] conversation=1 raw=turn_end
+worker-resume [resume] conversation=1 raw=turn_start
+worker-resume [resume] conversation=1 raw=message_start
+worker-resume [resume] conversation=1 raw=message_end sse=message.done data={"messageId":31,"kind":"pi.assistant","text":"parent-finished"}
+worker-resume [resume] conversation=1 raw=turn_end
+worker-resume [resume] conversation=1 raw=run_end sse=status data={"status":"idle"}
+worker-resume [resume] conversation=1 raw=submission
+worker-resume [resume] conversation=1 raw=usage_changed sse=usage data={"usage":{"models":{"faux/faux-1":{"input":1207,"output":17,"cacheRead":0,"cacheWrite":1207,"totalTokens":2431,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}},"tools":{}}}
+worker-resume [resume] {"conversations":2,"holdUserEntries":1,"rootRequestStatus":"done","parentText":"RECOVER_DISPATCH\n\n\nchild-finished\nparent-finished","childText":"RECOVER_HOLD\n\n\nresumed-after-kill\nchild-finished"}
+1f resume code=0 signal=
+1f result {"conversations":2,"holdUserEntries":1,"rootRequestStatus":"done","parentText":"RECOVER_DISPATCH\n\n\nchild-finished\nparent-finished","childText":"RECOVER_HOLD\n\n\nresumed-after-kill\nchild-finished"}
+=== smoke passed ===

@@ -1,0 +1,6 @@
+{
+  "id": "recover",
+  "name": "Recover",
+  "systemPrompt": "You are a subagent used to prove crash recovery. When asked to hold, call the hold tool once, then answer.",
+  "tools": ["hold"]
+}

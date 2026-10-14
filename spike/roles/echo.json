@@ -1,0 +1,6 @@
+{
+  "id": "echo",
+  "name": "Echo",
+  "systemPrompt": "You are the echo subagent. Answer with the user message and nothing else.",
+  "tools": []
+}

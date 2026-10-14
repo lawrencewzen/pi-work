@@ -1,0 +1,21 @@
+name: spike pi-durable windows
+
+on:
+  push:
+    branches:
+      - spike/pi-durable-kernel
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Node version
+        run: node -p "process.version + ' ' + process.platform"
+      - run: npm ci
+      - run: node spike/smoke.mjs
