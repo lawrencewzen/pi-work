@@ -662,7 +662,13 @@ async function removeCatalogItem(el, ctx) {
     ? pipelineTitle((ctx.state.pipelines || []).find((item) => item.id === id) || { id, name: id }, ctx)
     : roleTitle((ctx.state.roles || []).find((item) => item.id === id) || { id, name: id }, ctx);
   const key = kind === 'pipeline' ? 'wf_confirm_delete_pipeline' : 'wf_confirm_delete_role';
-  if (!window.confirm(ctx.t(key, { name }))) return;
+  if (typeof ctx.confirm !== 'function') return;
+  const ok = await ctx.confirm({
+    message: ctx.t(key, { name }),
+    danger: true,
+    confirmLabel: ctx.t('wf_delete'),
+  });
+  if (!ok) return;
   try {
     await ctx.api(`/api/${kind === 'pipeline' ? 'pipelines' : 'roles'}/${encodeURIComponent(id)}`, 'DELETE');
     ctx.showToast('wf_deleted');

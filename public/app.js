@@ -1959,7 +1959,7 @@ function pipelineOptionLabel(pipe) {
 }
 
 function workflowCtx() {
-  return { state, t, escapeHtml, api, showToast, localizeRoleLabel, render: renderSettingsModal };
+  return { state, t, escapeHtml, api, showToast, localizeRoleLabel, render: renderSettingsModal, confirm: confirmDialog };
 }
 
 function pluginSourceLabel(src) {
@@ -2823,10 +2823,11 @@ export async function saveModelsSettings() {
   };
 
   if (hasSavedKey && providerOrUrlChanged && !isNewKeyEntered) {
-    const warnMsg = t('models_key_safety_confirm');
-    if (!window.confirm(warnMsg)) {
-      return;
-    }
+    const ok = await confirmDialog({
+      message: t('models_key_safety_confirm'),
+      confirmLabel: t('btn_continue'),
+    });
+    if (!ok) return;
     payload.apiKey = '';
   } else if (isNewKeyEntered) {
     payload.apiKey = enteredKey;
@@ -2858,7 +2859,12 @@ export async function togglePlugin(id, enabled) {
 
 export async function deleteSkill(id, name) {
   if (!id) return;
-  if (!window.confirm(t('skill_confirm_delete', { name: name || id }))) return;
+  const ok = await confirmDialog({
+    message: t('skill_confirm_delete', { name: name || id }),
+    danger: true,
+    confirmLabel: t('skill_delete'),
+  });
+  if (!ok) return;
   try {
     await api(`/api/skills/${encodeURIComponent(id)}`, 'DELETE');
     state.skills = (state.skills || []).filter((item) => item.id !== id);
@@ -2912,7 +2918,45 @@ export function openModal(html) {
   ov.innerHTML = html;
 }
 
+let confirmPending = null;
+
+export function confirmDialog({ message, title, confirmLabel, cancelLabel, danger = false } = {}) {
+  if (confirmPending) return Promise.resolve(false);
+  const titleText = title || t(danger ? 'confirm_delete_title' : 'confirm_title');
+  const okText = confirmLabel || t(danger ? 'btn_delete' : 'btn_confirm');
+  const cancelText = cancelLabel || t('btn_cancel');
+  return new Promise((resolve) => {
+    confirmPending = resolve;
+    openModal(
+      `<div class="modal-dialog confirm-dialog${danger ? ' is-danger' : ''}" role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-message" data-testid="confirm-dialog" data-danger="${danger ? 'true' : 'false'}">` +
+      `<h3 id="confirm-dialog-title">${escapeHtml(titleText)} <span style="cursor:pointer;color:var(--text-muted)" data-action="confirm-cancel" aria-label="${escapeHtml(cancelText)}">×</span></h3>` +
+      `<p id="confirm-dialog-message" class="confirm-message" data-testid="confirm-message">${escapeHtml(message || '')}</p>` +
+      `<div class="modal-actions">` +
+      `<button type="button" class="btn" data-action="confirm-cancel" data-testid="confirm-cancel">${escapeHtml(cancelText)}</button>` +
+      `<button type="button" class="btn ${danger ? 'danger' : 'p'}" data-action="confirm-ok" data-testid="confirm-ok">${escapeHtml(okText)}</button>` +
+      `</div></div>`,
+    );
+    const focusEl = document.querySelector(danger ? '[data-testid="confirm-cancel"]' : '[data-testid="confirm-ok"]');
+    focusEl?.focus();
+  });
+}
+
+function finishConfirm(ok) {
+  const pending = confirmPending;
+  confirmPending = null;
+  const ov = document.getElementById('dialog-overlay');
+  if (ov) {
+    ov.style.display = 'none';
+    ov.innerHTML = '';
+  }
+  if (pending) pending(Boolean(ok));
+}
+
 export function closeModal() {
+  if (confirmPending) {
+    finishConfirm(false);
+    return;
+  }
   const ov = document.getElementById('dialog-overlay');
   if (ov) ov.style.display = 'none';
 }
@@ -3425,6 +3469,12 @@ document.addEventListener('click', (e) => {
     case 'close-modal':
       closeModal();
       break;
+    case 'confirm-cancel':
+      finishConfirm(false);
+      break;
+    case 'confirm-ok':
+      finishConfirm(true);
+      break;
     case 'toggle-subagent':
       toggleSubagent(actionEl.getAttribute('data-agent-id'));
       break;
@@ -3492,6 +3542,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (confirmPending) {
+        finishConfirm(false);
+        return;
+      }
       closeAgentMenu();
       closeSettings();
       closeModal();

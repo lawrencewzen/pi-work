@@ -2142,6 +2142,43 @@ button.file-tree-row:hover,
   cursor: progress;
 }
 
+/* In-page confirm. Same surface, radius, and shadow as the settings modal. */
+.confirm-dialog {
+  position: relative;
+  width: 420px;
+  max-width: 92vw;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.16);
+  color: var(--text-primary);
+}
+.confirm-dialog.is-danger {
+  border-color: var(--diff-del-num);
+}
+.confirm-dialog h3 {
+  margin: 0;
+  padding-right: 8px;
+}
+.confirm-message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.confirm-dialog .modal-actions {
+  margin-top: 2px;
+}
+.btn.danger {
+  color: var(--diff-del-text);
+  background: var(--diff-del-bg);
+  border-color: var(--diff-del-num);
+  font-weight: 600;
+}
+.btn.danger:hover {
+  background: var(--diff-del-bg);
+  border-color: var(--diff-del-text);
+  color: var(--diff-del-text);
+}
+
 /* Notification Toast */
 .toast-msg {
   position: fixed;
