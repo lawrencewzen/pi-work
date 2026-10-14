@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { load } from './_root.mjs';
-const { createOrchestrator } = await load('src/core/orchestrator.mjs');
+const { createOrchestrator, exploreTarget } = await load('src/core/orchestrator.mjs');
 const { createFauxLLM } = await load('src/llm/faux.mjs');
 const { createMemoryStore } = await load('src/store/memory.mjs');
 const { createRetryPolicy } = await load('src/core/retry.mjs');
@@ -206,7 +206,14 @@ test('tool results are sent back and an identical run is stopped', async () => {
     },
   };
   const store = createMemoryStore();
-  const orch = createOrchestrator({ llm, store, toolLoopLimit: 3, maxToolCalls: 25 });
+  const orch = createOrchestrator({
+    llm,
+    store,
+    toolLoopLimit: 3,
+    maxToolCalls: 25,
+    exploreRepeatLimit: 20,
+    toolNudgeAfter: 100,
+  });
   await orch.start('L', { workspacePath: w, text: 'list it' });
   await waitFor(() => orch.status('L').status === 'done');
   const msgs = await store.getMessages('L');
@@ -218,6 +225,134 @@ test('tool results are sent back and an identical run is stopped', async () => {
   assert.ok(fed);
   assert.match(String(fed.content), /keep\.txt/);
   assert.equal(String(fed.content).trim().length > 0, true);
+});
+
+test('explore targets ignore extra args and path spelling', () => {
+  assert.equal(
+    exploreTarget('grep', { pattern: '口令', path: './src/', glob: '*.mjs' }),
+    exploreTarget('grep', { pattern: 'password', path: 'src' }),
+  );
+  assert.equal(
+    exploreTarget('read', { path: '.\\src\\app.js', offset: 1 }),
+    exploreTarget('read', { path: 'src/app.js', limit: 40 }),
+  );
+  assert.equal(exploreTarget('ls', {}), exploreTarget('ls', { path: './' }));
+  assert.equal(
+    exploreTarget('bash', { command: 'ls -la .' }),
+    exploreTarget('bash', { command: 'grep -n 口令 ./' }),
+  );
+  assert.equal(exploreTarget('bash', { command: 'cat "src/app.js"' }), 'bash\u0000src/app.js');
+  assert.equal(exploreTarget('bash', { command: 'git status' }), null);
+  assert.equal(exploreTarget('write', { path: 'a.txt', content: 'x' }), null);
+});
+
+test('the same path is not explored more than twice with different args', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  await fs.mkdir(path.join(w, 'src'));
+  const patterns = ['口令', 'password', 'token'];
+  let i = 0;
+  let answered = false;
+  const llm = {
+    async next({ messages }) {
+      const stopped = messages.some((m) => String(m.text || m.content || '').includes('不要再重复查看'));
+      if (stopped) {
+        if (answered) return { type: 'end' };
+        answered = true;
+        return { type: 'text', text: '这个目录已经看过。' };
+      }
+      const pattern = patterns[i] || 'more';
+      i += 1;
+      return { type: 'tool', name: 'grep', args: { pattern, path: i % 2 ? './src/' : 'src', glob: '*.mjs' } };
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({ llm, store, toolNudgeAfter: 100, maxToolCalls: 15 });
+  await orch.start('E', { workspacePath: w, text: '口令检查' });
+  await waitFor(() => orch.status('E').status === 'done');
+  const msgs = await store.getMessages('E');
+  assert.equal(msgs.filter((m) => m.role === 'tool' && m.tool?.name === 'grep').length, 2);
+  assert.ok(msgs.some((m) => m.kind === 'correction' && String(m.text).includes('不要再重复查看')));
+  assert.ok(msgs.some((m) => m.text === '这个目录已经看过。'));
+  assert.equal(orch.status('E').status, 'done');
+});
+
+test('repeating a path after the reminder ends the step and the pipeline still finishes', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  const store = createMemoryStore();
+  await store.createRole({ id: 'coder', name: 'Coder', systemPrompt: 'code', tools: ['ls', 'bash', 'read'] });
+  await store.createRole({ id: 'tester', name: 'Tester', systemPrompt: 'test', tools: ['ls', 'bash', 'read'] });
+  await store.createPipeline({
+    id: 'demo',
+    name: 'Demo',
+    steps: [{ role: 'coder', input: 'user' }, { role: 'tester', input: 'previous' }],
+  });
+  let n = 0;
+  const llm = {
+    async next() {
+      n += 1;
+      const cmds = ['ls -la .', 'ls -a ./', 'grep -n 口令 .', 'find . -name "*.md"'];
+      return { type: 'tool', name: 'bash', args: { command: cmds[n % cmds.length] } };
+    },
+  };
+  const orch = createOrchestrator({
+    llm,
+    store,
+    toolLoopLimit: 20,
+    maxToolCalls: 20,
+    toolNudgeAfter: 100,
+  });
+  await orch.start('B', { workspacePath: w, text: 'go', roleId: 'coder', pipelineId: 'demo' });
+  await waitFor(() => orch.status('B').status === 'done');
+  const msgs = await store.getMessages('B');
+  assert.equal(msgs.filter((m) => m.role === 'tool' && m.tool?.name === 'bash').length, 4);
+  assert.equal(msgs.filter((m) => m.kind === 'correction' && String(m.text).includes('不要再重复查看')).length, 2);
+  assert.equal(msgs.filter((m) => m.role === 'assistant' && String(m.text || '').includes('仍在重复查看')).length, 2);
+  assert.ok(msgs.some((m) => m.kind === 'handoff'));
+  assert.equal(orch.status('B').status, 'done');
+});
+
+test('eight silent tool calls inject a nudge to answer', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  let n = 0;
+  let answered = false;
+  const llm = {
+    async next({ messages }) {
+      if (messages.some((m) => String(m.text || m.content || '').includes('请根据已有结果直接回答'))) {
+        if (answered) return { type: 'end' };
+        answered = true;
+        return { type: 'text', text: '还没找到口令。' };
+      }
+      n += 1;
+      return { type: 'tool', name: 'read', args: { path: `notes/f${n}.txt` } };
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({ llm, store });
+  await orch.start('N8', { workspacePath: w, text: '口令检查' });
+  await waitFor(() => orch.status('N8').status === 'done');
+  const msgs = await store.getMessages('N8');
+  assert.equal(msgs.filter((m) => m.role === 'tool' && m.tool?.name === 'read').length, 8);
+  assert.ok(msgs.some((m) => m.kind === 'correction' && String(m.text).includes('请根据已有结果直接回答')));
+  assert.ok(msgs.some((m) => m.text === '还没找到口令。'));
+});
+
+test('the default per-step cap is 15', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  let n = 0;
+  const llm = {
+    async next() {
+      n += 1;
+      return { type: 'tool', name: 'read', args: { path: `uniq/f${n}.txt` } };
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({ llm, store, toolNudgeAfter: 100, exploreRepeatLimit: 20 });
+  await orch.start('CAP', { workspacePath: w, text: 'keep looking' });
+  await waitFor(() => orch.status('CAP').status === 'done');
+  const msgs = await store.getMessages('CAP');
+  assert.equal(msgs.filter((m) => m.role === 'tool').length, 15);
+  assert.ok(msgs.some((m) => m.role === 'assistant' && String(m.text || '').includes('工具调用已达上限（15）')));
+  assert.equal(orch.status('CAP').status, 'done');
 });
 
 test('a tool-call cap ends each pipeline step and the run still finishes', async () => {
