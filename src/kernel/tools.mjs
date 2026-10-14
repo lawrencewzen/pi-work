@@ -277,9 +277,27 @@ export function offeredToolNames(context) {
   return names;
 }
 
+const scriptFloors = new Map();
+
+/**
+ * Retries reuse the request cutoff, so the failed assistant is in the transcript
+ * but not in the messages the demo script sees. The floor is that transcript count,
+ * keyed by the provider session of the conversation that is about to call the model.
+ */
+export function noteScriptAssistants(sessionId, count) {
+  if (!sessionId) return;
+  const next = Number(count) || 0;
+  const prev = scriptFloors.get(sessionId) || 0;
+  if (next > prev) scriptFloors.set(sessionId, next);
+}
+
+export function scriptAssistantFloor(sessionId) {
+  return scriptFloors.get(sessionId) || 0;
+}
+
 function modelTurns(turns) {
   return (Array.isArray(turns) ? turns : []).filter((turn) => (
-    turn && (turn.tool || turn.text != null || turn.end)
+    turn && (turn.tool || turn.text != null || turn.end || turn.error)
   ));
 }
 
@@ -293,7 +311,12 @@ export function fauxTurnFromScript(turns, context) {
   const turn = pending[used];
   if (!turn) return fauxAssistantMessage('ok');
   let message;
-  if (turn.tool) {
+  if (turn.error) {
+    message = fauxAssistantMessage('', {
+      stopReason: 'error',
+      errorMessage: String(turn.error),
+    });
+  } else if (turn.tool) {
     const args = turn.args && typeof turn.args === 'object' ? turn.args : {};
     const id = turn.id ? { id: String(turn.id) } : {};
     message = fauxAssistantMessage(
@@ -313,8 +336,20 @@ export function scriptedDemoStep(scriptPath, env = process.env) {
   const script = JSON.parse(readFileSync(scriptPath, 'utf8'));
   const turns = modelTurns(script?.turns);
   const logPath = String(env.PI_WORK_FAUX_TOOL_LOG || '').trim();
-  return (context) => {
+  return async (context, streamOptions) => {
     if (logPath) appendFileSync(logPath, `${JSON.stringify(offeredToolNames(context))}\n`);
-    return fauxTurnFromScript(turns, context);
+    const have = (context?.messages || []).filter((message) => message?.role === 'assistant').length;
+    const floor = scriptAssistantFloor(streamOptions?.sessionId);
+    const used = Math.max(have, floor);
+    let messages = context?.messages;
+    if (used > have) {
+      messages = [...(messages || [])];
+      for (let i = have; i < used; i += 1) messages.push({ role: 'assistant', content: '' });
+    }
+    const delay = Number(turns[used]?.delayMs);
+    if (Number.isFinite(delay) && delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    return fauxTurnFromScript(turns, messages === context?.messages ? context : { ...context, messages });
   };
 }

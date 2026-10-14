@@ -303,8 +303,9 @@ export function synthesizeStatus(conv, busy) {
   const mark = conv?.hostMark || null;
   if (mark === 'stopped') return 'stopped';
   if (mark === 'paused') return 'paused';
+  if (mark === 'failed') return 'failed';
   if (busy) return mark === 'recovering' ? 'recovering' : 'running';
-  if (mark === 'failed' || conv?.status === 'failed') return 'failed';
+  if (conv?.status === 'failed') return 'failed';
   if (conv?.status === 'done') return 'done';
   if (conv?.status === 'running' || conv?.status === 'recovering') return conv.status;
   return conv?.status || 'idle';

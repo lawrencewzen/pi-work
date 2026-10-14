@@ -12,9 +12,14 @@ import { redactAuthText } from '../core/grok-auth.mjs';
 import { formatSSE } from '../core/sse.mjs';
 import { presentContext } from '../core/usage.mjs';
 import {
+  createControlExtension,
+  createControlHost,
+  kernelRetryPolicy,
+  projectTranscript,
+} from './control.mjs';
+import {
   createMapContext,
   mapHarnessBatch,
-  messagesFromEntries,
   snapshotGap,
   synthesizeStatus,
 } from './events.mjs';
@@ -87,7 +92,7 @@ function installDemo(models, env) {
   // Hold still wins: a script or plan must not replace the in-flight model call used by recovery tests.
   const scripted = !holdAll && !plan && scriptPath ? scriptedDemoStep(scriptPath, env) : null;
   let cursor = 0;
-  const step = async (context) => {
+  const step = async (context, streamOptions) => {
     if (recordPath) await appendFile(recordPath, `${JSON.stringify(requestSnapshot(context))}\n`);
     if (holdAll) {
       if (ready) await writeFile(ready, 'seen');
@@ -103,7 +108,7 @@ function installDemo(models, env) {
       }
       return fauxAssistantMessage(item);
     }
-    if (scripted) return scripted(context);
+    if (scripted) return scripted(context, streamOptions);
     return fauxAssistantMessage(text);
   };
   faux.setResponses(Array.from({ length: DEMO_RESPONSE_COUNT }, () => step));
@@ -139,6 +144,8 @@ export async function openConversationKernel({
   const tails = new Map();
   const listeners = new Map();
   let roles;
+  let control = null;
+  const controlBridge = { conversationIdFor };
 
   async function conversationIdFor(harnessId) {
     const wanted = Number(harnessId);
@@ -180,7 +187,13 @@ export async function openConversationKernel({
   });
   roleBridge.extraTools = () => subagentExtension.tools || [];
   registry.install(subagentExtension);
-  const kernel = await openKernel({ dataDir, models, registry });
+  registry.install(createControlExtension(controlBridge));
+  const kernel = await openKernel({
+    dataDir,
+    models,
+    registry,
+    settings: { retry: kernelRetryPolicy(env) },
+  });
   const { harness, context } = kernel;
 
   function enqueue(cid, fn) {
@@ -212,7 +225,9 @@ export async function openConversationKernel({
   }
 
   async function deliver(cid, ev) {
-    if (ev.event === 'status' && ev.data?.status === 'done') {
+    const next = control ? await control.absorb(cid, ev) : ev;
+    if (!next) return;
+    if (next.event === 'status' && next.data?.status === 'done') {
       const conv = await store.getConversation(cid);
       if (conv?.hostMark === 'stopped') return;
       if (roles) {
@@ -220,16 +235,19 @@ export async function openConversationKernel({
         if (action !== 'continue') return;
       }
     }
-    if (ev.event === 'status') await emitStatus(cid, ev.data.status, omitStatus(ev.data));
-    else await emit(cid, ev.event, ev.data);
+    if (next.event === 'status') await emitStatus(cid, next.data.status, omitStatus(next.data));
+    else await emit(cid, next.event, next.data);
   }
 
   async function emitStatus(cid, status, extra = {}) {
     const conv = await store.getConversation(cid);
     if (conv?.hostMark === 'stopped' && status !== 'stopped') return;
+    if (conv?.hostMark === 'paused' && status !== 'paused') return;
+    if (conv?.hostMark === 'failed' && status !== 'failed') return;
     if (status === 'running' && conv?.hostMark === 'recovering') return;
     const patch = { status };
-    if (status === 'done' || status === 'failed') patch.hostMark = null;
+    const sticky = conv?.hostMark === 'paused' || conv?.hostMark === 'stopped' || conv?.hostMark === 'failed';
+    if ((status === 'done' || status === 'failed') && !sticky) patch.hostMark = null;
     if (status === 'recovering') patch.hostMark = 'recovering';
     if (conv) await store.updateConversation(cid, patch);
     await emit(cid, 'status', { status, ...extra });
@@ -255,7 +273,7 @@ export async function openConversationKernel({
   async function readTranscript(harnessId) {
     const view = await readView(harnessId);
     if (!view) return { messages: [], usage: null, busy: false };
-    const mapped = messagesFromEntries(view.entries);
+    const mapped = projectTranscript(view.entries);
     return { ...mapped, busy: Boolean(view.live?.run) };
   }
 
@@ -303,7 +321,7 @@ export async function openConversationKernel({
   async function attach(row) {
     if (!row?.harnessId || watches.has(row.id)) return;
     const stream = await watchEvents(harness, row.harnessId, context);
-    const mapCtx = createMapContext({ step: row.currentStep || 0 });
+    const mapCtx = createMapContext({ step: row.currentStep || 0, retry: kernelRetryPolicy(env) });
     watches.set(row.id, { stream, mapCtx, harnessId: row.harnessId });
     await enqueue(row.id, () => fillSnapshot(row.id, stream.snapshot, mapCtx));
     stream.start((batch) => enqueue(row.id, async () => {
@@ -338,6 +356,21 @@ export async function openConversationKernel({
     const model = await routes.modelFor({ ...conv, roleId });
     await conversation.configure({ model: model ?? null }, context);
   }
+
+  control = createControlHost({
+    harness,
+    context,
+    store,
+    bridge: controlBridge,
+    emit,
+    readTranscript: async (cid) => {
+      const row = await store.getConversation(cid);
+      if (!row?.harnessId) return { messages: [] };
+      return readTranscript(row.harnessId);
+    },
+    isBusy: submissionBlocked,
+    env,
+  });
 
   roles = createRoleHost({
     store,
@@ -424,6 +457,7 @@ export async function openConversationKernel({
         try { await watch.stream.stop(); } catch { /* already stopped */ }
       }
       watches.clear();
+      await control?.close();
       await subagents.close();
       await kernel.close();
     },
@@ -444,7 +478,14 @@ export async function openConversationKernel({
       const conv = await store.getConversation(cid);
       if (!conv) return { status: 404, body: { error: 'conversation not found' } };
       if (isArchivedConversation(conv)) return archivedMutation();
+      if (control) await control.markStopped(cid);
       return subagents.stopConversation(cid);
+    },
+    pause(cid) {
+      return control.pause(cid);
+    },
+    resume(cid) {
+      return control.resume(cid);
     },
     async present(conv, { includeMessages = false } = {}) {
       if (isArchivedConversation(conv)) {
@@ -470,6 +511,7 @@ export async function openConversationKernel({
         if (await submissionBlocked(conv.harnessId)) {
           return { status: 409, body: { error: 'err_send_blocked', status: 'running' } };
         }
+        if (control) await control.beginUserTurn(conv);
         const prepared = roles ? await roles.prepareSend(conv, text) : null;
         const current = prepared?.conversation || conv;
         if (routes) {

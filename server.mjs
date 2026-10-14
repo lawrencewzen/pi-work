@@ -1120,6 +1120,15 @@ async function routeApi(req, res, url) {
       sendJson(res, stopped.status, stopped.body);
       return;
     }
+    if (kernelApi && (action === 'pause' || action === 'resume') && typeof kernelApi[action] === 'function') {
+      const result = await kernelApi[action](cid);
+      if (result?.body) {
+        sendJson(res, result.status || 200, result.body);
+        return;
+      }
+      sendJson(res, 200, { status: result?.status || 'stopped' });
+      return;
+    }
     const result = await orch[action](cid);
     sendJson(res, 200, { status: result.status });
     return;
