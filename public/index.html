@@ -94,20 +94,22 @@
         </div>
 
         <div class="status-bar-controls">
-          <button class="btn-ctrl" data-testid="btn-pause" id="btn-pause" data-action="pause-conversation" data-i18n-title="btn_pause_title" title="暂停执行" disabled>
+          <button class="btn-ctrl" data-testid="btn-pause" id="btn-pause" data-action="pause-conversation" data-i18n-aria="btn_pause" data-i18n-title="btn_pause_title" aria-label="暂停" title="暂停执行" disabled>
             <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-            <span data-i18n="btn_pause">暂停</span>
+            <span class="btn-ctrl-label" data-i18n="btn_pause">暂停</span>
           </button>
-          <button class="btn-ctrl" data-testid="btn-resume" id="btn-resume" data-action="resume-conversation" data-i18n-title="btn_resume_title" title="继续执行" disabled>
+          <button class="btn-ctrl" data-testid="btn-resume" id="btn-resume" data-action="resume-conversation" data-i18n-aria="btn_resume" data-i18n-title="btn_resume_title" aria-label="继续" title="继续执行" disabled>
             <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-            <span data-i18n="btn_resume">继续</span>
+            <span class="btn-ctrl-label" data-i18n="btn_resume">继续</span>
           </button>
-          <button class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-title="btn_stop_title" title="终止并保存检查点" disabled>
+          <button class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-aria="btn_stop" data-i18n-title="btn_stop_title" aria-label="终止" title="终止并保存检查点" disabled>
             <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
-            <span data-i18n="btn_stop">终止</span>
+            <span class="btn-ctrl-label" data-i18n="btn_stop">终止</span>
           </button>
         </div>
       </header>
+
+      <div id="center-notice" class="center-notice"></div>
 
       <!-- Scrollable Chat Thread -->
       <div class="center-thread" id="center-thread">

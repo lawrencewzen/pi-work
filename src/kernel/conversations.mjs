@@ -468,7 +468,10 @@ export async function openConversationKernel({
     listSubagents(conv) {
       return subagents.listSubagents(conv).then((agents) => agents.map((agent) => {
         const { harnessId, ...rest } = agent;
-        return rest;
+        return {
+          ...rest,
+          mode: agent.mode === 'background' ? 'background' : 'foreground',
+        };
       }));
     },
     childMessages(cid, agentId) {

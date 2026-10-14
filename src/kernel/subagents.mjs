@@ -485,6 +485,7 @@ export function createSubagentHost({
         totalSteps: stats.totalSteps,
         toolCalls: stats.toolCalls,
         lastText: stats.lastText,
+        mode: entry.mode === 'background' ? 'background' : 'foreground',
         harnessId: entry.conversationId,
       });
     }
@@ -495,6 +496,7 @@ export function createSubagentHost({
     if (typeof emit !== 'function' || !agent) return;
     const data = agentEventData(agent);
     if (!data) return;
+    data.mode = agent.mode === 'background' ? 'background' : 'foreground';
     const key = JSON.stringify(data);
     if (lastAgent.get(data.id) === key) return;
     lastAgent.set(data.id, key);
@@ -567,6 +569,7 @@ export function createSubagentHost({
           roleId: agent.roleId,
           name: agent.name,
           status: agent.status,
+          mode: agent.mode === 'background' ? 'background' : 'foreground',
           messages: transcript.messages,
         },
       };

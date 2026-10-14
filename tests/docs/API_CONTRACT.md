@@ -197,13 +197,13 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true}
 
 主 Agent 多两个工具：`delegate`（前台，参数 `{agent, task}`，`agent` 是角色 id）和 `subagent`（后台，`action` 为 `spawn` / `send` / `wait` / `stop` / `list`）。可用角色的 id、名称和 `description` 写在主 Agent 的 `subagents` 系统提示 section。子 Agent 按该角色的模型绑定、工具白名单、Skills 和插件工具各自 `configure`，不能再派子 Agent。
 
-`GET /api/conversations/:cid` 的 `agents` 在原有角色 / 流水线芯片之后追加真实子 Agent 实例：`{id, roleId, name, status, step, totalSteps, toolCalls, lastText}`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。没有子 Agent 时，`agents` 与原来相同。
+`GET /api/conversations/:cid` 的 `agents` 在原有角色 / 流水线芯片之后追加真实子 Agent 实例：`{id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。角色芯片和流水线芯片没有 `mode`。没有子 Agent 时，`agents` 与原来相同。
 
-父对话 SSE 不混入子对话的 `message.delta` / `tool.*`。子 Agent 状态变化时，父对话收到 `agent` 事件，字段与芯片相同。
+父对话 SSE 不混入子对话的 `message.delta` / `tool.*`。子 Agent 状态变化时，父对话收到 `agent` 事件，字段与芯片相同，包含 `mode`。角色和流水线的 `agent` 事件仍然不带 `mode`。
 
 | 方法 路径 | 响应 |
 |---|---|
-| `GET /api/conversations/:cid/agents/:aid/messages` | `200 {id, roleId, name, status, messages}`。`messages` 与父对话消息同形。对话不存在 `404 {error:'conversation not found'}`；`aid` 不是这个对话的子 Agent `404 {error:'agent not found'}` |
+| `GET /api/conversations/:cid/agents/:aid/messages` | `200 {id, roleId, name, status, mode, messages}`。`mode` 与芯片相同。`messages` 与父对话消息同形。对话不存在 `404 {error:'conversation not found'}`；`aid` 不是这个对话的子 Agent `404 {error:'agent not found'}` |
 | `POST /api/conversations/:cid/stop` | `200 {status:'stopped'}`。停掉这条对话里的全部工作，包括后台子 Agent |
 
 暂停仍不是本接口的停止语义。
