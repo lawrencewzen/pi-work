@@ -61,6 +61,25 @@ function hunkHeader(oldStart, oldCount, newStart, newCount) {
 }
 
 /** Unified diff with 3 lines of context. */
+/**
+ * Diff the stored baseline against the file's current text.
+ * `diskText === undefined` means the disk read failed and the stored snapshot is used.
+ * `diskText === null` or `''` means the file is missing or empty.
+ */
+export function liveDiff({ path: filePath, before, storedAfter, diskText }) {
+  const oldText = before ?? '';
+  const after = diskText === undefined ? (storedAfter ?? '') : (diskText ?? '');
+  const { added, removed } = diffStats(oldText, after);
+  return {
+    path: filePath,
+    before: oldText,
+    after,
+    unified: unifiedDiff(filePath, oldText, after),
+    added,
+    removed,
+  };
+}
+
 export function unifiedDiff(filePath, oldText, newText) {
   const a = splitLines(oldText);
   const b = splitLines(newText);

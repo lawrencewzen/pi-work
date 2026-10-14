@@ -109,8 +109,26 @@ function httpError(status, body) {
   const err = new Error(providerErrorText(body, status));
   err.status = status;
   if (status === 429) err.code = 'ETIMEDOUT';
+  else if (/terminated/i.test(err.message) && status !== 400 && status !== 401 && status !== 403) err.code = 'E_STREAM_CUT';
   else err.code = 'E_LLM';
   return err;
+}
+
+function transportError(err) {
+  const msg = `${err?.message || ''} ${err?.cause?.message || ''}`;
+  const code = String(err?.code || err?.cause?.code || '');
+  const dropped = /terminated/i.test(msg) || code === 'UND_ERR_SOCKET' || code === 'EPIPE';
+  if (dropped) {
+    const wrapped = new Error('terminated');
+    wrapped.code = 'E_STREAM_CUT';
+    wrapped.cause = err;
+    return wrapped;
+  }
+  if (err?.code) return err;
+  const wrapped = new Error(err?.message || 'LLM request failed');
+  wrapped.code = err?.cause?.code || 'ECONNRESET';
+  wrapped.cause = err;
+  return wrapped;
 }
 
 function toOpenAIMessages(messages = []) {
@@ -211,10 +229,7 @@ export function createOpenAILLM({
           });
         } catch (err) {
           if (err?.name === 'AbortError' || signal?.aborted) throw abortError();
-          if (err?.code) throw err;
-          const wrapped = new Error(err?.message || 'LLM request failed');
-          wrapped.code = err?.cause?.code || 'ECONNRESET';
-          throw wrapped;
+          throw transportError(err);
         }
       };
 
@@ -238,7 +253,25 @@ export function createOpenAILLM({
         throw httpError(res.status, errBody);
       }
 
-      const json = await res.json();
+      let raw = '';
+      try {
+        if (typeof res.text === 'function') raw = await res.text();
+        else if (typeof res.json === 'function') raw = JSON.stringify(await res.json());
+      } catch (err) {
+        if (err?.name === 'AbortError' || signal?.aborted) throw abortError();
+        throw transportError(err);
+      }
+      let json;
+      try {
+        json = raw ? JSON.parse(raw) : {};
+      } catch (err) {
+        if (/terminated/i.test(raw)) {
+          const wrapped = new Error('terminated');
+          wrapped.code = 'E_STREAM_CUT';
+          throw wrapped;
+        }
+        throw transportError(err);
+      }
       if (grok) return actionFromGrokResponses(json);
       const msg = json?.choices?.[0]?.message;
       const toolCalls = msg?.tool_calls;
@@ -246,7 +279,7 @@ export function createOpenAILLM({
         const tc = toolCalls[0];
         const name = tc.function?.name || tc.name;
         const args = parseArgs(tc.function?.arguments ?? tc.arguments);
-        return attachUsage({ type: 'tool', name, args }, json?.usage);
+        return attachUsage({ type: 'tool', name, args, callId: String(tc.id || '') }, json?.usage);
       }
       const text = msg?.content;
       if (text == null || String(text).trim() === '') throw emptyOutput();

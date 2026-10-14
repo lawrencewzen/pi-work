@@ -7,7 +7,7 @@ import { load, ROOT } from './_root.mjs';
 
 const { createMemoryStore } = await load('src/store/memory.mjs');
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
-const { loadRoleTemplates, loadPipelineTemplates } = await load('src/core/roles-load.mjs');
+const { loadRoleTemplates, loadPipelineTemplates, shouldUpgradeBuiltinPrompt } = await load('src/core/roles-load.mjs');
 
 const scribe = {
   id: 'scribe',
@@ -108,4 +108,52 @@ test('templates seed feature pipeline and honor tombstones', async () => {
   assert.equal(await store.getRole('planner'), undefined);
   assert.equal(await store.getPipeline('feature'), undefined);
   assert.ok(await store.getPipeline('demo'));
+});
+
+test('startup upgrades unedited builtin prompts and keeps edited ones', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-roles-'));
+  const shipped = '你是规划。\n\n## 交接\n- 角色：规划';
+  const previous = 'You are a planning agent. Read the workspace and the user\'s request, then write a short implementation plan: goal, files to touch, risks, and how to verify. Do not edit production code or run tests. Prefer reading existing files before proposing changes.';
+  await fs.writeFile(path.join(dir, 'planner.json'), JSON.stringify({
+    id: 'planner',
+    name: 'Planner',
+    systemPrompt: shipped,
+    tools: ['read', 'ls', 'grep'],
+  }));
+  await fs.writeFile(path.join(dir, 'coder.json'), JSON.stringify({
+    id: 'coder',
+    name: 'Coder',
+    systemPrompt: '编码出厂',
+    tools: ['read', 'write'],
+  }));
+  const store = createMemoryStore();
+  await store.createRole({
+    id: 'planner',
+    name: 'Planner',
+    systemPrompt: previous,
+    tools: ['read', 'ls', 'grep'],
+    model: 'keep-me',
+  });
+  await store.createRole({
+    id: 'coder',
+    name: 'Coder',
+    systemPrompt: '我改过的提示词',
+    tools: ['read'],
+  });
+  assert.equal(shouldUpgradeBuiltinPrompt(await store.getRole('planner'), {
+    id: 'planner',
+    systemPrompt: shipped,
+  }), true);
+  assert.equal(shouldUpgradeBuiltinPrompt(await store.getRole('coder'), {
+    id: 'coder',
+    systemPrompt: '编码出厂',
+  }), false);
+  await loadRoleTemplates(store, dir);
+  const planner = await store.getRole('planner');
+  assert.equal(planner.systemPrompt, shipped);
+  assert.equal(planner.model, 'keep-me');
+  assert.deepEqual(planner.tools, ['read', 'ls', 'grep']);
+  assert.equal((await store.getRole('coder')).systemPrompt, '我改过的提示词');
+  await loadRoleTemplates(store, dir);
+  assert.equal((await store.getRole('planner')).systemPrompt, shipped);
 });

@@ -1310,6 +1310,12 @@ export async function saveEditorFile() {
     });
     showToast('btn_saved');
     state.activeFileContent = content;
+    if (state.activeConversationId) {
+      try {
+        const changes = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/changes`);
+        state.changes = Array.isArray(changes) ? changes : state.changes;
+      } catch { /* diff refresh is best-effort */ }
+    }
   } catch (err) {
     showToast(err.message || 'err_save');
   }
@@ -1593,14 +1599,17 @@ export async function pickDispatchTarget(el) {
       state.activeConversationData.roleId = res.roleId;
       state.activeConversationData.pipelineId = res.pipelineId;
       state.activeConversationData.pipelineStep = res.pipelineStep;
+      if (Array.isArray(res.agents)) state.activeConversationData.agents = res.agents;
     }
     const item = state.conversations.find((c) => c.id === cid);
     if (item) {
       item.roleId = res.roleId;
       item.pipelineId = res.pipelineId;
+      if (Array.isArray(res.agents)) item.agents = res.agents;
     }
     closeAgentMenu();
     renderStatusBar();
+    renderConversations();
   } catch (err) {
     showToast(isToastKey(err.message) ? err.message : (err.message || 'err_role_switch'));
   }
@@ -1791,6 +1800,14 @@ export function renderChatThread() {
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
+    if (m.kind === 'correction') {
+      rendered.push(
+        `<div class="handoff-note msg-side-agent" data-testid="message" data-role="system" data-kind="correction">` +
+        `<span>${escapeHtml(m.text || '')}</span>` +
+        `</div>`
+      );
+      continue;
+    }
     if (m.kind === 'handoff') {
       rendered.push(
         `<div class="handoff-note msg-side-agent" data-testid="message" data-role="system" data-kind="handoff">` +
@@ -2634,6 +2651,7 @@ function renderSkillsListHtml(list, searching = false) {
         `</div>` +
         `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5;min-height:36px">${escapeHtml(sk.description || '')}</div>` +
         `<div style="font-size:11px;color:var(--text-muted);display:flex;gap:8px"><span>${escapeHtml(pluginSourceLabel(sk.source))}</span>${sk.version ? `<span>·</span><span>${escapeHtml(sk.version)}</span>` : ''}</div>` +
+        (sk.deletable ? `<div style="display:flex;justify-content:flex-end"><button type="button" class="btn wf-btn-danger" data-action="delete-skill" data-skill-id="${escapeHtml(sk.id)}" data-skill-name="${escapeHtml(sk.name || sk.id)}" data-testid="skill-delete">${escapeHtml(t('skill_delete'))}</button></div>` : '') +
         `</div>`
       );
     })
@@ -2835,6 +2853,19 @@ export async function togglePlugin(id, enabled) {
     renderSettingsModal();
   } catch (err) {
     showToast(extensionError(err, 'err_plugin_update'));
+  }
+}
+
+export async function deleteSkill(id, name) {
+  if (!id) return;
+  if (!window.confirm(t('skill_confirm_delete', { name: name || id }))) return;
+  try {
+    await api(`/api/skills/${encodeURIComponent(id)}`, 'DELETE');
+    state.skills = (state.skills || []).filter((item) => item.id !== id);
+    showToast('skill_deleted');
+    renderSettingsModal();
+  } catch (err) {
+    showToast(extensionError(err, 'err_skill_save'));
   }
 }
 
@@ -3369,6 +3400,9 @@ document.addEventListener('click', (e) => {
       break;
     case 'toggle-skill':
       toggleSkill(actionEl.getAttribute('data-skill-id'), actionEl.getAttribute('data-enabled') === 'true');
+      break;
+    case 'delete-skill':
+      deleteSkill(actionEl.getAttribute('data-skill-id'), actionEl.getAttribute('data-skill-name'));
       break;
     case 'open-import-plugin':
       openImportPluginModal();

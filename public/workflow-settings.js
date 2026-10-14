@@ -151,6 +151,11 @@ function roleCard(ctx, role) {
   const letter = (title || role.id || 'R').slice(0, 1).toUpperCase();
   const chips = (role.tools || []).map((tool) => `<span class="wf-chip">${ctx.escapeHtml(tool)}</span>`).join('');
   const prompt = role.systemPrompt || '';
+  const expanded = Boolean(ctx.state.expandedRolePrompts?.[role.id]);
+  const canExpand = prompt.length > 80 || prompt.includes('\n');
+  const toggle = canExpand
+    ? `<button type="button" class="btn wf-expand" data-action="workflow-toggle-prompt" data-id="${ctx.escapeHtml(role.id)}" data-testid="workflow-expand-prompt">${ctx.escapeHtml(ctx.t(expanded ? 'wf_collapse_prompt' : 'wf_expand_prompt'))}</button>`
+    : '';
   const remove = role.id === 'default'
     ? `<span class="wf-note">${ctx.escapeHtml(ctx.t('wf_protected_note'))}</span>`
     : `<button type="button" class="btn wf-btn-danger" data-action="workflow-delete" data-kind="role" data-id="${ctx.escapeHtml(role.id)}">${ctx.escapeHtml(ctx.t('wf_delete'))}</button>`;
@@ -160,7 +165,8 @@ function roleCard(ctx, role) {
     `<div class="wf-avatar">${ctx.escapeHtml(letter)}</div>` +
     `<div class="wf-card-id"><span class="wf-title-row"><b>${ctx.escapeHtml(title)}</b>${role.builtin ? `<span class="wf-tag" data-testid="workflow-builtin-tag">${ctx.escapeHtml(ctx.t('wf_builtin_tag'))}</span>` : ''}</span><span class="wf-id">${ctx.escapeHtml(role.id)}</span></div>` +
     `</div>` +
-    `<div class="wf-prompt">${ctx.escapeHtml(prompt)}</div>` +
+    `<div class="wf-prompt${expanded ? ' is-expanded' : ''}">${ctx.escapeHtml(prompt)}</div>` +
+    (toggle ? `<div class="wf-prompt-toggle">${toggle}</div>` : '') +
     `<div class="wf-chips">${chips}</div>` +
     `<div class="wf-actions">` +
     `<button type="button" class="btn" data-action="workflow-edit" data-kind="role" data-id="${ctx.escapeHtml(role.id)}">${ctx.escapeHtml(ctx.t('wf_edit'))}</button>` +
@@ -591,6 +597,14 @@ export function handleWorkflowAction(action, el, ctx) {
     case 'workflow-restore-prompt':
       restoreDefaultPrompt(ctx);
       return true;
+    case 'workflow-toggle-prompt': {
+      const id = el.getAttribute('data-id');
+      if (!id) return true;
+      const cur = ctx.state.expandedRolePrompts || {};
+      ctx.state.expandedRolePrompts = { ...cur, [id]: !cur[id] };
+      ctx.render();
+      return true;
+    }
     case 'workflow-add-builtin':
       addBuiltinStep(el, ctx);
       return true;

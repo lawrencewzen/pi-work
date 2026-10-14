@@ -406,10 +406,11 @@ export function toGrokResponsesBody(messages, tools, model) {
       continue;
     }
     if (m.role === 'tool') {
+      const output = typeof m.content === 'string' ? m.content : String(m.text ?? '');
       input.push({
         type: 'function_call_output',
         call_id: String(m.tool_call_id || m.id || ''),
-        output: typeof m.content === 'string' ? m.content : String(m.text ?? ''),
+        output: output.trim() ? output : '(no output)',
       });
     }
   }
@@ -435,7 +436,12 @@ export function actionFromGrokResponses(json) {
       try { args = JSON.parse(args); } catch { args = { _raw: args }; }
     }
     if (args == null || typeof args !== 'object') args = {};
-    return attachUsage({ type: 'tool', name: String(call.name), args }, json?.usage);
+    return attachUsage({
+      type: 'tool',
+      name: String(call.name),
+      args,
+      callId: String(call.call_id || call.id || ''),
+    }, json?.usage);
   }
   const texts = [];
   for (const item of output) {
@@ -449,6 +455,12 @@ export function actionFromGrokResponses(json) {
   if (typeof json?.output_text === 'string' && json.output_text.trim()) texts.push(json.output_text);
   const text = texts.join('').trim();
   if (!text) {
+    const reason = String(json?.error?.message || json?.incomplete_details?.reason || json?.status || '');
+    if (/terminated/i.test(reason)) {
+      const err = new Error('terminated');
+      err.code = 'E_STREAM_CUT';
+      throw err;
+    }
     const err = new Error('empty model output');
     err.code = 'E_EMPTY_OUTPUT';
     throw err;

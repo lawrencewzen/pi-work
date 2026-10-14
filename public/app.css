@@ -2496,6 +2496,20 @@ button.file-tree-row:hover,
   -webkit-box-orient: vertical;
   overflow: hidden;
   min-height: 36px;
+  white-space: pre-wrap;
+}
+.wf-prompt.is-expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.wf-prompt-toggle {
+  display: flex;
+  justify-content: flex-start;
+}
+.wf-expand {
+  padding: 2px 8px;
+  font-size: 11px;
 }
 .wf-chips {
   display: flex;
@@ -2538,7 +2552,7 @@ button.file-tree-row:hover,
   box-sizing: border-box;
 }
 .wf-editor textarea {
-  min-height: 120px;
+  min-height: 220px;
   resize: vertical;
   font-family: var(--font-sans);
   line-height: 1.45;

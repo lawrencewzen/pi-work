@@ -51,6 +51,7 @@ test('default and role models match the server lookup order', () => {
   assert.equal(resolveDispatchModel({ sessionModel: 'grok-build' }), 'grok-build');
   assert.equal(composerAgentText({ agentName: 'Agent', model: 'grok-4.6' }), 'Agent · grok-4.6');
   assert.equal(composerAgentText({ agentName: 'Agent', roleLabel: 'Coder' }), 'Agent · Coder');
+  assert.equal(composerAgentText({ agentName: 'Agent', model: 'grok-build', roleLabel: '编码' }), '编码 · grok-build');
 });
 
 test('pipeline step selects that role model', () => {
@@ -67,6 +68,6 @@ test('pipeline step selects that role model', () => {
     roleLabel: 'Tester',
   });
   assert.equal(view.model, 'tester-model');
-  assert.equal(view.text, 'Agent · tester-model');
+  assert.equal(view.text, 'Tester · tester-model');
   assert.equal(view.roleId, 'tester');
 });

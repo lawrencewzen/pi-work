@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { load, ROOT } from './_root.mjs';
 
-const { buildSkillPrompt, createSkill, listSkills, updateSkill, writeSkillFile } = await load('src/core/skills.mjs');
+const { buildSkillPrompt, createSkill, deleteSkill, listSkills, updateSkill, writeSkillFile } = await load('src/core/skills.mjs');
 const { clearPluginCache, describePlugins, installPlugin, pluginHandlers } = await load('src/core/plugins.mjs');
 const { createExtensionHost } = await load('src/core/extensions.mjs');
 const { createOrchestrator } = await load('src/core/orchestrator.mjs');
@@ -82,6 +82,15 @@ test('user skills override bundled text and reject duplicates', async () => {
   assert.equal(updated.body, 'UPDATED_SKILL_BODY');
   const again = await buildSkillPrompt([user], { [created.id]: false });
   assert.equal(again.includes('UPDATED_SKILL_BODY'), false);
+  const listed = await listSkills([bundledSkills[0], user], {}, user);
+  assert.equal(listed.find((skill) => skill.id === 'review-notes').deletable, false);
+  assert.equal(listed.find((skill) => skill.id === created.id).deletable, true);
+  await assert.rejects(
+    () => deleteSkill([bundledSkills[0]], user, 'review-notes'),
+    (err) => err.catalogCode === 'err_skill_builtin',
+  );
+  assert.equal((await deleteSkill([bundledSkills[0], user], user, created.id)).id, created.id);
+  assert.equal((await listSkills([user], {}, user)).some((skill) => skill.id === created.id), false);
 });
 
 test('settings keep skill and plugin toggles', () => {
@@ -309,6 +318,16 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
     const edited = await request('PUT', `/api/skills/${created.body.id}`, { body: '只报告失败的测试。' });
     assert.equal(edited.status, 200);
     assert.equal(edited.body.description, '发版前');
+    assert.equal(created.body.deletable, true);
+    assert.equal(skills.body.find((skill) => skill.id === 'commit-message').deletable, false);
+
+    const removed = await request('DELETE', `/api/skills/${created.body.id}`);
+    assert.equal(removed.status, 200);
+    const afterDelete = await request('GET', '/api/skills');
+    assert.equal(afterDelete.body.some((skill) => skill.id === created.body.id), false);
+    const builtin = await request('DELETE', '/api/skills/commit-message');
+    assert.equal(builtin.status, 403);
+    assert.equal(builtin.body.code, 'err_skill_builtin');
 
     const ghost = await request('POST', '/api/plugins', { name: 'ghost', description: 'not a module', version: '1.0.0' });
     assert.equal(ghost.status, 400);

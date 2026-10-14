@@ -21,6 +21,7 @@
 | [context-chip.md](context-chip.md) | 上下文用量：无用量为 —，模型返回后显示已用 / 窗口 |
 | [agent-chip.md](agent-chip.md) | 调度模型芯片与角色菜单 |
 | [files.md](files.md) | 写文件，Diff / 文件 / Markdown |
+| [tool-loop.md](tool-loop.md) | 相同工具连呼与单步工具上限 |
 | [conversation-control.md](conversation-control.md) | 暂停、继续、终止，终止后再次发送 |
 | [running-overview.md](running-overview.md) | 运行中概览 |
 | [grok-login.md](grok-login.md) | Grok 登录与模型设置 |

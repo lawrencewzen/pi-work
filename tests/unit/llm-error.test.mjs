@@ -46,3 +46,51 @@ test('chat completion failures surface E_LLM with the provider message', async (
     globalThis.fetch = original;
   }
 });
+
+test('a dropped response body is a retryable stream cut', async () => {
+  const llm = createOpenAILLM({
+    baseUrl: 'http://llm.test/v1',
+    apiKey: 'test-key',
+    model: 'grok-build',
+  });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      const err = new TypeError('terminated');
+      err.cause = Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' });
+      throw err;
+    },
+  });
+  try {
+    await assert.rejects(
+      () => llm.next({ messages: [{ role: 'user', content: 'hi' }] }),
+      (err) => err.code === 'E_STREAM_CUT' && err.message === 'terminated',
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('an HTTP body that only says terminated is a stream cut', async () => {
+  const llm = createOpenAILLM({
+    baseUrl: 'http://llm.test/v1',
+    apiKey: 'test-key',
+    model: 'grok-build',
+  });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 502,
+    async text() { return 'terminated'; },
+  });
+  try {
+    await assert.rejects(
+      () => llm.next({ messages: [{ role: 'user', content: 'hi' }] }),
+      (err) => err.code === 'E_STREAM_CUT' && err.status === 502,
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});

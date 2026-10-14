@@ -9,12 +9,12 @@ import { formatSSE } from './src/core/sse.mjs';
 import { validateRole, validatePipeline, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
-import { diffStats, unifiedDiff } from './src/core/diff.mjs';
+import { diffStats, liveDiff } from './src/core/diff.mjs';
 import { publicSettings } from './src/core/settings.mjs';
 import { cloneGitRepo, stripGitUrlCredentials } from './src/core/git-import.mjs';
 import { createExtensionHost } from './src/core/extensions.mjs';
 import { describePlugins, installPlugin, PLUGIN_ID } from './src/core/plugins.mjs';
-import { listSkills, listSkillRecords, createSkill, updateSkill, SKILL_ID } from './src/core/skills.mjs';
+import { listSkills, listSkillRecords, createSkill, updateSkill, deleteSkill, SKILL_ID } from './src/core/skills.mjs';
 import { loadRoleTemplates, loadPipelineTemplates, readRoleTemplateMap, attachBuiltinPrompts } from './src/core/roles-load.mjs';
 import { buildAgents } from './src/core/agents.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
@@ -201,6 +201,29 @@ async function agentsFor(conv, messages) {
   const roles = await store.listRoles();
   const role = (conv.roleId && await store.getRole(conv.roleId)) || await store.getRole('default');
   return buildAgents({ conv, pipeline, role, roles, messages });
+}
+
+async function diskTextFor(workspacePath, filePath) {
+  if (!workspacePath) return undefined;
+  try {
+    const abs = await resolveInWorkspace(workspacePath, filePath);
+    return await fs.readFile(abs, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return '';
+    if (err.code === 'E_SANDBOX') throw err;
+    return undefined;
+  }
+}
+
+async function liveChange(cid, filePath, ch) {
+  const conv = await store.getConversation(cid);
+  const diskText = await diskTextFor(conv?.workspacePath, filePath);
+  return liveDiff({
+    path: filePath,
+    before: ch?.before ?? '',
+    storedAfter: ch?.after ?? '',
+    diskText,
+  });
 }
 
 function serveStatic(req, res, url) {
@@ -648,12 +671,15 @@ async function routeApi(req, res, url) {
     }
     if (!Object.keys(patch).length) { sendJson(res, 400, { error: 'empty patch' }); return; }
     const next = await store.updateConversation(cid, patch);
+    const messages = await store.getMessages(cid);
+    const agents = await agentsFor(next, messages);
     sendJson(res, 200, {
       id: next.id,
       roleId: next.roleId || null,
       pipelineId: next.pipelineId || null,
       pipelineStep: next.pipelineStep || 0,
       status: next.status,
+      agents,
     });
     return;
   }
@@ -698,7 +724,19 @@ async function routeApi(req, res, url) {
   match = p.match(/^\/api\/conversations\/([^/]+)\/changes$/);
   if (match && m === 'GET') {
     const cid = decodeURIComponent(match[1]);
-    sendJson(res, 200, await store.getChanges(cid));
+    const rows = await store.getChanges(cid);
+    const live = [];
+    for (const row of rows) {
+      const ch = await store.getChangeForPath(cid, row.path);
+      try {
+        const diff = await liveChange(cid, row.path, ch);
+        live.push({ path: row.path, added: diff.added, removed: diff.removed, toolCallId: row.toolCallId });
+      } catch (err) {
+        if (err.code === 'E_SANDBOX') { sendJson(res, 403, { error: 'E_SANDBOX' }); return; }
+        throw err;
+      }
+    }
+    sendJson(res, 200, live);
     return;
   }
 
@@ -708,15 +746,12 @@ async function routeApi(req, res, url) {
     const filePath = url.searchParams.get('path') || '';
     const ch = await store.getChangeForPath(cid, filePath);
     if (!ch) { sendJson(res, 404, { error: 'no diff' }); return; }
-    const { added, removed } = diffStats(ch.before, ch.after);
-    sendJson(res, 200, {
-      path: filePath,
-      before: ch.before,
-      after: ch.after,
-      unified: unifiedDiff(filePath, ch.before, ch.after),
-      added,
-      removed,
-    });
+    try {
+      sendJson(res, 200, await liveChange(cid, filePath, ch));
+    } catch (err) {
+      if (err.code === 'E_SANDBOX') { sendJson(res, 403, { error: 'E_SANDBOX' }); return; }
+      throw err;
+    }
     return;
   }
 
@@ -957,7 +992,7 @@ async function routeApi(req, res, url) {
 
   if (p === '/api/skills' && m === 'GET') {
     const s = await store.getSettings();
-    sendJson(res, 200, await listSkills(SKILL_DIRS, s.skills || {}));
+    sendJson(res, 200, await listSkills(SKILL_DIRS, s.skills || {}, USER_SKILLS));
     return;
   }
   if (p === '/api/skills' && m === 'POST') {
@@ -966,7 +1001,7 @@ async function routeApi(req, res, url) {
       const existing = await listSkillRecords(SKILL_DIRS);
       const created = await createSkill(USER_SKILLS, body || {}, new Set(existing.map((skill) => skill.id)));
       await store.putSettings({ skills: { [created.id]: true } });
-      const list = await listSkills(SKILL_DIRS, (await store.getSettings()).skills || {});
+      const list = await listSkills(SKILL_DIRS, (await store.getSettings()).skills || {}, USER_SKILLS);
       sendJson(res, 201, list.find((skill) => skill.id === created.id));
     } catch (err) {
       sendCatalogError(res, err);
@@ -974,6 +1009,16 @@ async function routeApi(req, res, url) {
     return;
   }
   match = p.match(/^\/api\/skills\/([^/]+)$/);
+  if (match && m === 'DELETE') {
+    const id = decodeURIComponent(match[1]);
+    try {
+      await deleteSkill(SKILL_DIRS, USER_SKILLS, id);
+      sendJson(res, 200, { ok: true, id });
+    } catch (err) {
+      sendCatalogError(res, err);
+    }
+    return;
+  }
   if (match && (m === 'PUT' || m === 'PATCH')) {
     const id = decodeURIComponent(match[1]);
     if (!SKILL_ID.test(id)) {
@@ -994,7 +1039,7 @@ async function routeApi(req, res, url) {
           await store.putSettings({ skills: { [id]: body.enabled !== false } });
         }
       }
-      const list = await listSkills(SKILL_DIRS, (await store.getSettings()).skills || {});
+      const list = await listSkills(SKILL_DIRS, (await store.getSettings()).skills || {}, USER_SKILLS);
       const skill = list.find((item) => item.id === id);
       if (!skill) {
         sendJson(res, 404, { error: 'skill not found', code: 'err_skill_not_found' });
