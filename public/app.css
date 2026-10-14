@@ -486,7 +486,8 @@ a:hover {
 
 .dot-waiting { background-color: var(--status-waiting); opacity: 0.9; }
 .dot-resuming, .dot-recovering { background-color: var(--status-resuming); }
-.dot-failed { background-color: var(--status-failed); opacity: 0.9; }
+.dot-failed,
+.dot-error { background-color: var(--status-failed); opacity: 0.9; }
 .dot-done { background-color: var(--status-done); opacity: 0.75; }
 .dot-idle { background-color: var(--border-strong); }
 .dot-paused { background-color: var(--border-focus); }
@@ -2661,3 +2662,12 @@ button.file-tree-row:hover,
   display: block;
 }
 
+
+.ws-node-add {
+  flex-shrink: 0;
+  visibility: hidden;
+}
+.ws-node-header:hover .ws-node-add,
+.ws-tree-node.ws-active .ws-node-add {
+  visibility: visible;
+}

@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import http, { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -47,6 +47,13 @@ import { resolveAllowedWorkspacePath, defaultWorkspaceRoot } from './src/core/wo
 import { acquireDataDirLock } from './src/core/lock.mjs';
 import { presentContext } from './src/core/usage.mjs';
 import fs from 'node:fs/promises';
+
+// 内置 fetch 默认不读 HTTP(S)_PROXY；配置了代理时让模型请求也走它（遵守 NO_PROXY）
+const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'].some((k) => String(process.env[k] || '').trim());
+if (PROXY_ENV && process.env.NODE_USE_ENV_PROXY !== '1') {
+  if (typeof http.setGlobalProxyFromEnv === 'function') http.setGlobalProxyFromEnv();
+  else console.warn('PI_WORK_WARN 检测到代理环境变量，但当前 Node 不支持 http.setGlobalProxyFromEnv，请以 NODE_USE_ENV_PROXY=1 启动');
+}
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');

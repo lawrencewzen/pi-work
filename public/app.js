@@ -10,6 +10,8 @@ const state = {
   conversations: [],
   activeConversationId: null,
   activeConversationData: null,
+  // 尚未创建的新对话（草稿）选好的角色 / 流水线，发出第一条消息时随创建请求带上
+  draft: { roleId: '', pipelineId: '' },
   activeRightTab: 'diff', // 'diff' | 'file' | 'markdown' | 'editor'
   changes: [],
   activeFilePath: null,
@@ -654,7 +656,7 @@ export async function loadWorkspaces() {
   }
 }
 
-export async function loadConversations(wid) {
+export async function loadConversations(wid, { draft = false } = {}) {
   try {
     state.conversations = await api(`/api/workspaces/${encodeURIComponent(wid)}/conversations`);
     state.allConversations[wid] = state.conversations;
@@ -663,7 +665,9 @@ export async function loadConversations(wid) {
   }
 
   const savedCid = localStorage.getItem('piwork_active_conv');
-  if (savedCid && state.conversations.some((c) => c.id === savedCid)) {
+  if (draft) {
+    state.activeConversationId = null;
+  } else if (savedCid && state.conversations.some((c) => c.id === savedCid)) {
     state.activeConversationId = savedCid;
   } else if (state.conversations.length > 0) {
     state.activeConversationId = state.conversations[0].id;
@@ -698,7 +702,7 @@ function resetRightPanelAndStatus() {
   renderRightPanel();
 }
 
-export async function selectWorkspace(wid) {
+export async function selectWorkspace(wid, { draft = false } = {}) {
   if (state.activeWorkspaceId === wid) return;
   if (workspaceTreeRefreshTimer) {
     clearTimeout(workspaceTreeRefreshTimer);
@@ -718,7 +722,7 @@ export async function selectWorkspace(wid) {
   localStorage.setItem('piwork_active_ws', wid);
   resetRightPanelAndStatus();
   renderChatThread();
-  await loadConversations(wid);
+  await loadConversations(wid, { draft });
 }
 
 function treeEntriesEqual(a, b) {
@@ -1279,7 +1283,17 @@ runningPollInterval = setInterval(() => {
 // Actions: Send, Controls, Create Workspace, Conversation
 // ============================================================================
 export async function sendMessage(text) {
-  if (!text || !text.trim() || !state.activeConversationId) return;
+  if (!text || !text.trim()) return;
+  if (!state.activeConversationId) {
+    // 没有选中的对话时，直接发送即新建一个对话；失败则把内容放回输入框
+    const { roleId, pipelineId } = state.draft;
+    const conv = await createNewConversation(pipelineId ? { pipelineId } : { roleId });
+    if (!conv?.id) {
+      const composer = document.querySelector('[data-testid="chat-input"]');
+      if (composer && !composer.value.trim()) composer.value = text;
+      return;
+    }
+  }
   const cid = state.activeConversationId;
 
   if (state.activeConversationData) {
@@ -1382,6 +1396,7 @@ export async function createNewConversation(opts = {}) {
   try {
     const conv = await api(`/api/workspaces/${encodeURIComponent(state.activeWorkspaceId)}/conversations`, 'POST', body);
     await loadConversations(state.activeWorkspaceId);
+    state.draft = { roleId: '', pipelineId: '' };
     if (conv.id) await selectConversation(conv.id);
     return conv;
   } catch (err) {
@@ -1454,6 +1469,7 @@ export function renderSidebarWorkspaces() {
         `<svg class="ws-node-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>` +
         `<span class="ws-node-title">${escapeHtml(ws.name)}</span>` +
         (isActive ? `<span class="ws-node-badge">${escapeHtml(t('current'))}</span>` : '') +
+        `<button class="btn-icon-xs ws-node-add" data-testid="conversation-new" data-action="new-conversation" data-ws-id="${escapeHtml(ws.id)}" title="${escapeHtml(t('new_conversation'))}">+</button>` +
         `</div>` +
         (isActive ? `<div class="ws-node-children" id="conv-list-container"></div>` : '') +
         `</div>`
@@ -1586,7 +1602,7 @@ const DISPATCH_BUSY = new Set(['running', 'recovering', 'paused']);
 
 function dispatchContext() {
   return {
-    conv: state.activeConversationData,
+    conv: state.activeConversationId ? state.activeConversationData : state.draft,
     roles: state.roles,
     pipelines: state.pipelines,
     models: state.settings?.models || {},
@@ -1629,7 +1645,7 @@ function agentMenuItem({ label, model, selected, attrs }) {
 }
 
 function renderAgentMenuHtml() {
-  const conv = state.activeConversationData || {};
+  const conv = (state.activeConversationId ? state.activeConversationData : state.draft) || {};
   const activePipe = conv.pipelineId || '';
   const activeRole = activePipe ? '' : ((conv.roleId && conv.roleId !== 'default') ? conv.roleId : '');
   const roles = (state.roles || []).filter((r) => r && r.id && r.id !== 'default');
@@ -1681,11 +1697,11 @@ function toggleAgentMenu() {
     closeAgentMenu();
     return;
   }
-  if (!state.activeConversationId) {
-    showToast('err_no_conversation');
+  if (!state.activeConversationId && !state.activeWorkspaceId) {
+    showToast('err_select_workspace');
     return;
   }
-  const status = state.activeConversationData?.status || 'idle';
+  const status = state.activeConversationId ? (state.activeConversationData?.status || 'idle') : 'idle';
   if (DISPATCH_BUSY.has(status)) {
     showToast('err_role_busy');
     return;
@@ -1696,8 +1712,16 @@ function toggleAgentMenu() {
 }
 
 export async function pickDispatchTarget(el) {
+  if (!el) return;
   const cid = state.activeConversationId;
-  if (!cid || !el) return;
+  if (!cid) {
+    // 草稿对话：只记在本地，创建时带上
+    const pipelineId = el.getAttribute('data-pipeline-id') || '';
+    state.draft = { pipelineId, roleId: el.getAttribute('data-role-id') || '' };
+    closeAgentMenu();
+    renderStatusBar();
+    return;
+  }
   const patch = {};
   if (el.hasAttribute('data-pipeline-id')) {
     patch.pipelineId = el.getAttribute('data-pipeline-id') || null;
@@ -3144,58 +3168,31 @@ function setWorkspaceSubmitBusy(busy) {
   }
 }
 
-export async function openNewConversationModal() {
-  if (!state.activeWorkspaceId) {
+// 新对话不弹窗：进入草稿状态，发出第一条消息时才真正创建
+export async function startNewConversation(wid) {
+  const target = wid || state.activeWorkspaceId;
+  if (!target) {
     showToast('err_select_workspace');
     return;
   }
-  try { state.roles = await api('/api/roles'); } catch { /* keep existing */ }
-  try { state.pipelines = await api('/api/pipelines'); } catch { /* keep existing */ }
-
-  const roleOpts = (state.roles || [])
-    .map((r) => `<option value="role:${escapeHtml(r.id)}">${escapeHtml(localizeRoleLabel(r.id || r.name))}</option>`)
-    .join('');
-  const pipeOpts = (state.pipelines || [])
-    .map((p) => `<option value="pipeline:${escapeHtml(p.id)}">${escapeHtml(pipelineOptionLabel(p))}</option>`)
-    .join('');
-
-  openModal(`
-    <div class="modal-dialog">
-      <h3>${escapeHtml(t('new_conversation'))} <span style="cursor:pointer;color:var(--text-muted)" data-action="close-modal">×</span></h3>
-      <div class="form-group">
-        <label>${escapeHtml(t('conv_title_label'))}</label>
-        <input id="conv-title-input" data-testid="conversation-title-input" placeholder="${escapeHtml(t('conv_title_placeholder'))}" />
-      </div>
-      <div class="form-group">
-        <label>${escapeHtml(t('conv_role_pipeline_label'))}</label>
-        <select id="conv-role-pipeline" data-testid="conversation-role-pipeline">
-          <option value="">${escapeHtml(t('conv_default_agent'))}</option>
-          ${roleOpts ? `<optgroup label="${escapeHtml(t('conv_roles_group'))}">${roleOpts}</optgroup>` : ''}
-          ${pipeOpts ? `<optgroup label="${escapeHtml(t('conv_pipelines_group'))}">${pipeOpts}</optgroup>` : ''}
-        </select>
-      </div>
-      <div class="modal-actions">
-        <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
-        <button class="btn p" data-testid="conversation-create-submit" data-action="submit-conversation">${escapeHtml(t('btn_create'))}</button>
-      </div>
-    </div>
-  `);
-  document.getElementById('conv-title-input')?.focus();
-}
-
-export async function submitNewConversation() {
-  if (!state.activeWorkspaceId) {
-    showToast('err_select_workspace');
-    return;
+  state.draft = { roleId: '', pipelineId: '' };
+  if (state.activeWorkspaceId !== target) {
+    await selectWorkspace(target, { draft: true });
+  } else if (state.activeConversationId) {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+    state.activeConversationId = null;
+    state.activeConversationData = null;
+    localStorage.removeItem('piwork_active_conv');
+    resetRightPanelAndStatus();
+    renderConversations();
+    renderChatThread();
   }
-  const title = document.getElementById('conv-title-input')?.value.trim() || '';
-  const picked = document.getElementById('conv-role-pipeline')?.value || '';
-  const opts = {};
-  if (title) opts.title = title;
-  if (picked.startsWith('role:')) opts.roleId = picked.slice(5);
-  else if (picked.startsWith('pipeline:')) opts.pipelineId = picked.slice(9);
-  const conv = await createNewConversation(opts);
-  if (conv) closeModal();
+  closeAgentMenu();
+  renderStatusBar();
+  document.querySelector('[data-testid="chat-input"]')?.focus();
 }
 
 export function openNewWorkspaceModal() {
@@ -3446,8 +3443,7 @@ window.__app = {
   toggleSkill,
   filterPlugins,
   filterSkills,
-  openNewConversationModal,
-  submitNewConversation,
+  startNewConversation,
   openNewWorkspaceModal,
   toggleWsModalTab,
   submitWorkspaceModal,
@@ -3488,10 +3484,7 @@ document.addEventListener('click', (e) => {
       openNewWorkspaceModal();
       break;
     case 'new-conversation':
-      openNewConversationModal();
-      break;
-    case 'submit-conversation':
-      submitNewConversation();
+      startNewConversation(actionEl.getAttribute('data-ws-id'));
       break;
     case 'open-settings':
       openSettings();
