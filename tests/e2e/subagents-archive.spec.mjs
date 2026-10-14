@@ -70,6 +70,31 @@ async function shot(page, name) {
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
 
+async function assertNarrowWorkbench(page) {
+  const measured = await page.evaluate(() => {
+    const box = (sel) => {
+      const el = document.querySelector(sel);
+      const rect = el.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    };
+    return {
+      center: box('.col-center').width,
+      right: box('[data-testid=right-panel]').width,
+      pause: box('[data-testid=btn-pause]').height,
+      resume: box('[data-testid=btn-resume]').height,
+      stop: box('[data-testid=btn-stop]').height,
+      agent: box('[data-testid=composer-agent]').height,
+      context: box('.chip-runtime-meta').height,
+    };
+  });
+  console.log(`NARROW_1000 ${JSON.stringify(measured)}`);
+  expect(measured.center).toBeGreaterThanOrEqual(420);
+  expect(measured.right).toBeLessThanOrEqual(340);
+  for (const key of ['pause', 'resume', 'stop', 'agent', 'context']) {
+    expect(measured[key], key).toBeLessThanOrEqual(32);
+  }
+}
+
 async function switchLanguage(page, lang) {
   await page.locator('[data-action=open-settings]').click();
   await page.locator(`[data-action=switch-language][data-lang=${lang}]`).click();
@@ -148,6 +173,7 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(background.getByTestId('subagent-background')).toHaveText('后台');
     await expect(foreground.locator('.status-dot')).toBeVisible();
     await expect(page.getByTestId('message').filter({ hasText: '主对话已汇总。' })).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('.conv-active .sub-agent-row:not(.is-real) .sub-agent-name').first()).toHaveText('主 Agent');
     await expect(page.locator('body')).not.toContainText('sk-scout-test');
     await shot(page, 'sidebar-subagents-light-1440');
 
@@ -157,12 +183,15 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     const transcript = page.getByTestId('subagent-thread');
     await expect(transcript.locator('[data-testid=message][data-role=user]')).toContainText(FOREGROUND_TASK);
     await expect(transcript.locator('[data-testid=message][data-role=assistant]')).toContainText(CHILD_TEXT);
+    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await expect(page.getByTestId('chat-input')).toBeDisabled();
     await shot(page, 'subagent-messages-light-1440');
 
     await switchLanguage(page, 'en');
     await expect(page.getByTestId('subagent-banner-text')).toContainText('Sub-agent ·');
     await expect(page.getByTestId('subagent-back')).toHaveText('Back to main chat');
+    await expect(page.locator('.conv-active .sub-agent-row:not(.is-real) .sub-agent-name').first()).toHaveText('Main agent');
+    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await expect(background.getByTestId('subagent-background')).toHaveText('Background');
     await switchLanguage(page, 'zh');
     await expect(page.getByTestId('subagent-back')).toHaveText('返回主对话');
@@ -178,8 +207,21 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await switchAppearance(page, 'light');
 
     await page.setViewportSize({ width: 1000, height: 760 });
+    await assertNarrowWorkbench(page);
+    await expect(page.getByTestId('btn-pause')).toHaveAttribute('aria-label', '暂停');
+    await expect(page.getByTestId('btn-pause')).toHaveAttribute('title', '暂停执行');
+    await expect(page.getByTestId('btn-resume')).toHaveAttribute('aria-label', '继续');
+    await expect(page.getByTestId('btn-resume')).toHaveAttribute('title', '继续执行');
+    await expect(page.getByTestId('btn-stop')).toHaveAttribute('aria-label', '终止');
+    await expect(page.getByTestId('btn-stop')).toHaveAttribute('title', '终止并保存检查点');
+    await expect(page.locator('[data-testid=btn-pause] .btn-ctrl-label')).toBeHidden();
+    await expect(page.locator('[data-testid=btn-resume] .btn-ctrl-label')).toBeHidden();
+    await expect(page.locator('[data-testid=btn-stop] .btn-ctrl-label')).toBeHidden();
+    await shot(page, 'sidebar-subagents-light-1000');
     await foreground.click();
     await expect(page.getByTestId('subagent-banner')).toBeVisible();
+    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
+    await assertNarrowWorkbench(page);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await shot(page, 'subagent-1000');
     await page.getByTestId('subagent-back').click();

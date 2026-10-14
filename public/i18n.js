@@ -1163,6 +1163,11 @@ export function applyI18n(root = document) {
     if (!key) return;
     el.setAttribute('title', t(key));
   });
+  root.querySelectorAll('[data-i18n-aria]').forEach((el) => {
+    const key = el.getAttribute('data-i18n-aria');
+    if (!key) return;
+    el.setAttribute('aria-label', t(key));
+  });
 }
 
 if (typeof window !== 'undefined') {

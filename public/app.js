@@ -1685,7 +1685,7 @@ export function renderSidebarAgents(conv) {
       `<div class="main-agent-node">` +
       `<div class="main-agent-header">` +
       `<span class="status-dot ${statusClass}" data-testid="status-dot" data-status="${escapeHtml(status)}"></span>` +
-      `<span class="main-agent-name">${escapeHtml(t('agent_name'))}</span>` +
+      `<span class="main-agent-name">${escapeHtml(t('ag_group_main'))}</span>` +
       `<span class="main-agent-state">${escapeHtml(statusTextStr)}</span>` +
       `</div>` +
       `</div>` +
@@ -1699,7 +1699,9 @@ export function renderSidebarAgents(conv) {
       .map((ag, index) => {
         if (isRealSubagent(ag)) return renderRealSubagentRow(ag);
         const isDefault = index === 0;
-        const name = localizeRoleLabel(ag.roleId || ag.name || '');
+        const name = String(ag.roleId || '').toLowerCase() === 'default'
+          ? t('ag_group_main')
+          : localizeRoleLabel(ag.roleId || ag.name || '');
         const st = ag.status || (isDefault ? conv.status || 'idle' : 'waiting');
         const statusClass = `dot-${st}`;
         const statusText = t(`status_${st}`) || st;
@@ -2242,7 +2244,7 @@ export function renderChatThread() {
         `<div class="msg-group msg-side-agent" data-testid="message" data-role="assistant">` +
         `<div class="msg-header">` +
         `<div class="msg-avatar avatar-assistant">π</div>` +
-        `<span class="msg-sender">${escapeHtml(sender)}</span>` +
+        `<span class="msg-sender" data-testid="message-sender">${escapeHtml(sender)}</span>` +
         (chip ? `<span class="msg-chip">${escapeHtml(chip)}</span>` : '') +
         `</div>` +
         `<div class="msg-body" data-testid="message-body">${bodyHtml}</div>` +
@@ -2322,6 +2324,12 @@ export function renderToolRowHtml(tool) {
 }
 
 function assistantLabel(m) {
+  if (state.viewingAgentId) {
+    const agent = state.viewingAgent
+      || (state.activeConversationData?.agents || []).find((item) => item.id === state.viewingAgentId);
+    const name = agent ? realSubagentName(agent) : '';
+    if (name) return name;
+  }
   const rid = m?.roleId || m?.agentId;
   if (rid) {
     const role = (state.roles || []).find((r) => r.id === rid);
