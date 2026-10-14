@@ -35,8 +35,21 @@ async function openWorkflow(page, section = 'roles') {
   await page.getByTestId(tab).click();
 }
 
+async function acceptConfirm(page, message) {
+  const dialog = page.getByTestId('confirm-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute('data-danger', 'true');
+  if (message) await expect(dialog.getByTestId('confirm-message')).toHaveText(message);
+  await dialog.getByTestId('confirm-ok').click();
+  await expect(dialog).toBeHidden();
+}
+
 test('settings can create, edit, and delete roles and pipelines', async ({ page }) => {
-  page.on('dialog', (dialog) => dialog.accept());
+  page.on('dialog', async (dialog) => {
+    const message = dialog.message();
+    await dialog.dismiss();
+    throw new Error(`native dialog should not open: ${message}`);
+  });
 
   await openWorkflow(page, 'roles');
   const roleCard = (id) => page.locator(`[data-testid=workflow-role-card][data-id=${id}]`);
@@ -46,6 +59,7 @@ test('settings can create, edit, and delete roles and pipelines', async ({ page 
   await expect(roleCard('coder')).toBeVisible();
 
   await roleCard('planner').getByRole('button', { name: '删除' }).click();
+  await acceptConfirm(page, '删除角色「规划」？');
   await expect(page.locator('.toast-msg')).toContainText('功能交付');
   await expect(roleCard('planner')).toBeVisible();
 
@@ -100,16 +114,23 @@ test('settings can create, edit, and delete roles and pipelines', async ({ page 
 
   await page.getByTestId('workflow-section-roles').click();
   await reviewer.getByRole('button', { name: '删除' }).click();
+  await page.getByTestId('confirm-cancel').click();
+  await expect(page.getByTestId('confirm-dialog')).toBeHidden();
+  await expect(reviewer).toBeVisible();
+  await reviewer.getByRole('button', { name: '删除' }).click();
+  await acceptConfirm(page, '删除角色「复核」？');
   await expect(page.locator('.toast-msg')).toContainText('复核流程');
   await expect(reviewer).toBeVisible();
 
   await page.getByTestId('workflow-section-pipelines').click();
   await review.getByRole('button', { name: '删除' }).click();
+  await acceptConfirm(page, '删除流水线「复核流程」？');
   await expect(review).toHaveCount(0);
   await expect(page.locator('[data-testid=workflow-pipeline-card][data-id=feature]')).toBeVisible();
 
   await page.getByTestId('workflow-section-roles').click();
   await reviewer.getByRole('button', { name: '删除' }).click();
+  await acceptConfirm(page, '删除角色「复核」？');
   await expect(reviewer).toHaveCount(0);
   await expect(page.locator('[data-testid=workflow-role-card][data-id=coder]')).toBeVisible();
 
