@@ -23,6 +23,7 @@ import {
   grokSourceTemplate,
   sourceFromEnv,
   probeModels,
+  probeFailurePayload,
   effectiveBaseUrl,
   vendorPreset,
   sourceNeedsKey,
@@ -211,12 +212,17 @@ async function settingsResponse(stored) {
 
 function presentProbe(result) {
   if (result?.ok) return { ok: true, models: result.models || [] };
-  return { ok: false, error: result?.error || 'request failed' };
+  return probeFailurePayload(result);
 }
 
 function lastTestFrom(result) {
   const lastTest = { ok: result?.ok === true, at: new Date().toISOString() };
-  if (!lastTest.ok) lastTest.error = result?.error || 'request failed';
+  if (!lastTest.ok) {
+    const failure = probeFailurePayload(result);
+    lastTest.error = failure.error;
+    if (failure.code) lastTest.code = failure.code;
+    if (failure.status) lastTest.status = failure.status;
+  }
   return lastTest;
 }
 

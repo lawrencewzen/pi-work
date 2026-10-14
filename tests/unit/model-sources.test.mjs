@@ -12,6 +12,7 @@ const {
   validateRoleModels,
   publicSource,
   probeModels,
+  probeFailurePayload,
   GROK_SOURCE_ID,
 } = sources;
 
@@ -327,6 +328,8 @@ test('probeModels reports success, failure, timeout, and redacts keys', async ()
     }),
   });
   assert.equal(failed.ok, false);
+  assert.equal(failed.code, 'auth');
+  assert.equal(failed.status, 401);
   assert.equal(failed.error.includes(secret), false);
   assert.match(failed.error, /sk-\*\*\*|rejected/);
 
@@ -339,7 +342,7 @@ test('probeModels reports success, failure, timeout, and redacts keys', async ()
       throw err;
     },
   });
-  assert.deepEqual(timedOut, { ok: false, error: 'timeout' });
+  assert.deepEqual(timedOut, { ok: false, error: 'timeout', code: 'timeout' });
 
   const thrown = await probeModels({
     baseUrl: 'http://127.0.0.1:9/v1',
@@ -349,6 +352,74 @@ test('probeModels reports success, failure, timeout, and redacts keys', async ()
     },
   });
   assert.equal(thrown.ok, false);
+  assert.equal(thrown.code, 'network');
   assert.equal(thrown.error.includes(secret), false);
   assert.match(thrown.error, /connect failed/);
+});
+
+test('probeModels assigns a code for network, json, 403, 404, and other HTTP errors', async () => {
+  const secret = 'sk-live-secret-9999';
+  const refused = await probeModels({
+    baseUrl: 'http://127.0.0.1:9/v1',
+    apiKey: secret,
+    fetchImpl: async () => {
+      const err = new TypeError('fetch failed');
+      err.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:9'), { code: 'ECONNREFUSED' });
+      throw err;
+    },
+  });
+  assert.deepEqual(refused, { ok: false, error: 'fetch failed', code: 'network' });
+
+  const html = await probeModels({
+    baseUrl: 'http://127.0.0.1:9/v1',
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => '<html>nope</html>' }),
+  });
+  assert.deepEqual(html, { ok: false, error: 'invalid JSON', code: 'bad_json' });
+
+  const forbidden = await probeModels({
+    baseUrl: 'http://127.0.0.1:9/v1',
+    fetchImpl: async () => ({ ok: false, status: 403, text: async () => '' }),
+  });
+  assert.deepEqual(forbidden, { ok: false, error: 'HTTP 403', code: 'auth', status: 403 });
+
+  const missing = await probeModels({
+    baseUrl: 'http://127.0.0.1:9/v1',
+    fetchImpl: async () => ({ ok: false, status: 404, text: async () => 'missing' }),
+  });
+  assert.deepEqual(missing, { ok: false, error: 'missing', code: 'not_found', status: 404 });
+
+  const upstream = await probeModels({
+    baseUrl: 'http://127.0.0.1:9/v1',
+    apiKey: secret,
+    fetchImpl: async () => ({
+      ok: false,
+      status: 502,
+      text: async () => JSON.stringify({ error: { message: `overloaded ${secret}` } }),
+    }),
+  });
+  assert.equal(upstream.code, 'http');
+  assert.equal(upstream.status, 502);
+  assert.equal(upstream.error.includes(secret), false);
+  assert.match(upstream.error, /overloaded/);
+});
+
+test('stored lastTest keeps probe code and status and still redacts the error', () => {
+  const stamped = '2026-10-14T00:00:00.000Z';
+  const kept = publicSource(apiSource({
+    lastTest: { ok: false, at: stamped, error: 'HTTP 404', code: 'not_found', status: 404, extra: 'no' },
+  }));
+  assert.deepEqual(kept.lastTest, { ok: false, at: stamped, error: 'HTTP 404', code: 'not_found', status: 404 });
+
+  const dropped = publicSource(apiSource({
+    lastTest: { ok: false, at: stamped, error: 'sk-live-secret-9999 blew up', code: 'explode', status: 99 },
+  }));
+  assert.equal(dropped.lastTest.code, undefined);
+  assert.equal(dropped.lastTest.status, undefined);
+  assert.equal(dropped.lastTest.error.includes('sk-live-secret-9999'), false);
+
+  assert.deepEqual(probeFailurePayload({ error: 'timeout', code: 'timeout', status: 'nope' }), {
+    ok: false,
+    error: 'timeout',
+    code: 'timeout',
+  });
 });

@@ -403,3 +403,41 @@ test('an untouched legacy preset does not create a source or keep string models'
     await stopProcess(proc);
   }
 });
+
+test('POST /api/sources/test keeps the redacted error and stores a probe code', async () => {
+  const secret = 'sk-probe-secret-7788';
+  const fake = http.createServer((req, res) => {
+    res.writeHead(401, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: `rejected ${secret}` } }));
+  });
+  const baseUrl = await new Promise((resolve) => {
+    fake.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${fake.address().port}/v1`));
+  });
+  const srv = await startServer();
+  try {
+    const created = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'Probe',
+      baseUrl,
+      apiKey: secret,
+      models: [],
+    });
+    assert.equal(created.status, 201);
+    const probed = await request(srv.base, 'POST', '/api/sources/test', { sourceId: created.body.id });
+    assert.equal(probed.status, 200);
+    assert.equal(probed.body.ok, false);
+    assert.equal(probed.body.code, 'auth');
+    assert.equal(probed.body.status, 401);
+    assert.match(probed.body.error, /rejected/);
+    assert.equal(probed.text.includes(secret), false);
+    const settings = await request(srv.base, 'GET', '/api/settings');
+    const stored = settings.body.sources.find((source) => source.id === created.body.id);
+    assert.equal(stored.lastTest.ok, false);
+    assert.equal(stored.lastTest.code, 'auth');
+    assert.equal(stored.lastTest.status, 401);
+    assert.equal(JSON.stringify(settings.body).includes(secret), false);
+  } finally {
+    await stopProcess(srv.proc);
+    await new Promise((resolve) => fake.close(resolve));
+  }
+});

@@ -73,6 +73,22 @@ export function normalizeModelList(value) {
   return out;
 }
 
+const PROBE_CODES = new Set(['network', 'timeout', 'bad_json', 'auth', 'not_found', 'http']);
+
+function probeStatus(value) {
+  const status = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(status) || status < 100 || status > 599) return 0;
+  return status;
+}
+
+export function probeFailurePayload(result) {
+  const body = { ok: false, error: String(result?.error || 'request failed') };
+  if (PROBE_CODES.has(result?.code)) body.code = result.code;
+  const status = probeStatus(result?.status);
+  if (status) body.status = status;
+  return body;
+}
+
 function normalizeLastTest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const at = typeof value.at === 'string' ? value.at.trim().slice(0, 40) : '';
@@ -81,6 +97,11 @@ function normalizeLastTest(value) {
   if (!last.ok && value.error != null) {
     const error = redactAuthText(value.error).trim();
     if (error) last.error = error.slice(0, 500);
+  }
+  if (!last.ok && PROBE_CODES.has(value.code)) last.code = value.code;
+  if (!last.ok) {
+    const status = probeStatus(value.status);
+    if (status) last.status = status;
   }
   return last;
 }
@@ -484,6 +505,25 @@ export function redactProbeError(text, secret) {
   return out.trim().slice(0, 500);
 }
 
+function codeForHttpStatus(status) {
+  if (status === 401 || status === 403) return 'auth';
+  if (status === 404) return 'not_found';
+  return 'http';
+}
+
+const NETWORK_CODES = new Set([
+  'ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH',
+  'EAI_AGAIN', 'EPIPE', 'ECONNABORTED',
+]);
+
+function isNetworkFailure(err, message) {
+  const cause = err?.cause?.code || err?.code || '';
+  if (NETWORK_CODES.has(cause)) return true;
+  const text = String(message || '');
+  if (/^(fetch failed|failed to fetch|request failed)$/i.test(text)) return true;
+  return /\b(ECONNREFUSED|ENOTFOUND|ECONNRESET|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN|EPIPE|ECONNABORTED)\b|socket hang up|network error|networkerror|connect failed|fetch failed/i.test(text);
+}
+
 function probeErrorText(text, status, apiKey) {
   let raw = String(text || '').trim();
   if (raw.startsWith('{') || raw.startsWith('[')) {
@@ -533,16 +573,22 @@ export async function probeModels({ baseUrl, apiKey = '', fetchImpl = globalThis
     });
     const text = typeof res.text === 'function' ? await res.text() : '';
     if (!res.ok) {
-      return { ok: false, error: probeErrorText(text, res.status, apiKey) };
+      return probeFailurePayload({
+        error: probeErrorText(text, res.status, apiKey),
+        code: codeForHttpStatus(res.status),
+        status: res.status,
+      });
     }
     let json = {};
     try { json = text ? JSON.parse(text) : {}; } catch {
-      return { ok: false, error: 'invalid JSON' };
+      return probeFailurePayload({ error: 'invalid JSON', code: 'bad_json' });
     }
     return { ok: true, models: modelIdsFrom(json) };
   } catch (err) {
-    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
-    const message = timedOut ? 'timeout' : (err?.message || 'request failed');
-    return { ok: false, error: redactProbeError(message, apiKey) || 'request failed' };
+    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError' || err?.cause?.code === 'ETIMEDOUT' || err?.code === 'ETIMEDOUT';
+    if (timedOut) return probeFailurePayload({ error: 'timeout', code: 'timeout' });
+    const message = redactProbeError(err?.message || 'request failed', apiKey) || 'request failed';
+    if (isNetworkFailure(err, message)) return probeFailurePayload({ error: message, code: 'network' });
+    return probeFailurePayload({ error: message });
   }
 }

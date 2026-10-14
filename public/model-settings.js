@@ -9,6 +9,7 @@ import {
   isMaskedOrEmptyKey,
   httpOrigin,
 } from './agent-chip.js';
+import { formatProbeFailure, sourceProbeStatus } from './probe-error.js';
 
 const FALLBACK_VENDORS = [
   { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', needsKey: true },
@@ -172,14 +173,13 @@ function testedWhen(iso, t) {
 }
 
 function reasonText(source, reason, t) {
-  if (reason === 'unsigned') return t('src_why_unsigned');
-  if (reason === 'no_key') return t('src_why_no_key');
-  if (reason === 'no_url') return t('src_why_no_url');
-  if (reason === 'offline') {
-    if (source?.vendor === 'ollama') return t('src_why_ollama');
-    return t('src_why_offline');
-  }
-  return '';
+  return sourceProbeStatus(source, reason, t);
+}
+
+function probeResultText(test, t) {
+  if (!test || test.ok) return '';
+  if (test.text) return test.text;
+  return formatProbeFailure(test, t) || t('src_test_failed');
 }
 
 function usableCount(state) {
@@ -559,7 +559,7 @@ function renderKeyDrawer(ctx) {
       ? `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-dot ok"></span>${escapeHtml(t('src_test_found', { n: ui.form.models.length }))}</div>` +
         `<div class="ms-checks">${renderCheckboxes(ui.form.models, ui.form.checked, escapeHtml)}</div>` +
         `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`
-      : `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-dot bad"></span>${escapeHtml(test.error || t('src_test_failed'))}</div>` +
+      : `<div class="ms-result" data-testid="model-test-result"><div class="ms-ok"><span class="ms-dot bad"></span>${escapeHtml(probeResultText(test, t))}</div>` +
         (ui.form.models.length ? `<div class="ms-checks">${renderCheckboxes(ui.form.models, ui.form.checked, escapeHtml)}</div>` : '') +
         `<div class="ms-manual"><input class="ms-in mono" id="ms-manual" data-testid="model-manual" placeholder="${escapeHtml(t('src_manual_model'))}" value="${escapeHtml(ui.form.manual || '')}" autocomplete="off"><button type="button" class="btn sm" data-action="ms-add-manual">${escapeHtml(t('src_add_model'))}</button></div></div>`)
     : (editing && ui.form.models.length
@@ -941,7 +941,12 @@ async function testForm(ctx) {
       ui.form.checked = checked;
       ui.form.test = { ok: true };
     } else {
-      ui.form.test = { ok: false, error: result?.error || ctx.t('src_test_failed') };
+      ui.form.test = {
+        ok: false,
+        error: typeof result?.error === 'string' ? result.error : '',
+        code: typeof result?.code === 'string' ? result.code : '',
+        ...(Number.isInteger(result?.status) ? { status: result.status } : {}),
+      };
     }
     ctx.render();
   } catch (err) {
@@ -951,7 +956,7 @@ async function testForm(ctx) {
       ctx.render();
       return;
     }
-    ui.form.test = { ok: false, error: knownError(err, ctx.t) };
+    ui.form.test = { ok: false, text: knownError(err, ctx.t) };
     ctx.render();
   }
 }
@@ -960,7 +965,7 @@ async function testSourceRow(ctx, id) {
   try {
     const result = await ctx.api('/api/sources/test', 'POST', { sourceId: id });
     await reloadSettings(ctx);
-    ctx.showToast(result?.ok ? 'src_test_ok' : 'src_test_failed');
+    ctx.showToast(result?.ok ? 'src_test_ok' : (formatProbeFailure(result, ctx.t) || 'src_test_failed'));
     ctx.render();
   } catch (err) {
     ctx.showToast(knownError(err, ctx.t));
