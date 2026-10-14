@@ -301,17 +301,20 @@ function startScoutModel({ text, readyPath, releasePath }) {
     }
     if (releasePath) {
       const released = new Promise((resolve) => {
+        let settled = false;
         const timer = setInterval(() => {
-          if (existsSync(releasePath)) {
-            clearInterval(timer);
-            resolve(true);
-          }
+          if (existsSync(releasePath)) finish(true);
         }, 20);
-        req.on('close', () => {
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
           clearInterval(timer);
-          closed += 1;
-          resolve(false);
-        });
+          if (!ok) closed += 1;
+          resolve(ok);
+        };
+        // After the body is consumed, aborting the client closes the socket
+        // without a request `close` event.
+        req.socket.on('close', () => finish(false));
       });
       const ok = await released;
       if (!ok || res.writableEnded || res.destroyed) return;
@@ -362,8 +365,7 @@ test('kernel off keeps the subagent messages path unknown', { timeout: 30000 }, 
     const missing = await request(srv.base, 'GET', '/api/conversations/none/agents/none/messages');
     assert.equal(missing.status, 404);
     assert.equal(missing.body.error, 'not found');
-    const wsDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-ws-'));
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'off', path: wsDir });
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'off' });
     assert.equal(ws.status, 201);
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'off' });
     assert.equal(conv.status, 201);
@@ -396,8 +398,7 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
     }, { dataDir });
     proc = srv.proc;
     await bindScout(srv.base, fake);
-    const wsDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-fg-ws-'));
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'fg', path: wsDir });
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'fg' });
     assert.equal(ws.status, 201);
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'fg' });
     assert.equal(conv.status, 201);
@@ -473,8 +474,7 @@ test('background spawn, send, wait, list, stop, and the concurrency cap', { time
     }, { dataDir });
     proc = srv.proc;
     await bindScout(srv.base, fake);
-    const wsDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-bg-ws-'));
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'bg', path: wsDir });
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'bg' });
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'bg' });
     assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'run background' })).status, 202);
     const done = await waitFor(srv.base, conv.body.id, (body) => toolTexts(body).some((text) => text.includes('Stopped a.')));
@@ -519,8 +519,7 @@ test('a second background spawn is refused when the cap is 1', { timeout: 60000 
     }, { dataDir });
     proc = srv.proc;
     await bindScout(srv.base, fake);
-    const wsDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-cap-ws-'));
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'cap', path: wsDir });
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'cap' });
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'cap' });
     assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'two spawns' })).status, 202);
     const done = await waitFor(srv.base, conv.body.id, (body) => toolTexts(body).some((text) => text.includes('limit 1')));
@@ -555,8 +554,7 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
     }, { dataDir });
     proc = srv.proc;
     await bindScout(srv.base, fake);
-    const wsDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-stop-ws-'));
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'stop', path: wsDir });
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'stop' });
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'stop' });
     assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'spawn sleeper' })).status, 202);
     await waitForFile(ready);
@@ -609,8 +607,7 @@ test('a killed foreground subagent resumes the same child without a second submi
     const first = await startServer(env, { dataDir });
     proc = first.proc;
     await bindScout(first.base, fake);
-    const wsDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-recover-ws-'));
-    const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'recover', path: wsDir });
+    const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'recover' });
     const conv = await request(first.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'recover' });
     assert.equal((await request(first.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'delegate' })).status, 202);
     await waitForFile(ready);
@@ -664,8 +661,7 @@ test('a background subagent continues after restart and reports once', { timeout
     const first = await startServer(env, { dataDir });
     proc = first.proc;
     await bindScout(first.base, fake);
-    const wsDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-bgrecover-ws-'));
-    const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'bgrecover', path: wsDir });
+    const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'bgrecover' });
     const conv = await request(first.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'bgrecover' });
     assert.equal((await request(first.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'spawn bg' })).status, 202);
     await waitForFile(ready);
