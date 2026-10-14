@@ -1,6 +1,6 @@
 { "turns": [
   { "text": "开始。\n\n## 计划\n\n- 写 **README**\n\n```js\nconsole.log(1)\n```" },
-  { "tool": "write", "args": { "path": "docs/deep/nested/folder/README.md", "content": "# Hello\n\nline2\n" } },
-  { "tool": "edit", "args": { "path": "docs/deep/nested/folder/README.md", "old": "line2", "new": "line two\nline3" } },
+  { "tool": "write", "args": { "path": "docs/deep/nested/folder/structure/README.md", "content": "# Hello\n\nline2\n" } },
+  { "tool": "edit", "args": { "path": "docs/deep/nested/folder/structure/README.md", "old": "line2", "new": "line two\nline3" } },
   { "text": "完成 ✅" }
 ] }

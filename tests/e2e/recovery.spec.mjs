@@ -1,14 +1,14 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { startServer, tmpdir, api } from './helpers/server.mjs';
-import { createWorkspace, newConversation, send, statusText } from './helpers/ui.mjs';
+import { startServer, prepareWorkspaces, api } from './helpers/server.mjs';
+import { createWorkspace, newConversation, send, statusText, openApp } from './helpers/ui.mjs';
 
 test('kill -9 server mid-task, restart -> resumes to done without duplicate writes', async ({ page }) => {
-  const ws = await tmpdir();
-  let srv = await startServer({ script: 'crash.json' });
+  const { root, dirs: [ws] } = await prepareWorkspaces(['crash']);
+  let srv = await startServer({ script: 'crash.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
   const { dataDir, port } = srv;
-  await page.goto(srv.url);
+  const token = await openApp(page, srv);
   await createWorkspace(page, 'crash', ws);
   await newConversation(page);
   await send(page, 'go');
@@ -16,9 +16,9 @@ test('kill -9 server mid-task, restart -> resumes to done without duplicate writ
   await expect.poll(() => fs.readFile(path.join(ws, 'side_effect.txt'), 'utf8').catch(() => ''), { timeout: 15000 }).toBe('once\n');
   await srv.kill('SIGKILL');
 
-  srv = await startServer({ script: 'crash.json', dataDir, port });
+  srv = await startServer({ script: 'crash.json', dataDir, port, extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
   try {
-    await page.goto(srv.url);
+    await openApp(page, srv, token);
     await page.getByTestId('workspace-item').filter({ hasText: 'crash' }).click();
     await page.getByTestId('conversation-item').first().click();
     await expect(statusText(page)).toContainText(/recovering|恢复|running|运行/i, { timeout: 10000 });
@@ -29,8 +29,8 @@ test('kill -9 server mid-task, restart -> resumes to done without duplicate writ
     // no duplicate tool rows for completed calls
     await expect(page.locator('[data-testid=tool-row][data-tool=bash]')).toHaveCount(1);
     await expect(page.locator('[data-testid=tool-row][data-tool=write]')).toHaveCount(2);
-    const ws0 = (await api(srv.url, 'GET', '/workspaces')).body.find((w) => w.name === 'crash');
-    const convs = (await api(srv.url, 'GET', `/workspaces/${ws0.id}/conversations`)).body;
+    const ws0 = (await api(srv.url, 'GET', '/workspaces', null, token)).body.find((w) => w.name === 'crash');
+    const convs = (await api(srv.url, 'GET', `/workspaces/${ws0.id}/conversations`, null, token)).body;
     expect(convs[0].status).toBe('done');
   } finally { await srv.kill(); }
 });
