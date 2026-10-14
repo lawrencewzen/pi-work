@@ -69,6 +69,7 @@ import { resolveAllowedWorkspacePath, defaultWorkspaceRoot } from './src/core/wo
 import { acquireDataDirLock } from './src/core/lock.mjs';
 import { presentContext } from './src/core/usage.mjs';
 import { kernelRequested, openConversationKernel } from './src/kernel/conversations.mjs';
+import { archivedMutation, isArchivedConversation } from './src/kernel/archive.mjs';
 import fs from 'node:fs/promises';
 
 // 内置 fetch 默认不读 HTTP(S)_PROXY；配置了代理时让模型请求也走它（遵守 NO_PROXY）
@@ -524,7 +525,7 @@ if (kernelRequested()) {
   }
 }
 
-await orch.recover();
+if (!kernelApi) await orch.recover();
 
 const server = createServer(async (req, res) => {
   try {
@@ -951,6 +952,7 @@ async function routeApi(req, res, url) {
         usage: context.usage,
         contextWindow: context.contextWindow,
         contextLabel: context.contextLabel,
+        ...(live.archived ? { archived: true } : {}),
         ...(llmError ? { llmError } : {}),
       });
       return;
@@ -1037,6 +1039,18 @@ async function routeApi(req, res, url) {
     return;
   }
 
+  match = p.match(/^\/api\/conversations\/([^/]+)\/from-history$/);
+  if (match && m === 'POST') {
+    if (!kernelApi) { sendJson(res, 404, { error: 'not found' }); return; }
+    const cid = decodeURIComponent(match[1]);
+    const conv = await store.getConversation(cid);
+    if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
+    const body = await readBody(req);
+    const opened = await kernelApi.continueFromHistory(conv, { title: body.title });
+    sendJson(res, opened.status, opened.body);
+    return;
+  }
+
   match = p.match(/^\/api\/conversations\/([^/]+)\/messages$/);
   if (match && m === 'POST') {
     const cid = decodeURIComponent(match[1]);
@@ -1074,6 +1088,11 @@ async function routeApi(req, res, url) {
     const action = match[2];
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
+    if (kernelApi && isArchivedConversation(conv)) {
+      const blocked = archivedMutation();
+      sendJson(res, blocked.status, blocked.body);
+      return;
+    }
     const result = await orch[action](cid);
     sendJson(res, 200, { status: result.status });
     return;

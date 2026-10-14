@@ -66,9 +66,18 @@
 | `GET /pipelines` · `POST /pipelines` | Pipeline | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |
 | `PUT /pipelines/:id` | Pipeline | 同角色更新。步骤里的 role 必须已存在 |
 | `DELETE /pipelines/:id` | | 200 `{ok:true,id}`。被对话 `pipelineId` 引用 409 `{error:'pipeline_in_use',conversations:n}`。成功删除写入 tombstone，下次启动不会从 `pipelines/*.json` 或 `examples/pipelines/*.json` 再种回该 id |
-status 取值：`idle | running | waiting | paused | recovering | failed | done | stopped`。
+status 取值：`idle | running | waiting | paused | recovering | failed | done | stopped`。`PI_WORK_KERNEL=durable` 时再加 `archived`（见下）。
 
 消息 `messages[]`：`{id, role:'user'|'assistant'|'tool', text?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。
+
+### 旧对话只读归档（仅 `PI_WORK_KERNEL=durable`）
+
+应用库里没有 harness id 的对话是切换前由旧编排器创建的。开关打开时：
+
+- `GET /conversations/:cid` 与 `GET /workspaces/:wid/conversations` 的该项为 `status:'archived'`，并带 `archived:true`。消息仍来自 `messages` / `tool_calls`；`changes` 与 `diff` 路径不变。
+- `POST /conversations/:cid/messages`、`PATCH /conversations/:cid`、`POST .../pause`、`/resume`、`/stop` 返回 `409 {error:'err_archived', status:'archived'}`。进程启动不恢复这些对话。
+- `POST /conversations/:cid/from-history`，请求 `{title?}`，响应 `201 {id, workspaceId, title, status:'idle', sourceConversationId}`。在同一工作区新建一条内核对话，角色沿用旧对话；不复制流水线，也不把旧消息或工具调用写进新对话正文。用户和助手的可见文本（去掉首尾空白；工具行不包含）作为开场上下文交给模型。对新内核对话调用该接口返回 `409 {error:'err_not_archived'}`。
+- 开关关闭时没有 `archived` 字段，状态枚举不含 `archived`，`/from-history` 为 `404 {error:'not found'}`。不导入、不改写旧正文。
 
 ## 4. SSE：`GET /api/conversations/:cid/events`
 支持 `Last-Event-ID` 断线续传（id 为会话内单调递增整数）。事件：
@@ -76,7 +85,7 @@ status 取值：`idle | running | waiting | paused | recovering | failed | done 
 
 ## 5. 持久性/恢复语义
 - 每个工具调用完成后写检查点；工具调用有稳定 `toolCallId`，恢复时已完成的调用**不得重放**（写文件幂等：同 toolCallId 不重复执行）。
-- 进程重启：status 为 running/recovering 的会话自动恢复，先置 `recovering`，完成后 `done`。
+- 进程重启：status 为 running/recovering 的会话自动恢复，先置 `recovering`，完成后 `done`。`PI_WORK_KERNEL=durable` 时，没有 harness id 的旧对话不参与这次恢复，状态改为 `archived`；有 harness id 的对话仍由 Harness `resume()` 接着跑。
 - 工具结果会随下一轮请求发回模型。输出为空时用 `(no output)`，避免模型以为调用没有发生。同一工具、同一组参数连续达到 `PI_WORK_TOOL_LOOP` 后注入一条可见的「停止调用工具」说明并再请求一次；若仍立刻重复，或本步工具次数达到 `PI_WORK_MAX_TOOL_CALLS`，写入可见说明并结束该步（流水线进入下一步）。对同一路径的查看（`read` 同一文件，`ls` / `grep` 同一路径，bash 的 `ls` / `grep` / `cat` 等打到同一路径，参数可以不同）达到 `PI_WORK_EXPLORE_REPEAT` 后注入「不要再重复查看」；再重复则结束该步。本步工具已有 `PI_WORK_TOOL_NUDGE` 次且还没有助手文字时，注入一次「请根据已有结果直接回答」，模型仍可继续，直到上限或重复查看把该步结束。这些结束都让整条运行走到 `done`。
 - 写文件已经成功之后，模型连接被掐断（响应体 `terminated`、`E_STREAM_CUT`、`E_EMPTY_OUTPUT`）会先重试；重试仍失败则结束该步并说明「已按完成的工具结果结束本步」，状态是 `done`，不是 `failed` / `E_LLM`。没有成功工具调用时，这类错误仍然 `failed`。`E_NO_MODEL` 不重试，也不改成完成。
 

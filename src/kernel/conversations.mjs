@@ -20,6 +20,13 @@ import {
 } from './events.mjs';
 import { FAUX_MODEL, openKernel, registerFaux } from './index.mjs';
 import { createKernelModels, explicitDemo } from './models.mjs';
+import {
+  archivedMutation,
+  installArchiveExtension,
+  isArchivedConversation,
+  openFromHistory,
+  presentArchived,
+} from './archive.mjs';
 import { createRoleHost, installRoleExtensions } from './roles.mjs';
 import { createWorkspaceExtension, scriptedDemoStep, toolsForRole } from './tools.mjs';
 
@@ -157,6 +164,7 @@ export async function openConversationKernel({
     },
   }));
   installRoleExtensions(registry, roleBridge);
+  installArchiveExtension(registry);
   const kernel = await openKernel({ dataDir, models, registry });
   const { harness, context } = kernel;
 
@@ -335,6 +343,23 @@ export async function openConversationKernel({
     return harness.conversation(conv.harnessId, context);
   }
 
+  async function createConversation(fields) {
+    const conv = await store.createConversation({ ...fields, status: 'idle' });
+    const role = (fields.roleId && await store.getRole(fields.roleId)) || await store.getRole('default');
+    const created = await harness.createConversation({
+      ownership: { kind: 'ownerless' },
+      agent: {
+        ...(faux ? { model: FAUX_MODEL } : {}),
+        ...(fields.workspacePath ? { cwd: fields.workspacePath } : {}),
+        tools: toolsForRole(role),
+      },
+    }, context);
+    const next = await store.updateConversation(conv.id, { harnessId: created.id, status: 'idle' });
+    if (roles) await roles.afterCreate(next);
+    await attach(next);
+    return next;
+  }
+
   return {
     harness,
     context,
@@ -345,27 +370,11 @@ export async function openConversationKernel({
       watches.clear();
       await kernel.close();
     },
-    async createConversation(fields) {
-      const conv = await store.createConversation({ ...fields, status: 'idle' });
-      const role = (fields.roleId && await store.getRole(fields.roleId)) || await store.getRole('default');
-      const created = await harness.createConversation({
-        ownership: { kind: 'ownerless' },
-        agent: {
-          ...(faux ? { model: FAUX_MODEL } : {}),
-          ...(fields.workspacePath ? { cwd: fields.workspacePath } : {}),
-          tools: toolsForRole(role),
-        },
-      }, context);
-      const next = await store.updateConversation(conv.id, { harnessId: created.id, status: 'idle' });
-      if (roles) await roles.afterCreate(next);
-      await attach(next);
-      return next;
-    },
+    createConversation,
     async present(conv, { includeMessages = false } = {}) {
-      if (!conv?.harnessId) {
-        const idle = { ...conv, status: synthesizeStatus(conv, false), usage: conv.usage || null };
-        if (includeMessages) idle.messages = [];
-        return idle;
+      if (isArchivedConversation(conv)) {
+        const messages = includeMessages ? await store.getMessages(conv.id) : undefined;
+        return presentArchived(conv, { includeMessages, messages });
       }
       const transcript = await readTranscript(conv.harnessId);
       const status = synthesizeStatus(conv, transcript.busy);
@@ -377,6 +386,7 @@ export async function openConversationKernel({
       return out;
     },
     async postMessage(conv, text) {
+      if (isArchivedConversation(conv)) return archivedMutation();
       const conversation = await conversationFor(conv);
       if (!conversation) {
         return { status: 409, body: { error: 'err_send_blocked', status: conv?.status || 'stopped' } };
@@ -406,8 +416,14 @@ export async function openConversationKernel({
         throw err;
       }
     },
-    patchConversation(cid, body) {
+    async patchConversation(cid, body) {
+      const conv = await store.getConversation(cid);
+      if (!conv) return { status: 404, body: { error: 'conversation not found' } };
+      if (isArchivedConversation(conv)) return archivedMutation();
       return roles.patchConversation(cid, body);
+    },
+    continueFromHistory(conv, { title } = {}) {
+      return openFromHistory({ conv, title, store, harness, context, createConversation });
     },
     subscribe(cid, fn) {
       let set = listeners.get(cid);

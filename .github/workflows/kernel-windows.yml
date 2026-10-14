@@ -21,6 +21,8 @@ jobs:
         run: node --test tests/unit/kernel.test.mjs
       - name: Pi Durable conversation HTTP tests
         run: node --test tests/unit/kernel-conversations.test.mjs
+      - name: Pi Durable archived conversation tests
+        run: node --test tests/unit/kernel-archive.test.mjs
       - name: Pi Durable workspace tool tests
         run: node --test tests/unit/kernel-tools.test.mjs
       - name: Pi Durable model source tests
