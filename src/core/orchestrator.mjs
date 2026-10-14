@@ -44,6 +44,44 @@ function stringify(v) {
   try { return JSON.stringify(v); } catch { return String(v); }
 }
 
+function positiveInt(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+function stableStringify(value) {
+  if (value == null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+}
+
+export function toolSignature(name, args) {
+  return `${String(name || '')}\u0000${stableStringify(args || {})}`;
+}
+
+/** Empty tool output is easy for the model to treat as "nothing happened" and call again. */
+export function toolResultText(value) {
+  const text = stringify(value);
+  return text.trim() ? text : '(no output)';
+}
+
+function resetToolBudget(rt) {
+  rt.toolSig = '';
+  rt.toolSigCount = 0;
+  rt.toolCallsThisStep = 0;
+  rt.loopCorrectedSig = '';
+  rt.sawToolResult = false;
+}
+
+function droppedStream(err) {
+  if (!err) return false;
+  if (err.code === 'E_NO_MODEL' || err.code === 'E_ABORTED' || err.code === 'E_SANDBOX') return false;
+  if (err.status === 400 || err.status === 401 || err.status === 403) return false;
+  if (err.code === 'E_STREAM_CUT' || err.code === 'E_EMPTY_OUTPUT' || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT') return true;
+  return /terminated/i.test(String(err.message || ''));
+}
+
 function agentRef(cid, rt) {
   const roleId = rt?.role?.id || rt?.roleId || 'default';
   const idx = rt?.pipeline?.steps?.length ? (rt.pipelineStep || 0) : 0;
@@ -116,6 +154,8 @@ export function createOrchestrator({
   stallMs,
   maxAutoContinues,
   extensions,
+  maxToolCalls,
+  toolLoopLimit,
 } = {}) {
   const retryPolicy = retry || createRetryPolicy({
     maxAttempts: Number(process.env.PI_WORK_RETRY_MAX) || 5,
@@ -124,6 +164,8 @@ export function createOrchestrator({
   });
   const stall = stallMs ?? (Number(process.env.PI_WORK_STALL_MS) || 120_000);
   const maxAC = maxAutoContinues ?? 10;
+  const toolCap = positiveInt(maxToolCalls ?? process.env.PI_WORK_MAX_TOOL_CALLS, 25);
+  const loopLimit = positiveInt(toolLoopLimit ?? process.env.PI_WORK_TOOL_LOOP, 3);
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
   const runtimes = new Map();
@@ -166,7 +208,9 @@ export function createOrchestrator({
         role: null,
         pipeline: null,
         usage: null,
+        toolBudgetReady: false,
       };
+      resetToolBudget(rt);
       runtimes.set(id, rt);
     }
     if (opts.workspacePath) rt.workspacePath = opts.workspacePath;
@@ -323,21 +367,24 @@ export function createOrchestrator({
     for (const m of stored) {
       if (m.role === 'user') msgs.push({ role: 'user', text: m.text || '', content: m.text || '' });
       else if (m.role === 'assistant') msgs.push({ role: 'assistant', text: m.text || '', content: m.text || '' });
-      else if (m.role === 'tool' && m.tool) {
+      else if (m.role === 'tool') {
+        const tool = m.tool || {};
+        const id = String(tool.callId || tool.id || String(m.id || '').replace(/^tool:/, '') || `tool-${msgs.length}`);
+        const output = toolResultText(tool.output ?? m.text ?? '');
         msgs.push({
           role: 'assistant',
           text: '',
           tool_calls: [{
-            id: m.tool.id,
+            id,
             type: 'function',
-            function: { name: m.tool.name, arguments: stringify(m.tool.input || {}) },
+            function: { name: tool.name || 'tool', arguments: stringify(tool.input || {}) },
           }],
         });
         msgs.push({
           role: 'tool',
-          tool_call_id: m.tool.id,
-          text: stringify(m.tool.output ?? m.text ?? ''),
-          content: stringify(m.tool.output ?? m.text ?? ''),
+          tool_call_id: id,
+          text: output,
+          content: output,
         });
       }
     }
@@ -349,11 +396,105 @@ export function createOrchestrator({
     return executeTool(name, args, ctx);
   }
 
+  async function notePriorTools(cid, rt) {
+    if (rt.toolBudgetReady) return;
+    rt.toolBudgetReady = true;
+    const msgs = await store.getMessages(cid);
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m?.kind === 'handoff') break;
+      if (m?.role === 'tool' && m.tool?.status !== 'error') {
+        rt.sawToolResult = true;
+        break;
+      }
+    }
+  }
+
+  async function advancePipelineOrDone(cid, rt, epoch) {
+    if (rt.epoch !== epoch || rt.status === 'paused' || rt.status === 'stopped') return 'stopped';
+    if (rt.pipeline?.steps && rt.pipelineStep < rt.pipeline.steps.length - 1) {
+      await emitAgent(cid, rt, 'done');
+      const fromAgent = rt.role?.id || rt.roleId;
+      rt.pipelineStep += 1;
+      const step = rt.pipeline.steps[rt.pipelineStep];
+      const role = await store.getRole(step.role);
+      if (role) {
+        rt.role = role;
+        rt.roleId = role.id;
+      }
+      const toAgent = role?.id || step.role;
+      const text = step.input === 'previous' ? (rt.lastAssistantText || '') : (rt.originalText || '');
+      await store.addMessage(cid, {
+        id: `${cid}:u:p${rt.pipelineStep}`,
+        role: 'user',
+        text,
+        kind: 'handoff',
+        fromAgent,
+        toAgent,
+      });
+      resetToolBudget(rt);
+      rt.toolBudgetReady = true;
+      await persist(rt);
+      await emitAgent(cid, rt, 'running');
+      return 'advanced';
+    }
+    await emitAgent(cid, rt, 'done');
+    rt.status = 'done';
+    await persist(rt);
+    await emit(cid, 'status', { status: 'done' });
+    return 'done';
+  }
+
+  async function finishWithNote(cid, rt, epoch, note) {
+    if (rt.epoch !== epoch || rt.status === 'paused' || rt.status === 'stopped') return 'stopped';
+    const mid = `${cid}:a:${rt.currentStep}`;
+    const { agentId, roleId } = agentRef(cid, rt);
+    const stored = await store.getMessages(cid);
+    const existing = stored.find((m) => m.id === mid);
+    const text = existing?.text || note;
+    if (!existing) {
+      await store.addMessage(cid, {
+        id: mid,
+        role: 'assistant',
+        text: note,
+        agentId,
+        roleId,
+      });
+      await emit(cid, 'message.delta', { messageId: mid, text: note, agentId, roleId });
+      await emit(cid, 'message.done', { messageId: mid, text: note, agentId, roleId });
+    }
+    if (!rt.lastAssistantText) rt.lastAssistantText = text;
+    rt.currentStep += 1;
+    rt.lastCheckpointAt = Date.now();
+    markProgress(rt);
+    await persist(rt);
+    await emit(cid, 'checkpoint', { at: rt.lastCheckpointAt, step: rt.currentStep });
+    return advancePipelineOrDone(cid, rt, epoch);
+  }
+
+  async function injectCorrection(cid, rt, name) {
+    const text = `停止调用工具。你已经用相同参数连续调用「${name}」${loopLimit} 次。请根据已有结果直接回答，不要再调用工具。`;
+    const mid = `${cid}:u:loop:${rt.currentStep}:${rt.toolSigCount}`;
+    const stored = await store.getMessages(cid);
+    if (!stored.some((m) => m.id === mid)) {
+      await store.addMessage(cid, {
+        id: mid,
+        role: 'user',
+        text,
+        kind: 'correction',
+      });
+      await emit(cid, 'message.delta', { messageId: mid, text, role: 'user', kind: 'correction' });
+      await emit(cid, 'message.done', { messageId: mid, text, role: 'user', kind: 'correction' });
+    }
+    markProgress(rt);
+  }
+
   async function runLoop(cid, epoch) {
     const rt = runtimes.get(cid);
     if (!rt || rt.epoch !== epoch) return;
     if (rt.status === 'stopped' || rt.status === 'paused') return;
     await hydrateUsage(rt);
+    await notePriorTools(cid, rt);
     const loopToken = {};
     rt.loopToken = loopToken;
     rt.loopActive = true;
@@ -431,7 +572,10 @@ export function createOrchestrator({
             }
             return;
           }
-          if (retryPolicy.shouldRetry(err, attempt)) {
+          const dropped = droppedStream(err);
+          const canRetry = retryPolicy.shouldRetry(err, attempt)
+            || (dropped && retryPolicy.shouldRetry(Object.assign(new Error(err.message || 'terminated'), { code: 'E_STREAM_CUT' }), attempt));
+          if (canRetry) {
             const delayMs = retryPolicy.delayMs(attempt);
             rt.retries += 1;
             rt.autoContinues += 1;
@@ -449,6 +593,14 @@ export function createOrchestrator({
               }
             }
             continue;
+          }
+          if (dropped && rt.sawToolResult) {
+            const outcome = await finishWithNote(cid, rt, epoch, '模型连接中断。已按完成的工具结果结束本步。');
+            if (outcome === 'advanced') {
+              attempt = 1;
+              continue;
+            }
+            return;
           }
           rt.status = 'failed';
           await persist(rt);
@@ -471,34 +623,8 @@ export function createOrchestrator({
             rt.lastCheckpointAt = Date.now();
             markProgress(rt);
           }
-          if (rt.pipeline?.steps && rt.pipelineStep < rt.pipeline.steps.length - 1) {
-            await emitAgent(cid, rt, 'done');
-            const fromAgent = rt.role?.id || rt.roleId;
-            rt.pipelineStep += 1;
-            const step = rt.pipeline.steps[rt.pipelineStep];
-            const role = await store.getRole(step.role);
-            if (role) {
-              rt.role = role;
-              rt.roleId = role.id;
-            }
-            const toAgent = role?.id || step.role;
-            const text = step.input === 'previous' ? (rt.lastAssistantText || '') : (rt.originalText || '');
-            await store.addMessage(cid, {
-              id: `${cid}:u:p${rt.pipelineStep}`,
-              role: 'user',
-              text,
-              kind: 'handoff',
-              fromAgent,
-              toAgent,
-            });
-            await persist(rt);
-            await emitAgent(cid, rt, 'running');
-            continue;
-          }
-          await emitAgent(cid, rt, 'done');
-          rt.status = 'done';
-          await persist(rt);
-          await emit(cid, 'status', { status: 'done' });
+          const outcome = await advancePipelineOrDone(cid, rt, epoch);
+          if (outcome === 'advanced') continue;
           return;
         }
 
@@ -517,8 +643,27 @@ export function createOrchestrator({
           await emit(cid, 'message.delta', { messageId, text: action.text, agentId, roleId });
           await emit(cid, 'message.done', { messageId, text: finalText, agentId, roleId });
           rt.lastAssistantText = finalText;
+          rt.toolSig = '';
+          rt.toolSigCount = 0;
+          rt.loopCorrectedSig = '';
           markProgress(rt);
         } else if (action.type === 'tool') {
+          const sig = toolSignature(action.name, action.args || {});
+          if (rt.toolCallsThisStep >= toolCap) {
+            const outcome = await finishWithNote(cid, rt, epoch, `本步工具调用已达上限（${toolCap}），已停止继续调用工具。`);
+            if (outcome === 'advanced') continue;
+            return;
+          }
+          if (sig === rt.toolSig && rt.toolSigCount >= loopLimit) {
+            if (rt.loopCorrectedSig === sig) {
+              const outcome = await finishWithNote(cid, rt, epoch, `仍在用相同参数重复调用「${action.name}」，本步已停止。`);
+              if (outcome === 'advanced') continue;
+              return;
+            }
+            rt.loopCorrectedSig = sig;
+            await injectCorrection(cid, rt, action.name);
+            continue;
+          }
           const toolCallId = `${cid}:${rt.currentStep}`;
           markProgress(rt);
           await persist(rt);
@@ -596,6 +741,7 @@ export function createOrchestrator({
             if (!already && !result.duplicate) {
               const tool = {
                 id: toolCallId,
+                callId: action.callId || toolCallId,
                 name: action.name,
                 path: result.path ?? action.args?.path,
                 added: result.added,
@@ -607,13 +753,23 @@ export function createOrchestrator({
               await store.addMessage(cid, {
                 id: `tool:${toolCallId}`,
                 role: 'tool',
-                text: stringify(result.output),
+                text: toolResultText(result.output),
                 tool,
               });
               await emit(cid, 'tool.end', { tool });
+              if (tool.status !== 'error') rt.sawToolResult = true;
+            } else if (already && existing?.status === 'completed') {
+              rt.sawToolResult = true;
             }
             markProgress(rt);
           }
+          if (sig === rt.toolSig) rt.toolSigCount += 1;
+          else {
+            rt.toolSig = sig;
+            rt.toolSigCount = 1;
+            rt.loopCorrectedSig = '';
+          }
+          rt.toolCallsThisStep += 1;
         }
 
         if (rt.epoch !== epoch || rt.status === 'paused' || rt.status === 'stopped') return;
@@ -700,6 +856,8 @@ export function createOrchestrator({
       // conversation has to be able to start another one.
       if (rt.status === 'stopped') await retireActiveLoop(rt);
       rt.status = 'running';
+      resetToolBudget(rt);
+      rt.toolBudgetReady = true;
       markProgress(rt);
       const firstPatch = {
         workspacePath: opts.workspacePath ?? rt.workspacePath,

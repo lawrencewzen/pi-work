@@ -13,6 +13,8 @@
 | `LLM_API` | `faux` 时使用演示模型；其他值不单独打开演示模型 | 测试可设 `faux` |
 | `PI_WORK_RETRY_BASE_MS` / `PI_WORK_RETRY_MAX` | 续跑退避 | 50 / 5 |
 | `PI_WORK_STALL_MS` | 卡住判定 | 2000 |
+| `PI_WORK_MAX_TOOL_CALLS` | 每个流水线步骤（没有流水线时就是这一轮）最多执行多少次工具，默认 25。达到后写入可见说明并结束该步，运行状态为 `done`，不继续空转 | 不设 |
+| `PI_WORK_TOOL_LOOP` | 同一工具、同一组参数连续执行多少次后注入「停止调用工具」说明，默认 3。注入后若仍立刻重复，结束该步 | 不设 |
 | `PI_WORK_TOKEN` | 可选 Bearer 鉴权；设置后所有 /api 需 `Authorization: Bearer` | 不设 |
 启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。`GET /api/health` → `{ok:true}`。
 
@@ -49,13 +51,13 @@
 | `GET /workspaces/:wid/conversations?q=` | | 列表，按更新时间倒序 |
 | `GET /conversations/:cid` | | `{id,title,status,autoContinues,lastCheckpointAt,currentStep,roleId,pipelineId,pipelineStep,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—` |
 | `POST /conversations/:cid/messages` | `{text}` | `202 {runId}`，开始运行 |
-| `PATCH /conversations/:cid` | `{roleId?, pipelineId?}` | `200 {id, roleId, pipelineId, pipelineStep, status}`。空 `roleId` 表示默认 Agent，并清除流水线。`running` / `recovering` / `paused` 时 409 `{error:'err_role_busy'}`。未知角色或流水线 400 |
+| `PATCH /conversations/:cid` | `{roleId?, pipelineId?}` | `200 {id, roleId, pipelineId, pipelineStep, status, agents}`。`agents` 是切换后的侧栏角色列表，客户端应立刻用它刷新，不必整页刷新。空 `roleId` 表示默认 Agent，并清除流水线。`running` / `recovering` / `paused` 时 409 `{error:'err_role_busy'}`。未知角色或流水线 400 |
 | `POST /conversations/:cid/pause` · `/resume` · `/stop` | | `200 {status}` |
-| `GET /conversations/:cid/changes` | | `[{path, added, removed, toolCallId}]`（按文件聚合） |
+| `GET /conversations/:cid/changes` | | `[{path, added, removed, toolCallId}]`（按文件聚合）。`added` / `removed` 用基线对比工作区里该文件的当前内容 |
 | `GET /workspaces/:wid/files?path=` | | `{path, content}`；越界 → 403 `{error:'E_SANDBOX'}` |
 | `PUT /workspaces/:wid/files` | `{path, content}` | `200 {path, added, removed}` |
-| `GET /conversations/:cid/diff?path=` | | `{path, before, after, unified, added, removed}` |
-| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}`。`GET` 对 `planner`、`coder`、`tester`、`auditor` 额外带 `builtin:true`、`defaultPrompt`（`roles/<id>.json` 里的出厂提示词）和 `defaultTools`。库里的 `systemPrompt` 可以和出厂提示词不同 |
+| `GET /conversations/:cid/diff?path=` | | `{path, before, after, unified, added, removed}`。`before` 是该文件第一次变更前的基线；`after` 与 `unified` 对的是工作区磁盘上的当前内容，所以右侧手动保存的改动也会出现。文件已删除时 `after` 为空。磁盘读不出来时才退回存储的快照 |
+| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}`。`GET` 对 `planner`、`coder`、`tester`、`auditor` 额外带 `builtin:true`、`defaultPrompt`（`roles/<id>.json` 里的出厂提示词）和 `defaultTools`。库里的 `systemPrompt` 可以和出厂提示词不同。启动时若这四个内置角色的提示词仍是上一版英文出厂稿、且用户没有改过，会换成当前 `roles/<id>.json`；改过的提示词保持不动 |
 | `PUT /roles/:id` | Role | 更新已有角色。不存在 404 `{error:'not_found'}`；路径与 body.id 不一致 400 `{errors:['id mismatch']}` |
 | `DELETE /roles/:id` | | 200 `{ok:true,id}`。`default` 不可删，409 `{error:'protected'}`。被流水线引用 409 `{error:'role_in_use',pipelines:[id]}`。被对话 `roleId` 引用 409 `{error:'role_in_conversations',conversations:n}`。成功删除会写入 catalog tombstone，下次启动不会从 `roles/*.json` 再种回该 id |
 | `GET /pipelines` · `POST /pipelines` | Pipeline | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |
@@ -72,6 +74,8 @@ status 取值：`idle | running | waiting | paused | recovering | failed | done 
 ## 5. 持久性/恢复语义
 - 每个工具调用完成后写检查点；工具调用有稳定 `toolCallId`，恢复时已完成的调用**不得重放**（写文件幂等：同 toolCallId 不重复执行）。
 - 进程重启：status 为 running/recovering 的会话自动恢复，先置 `recovering`，完成后 `done`。
+- 工具结果会随下一轮请求发回模型。输出为空时用 `(no output)`，避免模型以为调用没有发生。同一工具、同一组参数连续达到 `PI_WORK_TOOL_LOOP` 后注入一条可见的「停止调用工具」说明并再请求一次；若仍立刻重复，或本步工具次数达到 `PI_WORK_MAX_TOOL_CALLS`，写入可见说明并结束该步（流水线进入下一步）。两种结束都让整条运行走到 `done`。
+- 写文件已经成功之后，模型连接被掐断（响应体 `terminated`、`E_STREAM_CUT`、`E_EMPTY_OUTPUT`）会先重试；重试仍失败则结束该步并说明「已按完成的工具结果结束本步」，状态是 `done`，不是 `failed` / `E_LLM`。没有成功工具调用时，这类错误仍然 `failed`。`E_NO_MODEL` 不重试，也不改成完成。
 
 ## 6. faux 模型脚本
 JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true} | {"delayMs":N} ]}`，依次产出。`{"cut":true}` 第一次执行时抛 `E_STREAM_CUT`，重试时跳过。可选 `"perConversation": true` 时每个会话独立游标。回合上的 `usage` 仅在带有数字 token 字段时进入会话用量（例如 `{"text":"ok","usage":{"total_tokens":16400}}`）；没有 `usage` 时作曲栏保持 `—`。

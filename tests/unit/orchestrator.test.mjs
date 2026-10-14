@@ -7,6 +7,7 @@ import { load } from './_root.mjs';
 const { createOrchestrator } = await load('src/core/orchestrator.mjs');
 const { createFauxLLM } = await load('src/llm/faux.mjs');
 const { createMemoryStore } = await load('src/store/memory.mjs');
+const { createRetryPolicy } = await load('src/core/retry.mjs');
 
 async function waitFor(fn, ms = 5000) {
   const t = Date.now();
@@ -185,6 +186,107 @@ test('a later run can clear a conversation role', async () => {
   const conv = await store.getConversation('C');
   assert.equal(conv.roleId, null);
   assert.equal(conv.pipelineId ?? null, null);
+});
+
+test('tool results are sent back and an identical run is stopped', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  await fs.writeFile(path.join(w, 'keep.txt'), 'here\n');
+  const seen = [];
+  let answered = false;
+  const llm = {
+    async next({ messages }) {
+      seen.push(messages);
+      const corrected = messages.some((m) => String(m.text || m.content || '').includes('停止调用工具'));
+      if (corrected) {
+        if (answered) return { type: 'end' };
+        answered = true;
+        return { type: 'text', text: '目录已经看过。' };
+      }
+      return { type: 'tool', name: 'ls', args: { path: '.' } };
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({ llm, store, toolLoopLimit: 3, maxToolCalls: 25 });
+  await orch.start('L', { workspacePath: w, text: 'list it' });
+  await waitFor(() => orch.status('L').status === 'done');
+  const msgs = await store.getMessages('L');
+  const ls = msgs.filter((m) => m.role === 'tool' && m.tool?.name === 'ls');
+  assert.equal(ls.length, 3);
+  assert.ok(msgs.some((m) => m.kind === 'correction' && String(m.text).includes('停止调用工具')));
+  assert.ok(msgs.some((m) => m.text === '目录已经看过。'));
+  const fed = seen[1].find((m) => m.role === 'tool');
+  assert.ok(fed);
+  assert.match(String(fed.content), /keep\.txt/);
+  assert.equal(String(fed.content).trim().length > 0, true);
+});
+
+test('a tool-call cap ends each pipeline step and the run still finishes', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  const store = createMemoryStore();
+  await store.createRole({ id: 'coder', name: 'Coder', systemPrompt: 'code', tools: ['ls', 'read'] });
+  await store.createRole({ id: 'tester', name: 'Tester', systemPrompt: 'test', tools: ['ls', 'read'] });
+  await store.createPipeline({
+    id: 'demo',
+    name: 'Demo',
+    steps: [{ role: 'coder', input: 'user' }, { role: 'tester', input: 'previous' }],
+  });
+  const llm = { async next() { return { type: 'tool', name: 'ls', args: { path: '.' } }; } };
+  const orch = createOrchestrator({ llm, store, maxToolCalls: 2, toolLoopLimit: 20 });
+  await orch.start('P', { workspacePath: w, text: 'go', roleId: 'coder', pipelineId: 'demo' });
+  await waitFor(() => orch.status('P').status === 'done');
+  const msgs = await store.getMessages('P');
+  assert.equal(msgs.filter((m) => m.role === 'tool' && m.tool?.name === 'ls').length, 4);
+  assert.equal(msgs.filter((m) => m.role === 'assistant' && String(m.text || '').includes('工具调用已达上限')).length, 2);
+  assert.ok(msgs.some((m) => m.kind === 'handoff'));
+  assert.equal(orch.status('P').status, 'done');
+});
+
+test('a terminated stream after a successful write finishes the step', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  let n = 0;
+  const llm = {
+    async next() {
+      n += 1;
+      if (n === 1) {
+        return { type: 'tool', name: 'write', args: { path: 'notes/today.md', content: '今日\nQA-FILE-1\n' } };
+      }
+      const err = new Error('terminated');
+      err.code = 'E_LLM';
+      throw err;
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({
+    llm,
+    store,
+    retry: createRetryPolicy({ maxAttempts: 2, baseMs: 1, maxMs: 5 }),
+  });
+  await orch.start('F', { workspacePath: w, text: 'write the note' });
+  await waitFor(() => orch.status('F').status === 'done' || orch.status('F').status === 'failed');
+  assert.equal(orch.status('F').status, 'done');
+  assert.equal(await fs.readFile(path.join(w, 'notes/today.md'), 'utf8'), '今日\nQA-FILE-1\n');
+  const msgs = await store.getMessages('F');
+  assert.ok(msgs.some((m) => String(m.text || '').includes('已按完成的工具结果结束本步')));
+  assert.equal(msgs.some((m) => String(m.text || '').includes('E_LLM')), false);
+});
+
+test('a missing model still fails after a tool instead of being marked done', async () => {
+  const w = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'piw-o-')));
+  let n = 0;
+  const llm = {
+    async next() {
+      n += 1;
+      if (n === 1) return { type: 'tool', name: 'ls', args: { path: '.' } };
+      const err = new Error('err_no_model');
+      err.code = 'E_NO_MODEL';
+      throw err;
+    },
+  };
+  const store = createMemoryStore();
+  const orch = createOrchestrator({ llm, store, retry: createRetryPolicy({ maxAttempts: 2, baseMs: 1, maxMs: 5 }) });
+  await orch.start('M', { workspacePath: w, text: 'list' });
+  await waitFor(() => orch.status('M').status === 'failed' || orch.status('M').status === 'done');
+  assert.equal(orch.status('M').status, 'failed');
 });
 
 test('stream cut is retried and run completes', async () => {

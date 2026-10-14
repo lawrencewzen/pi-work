@@ -38,12 +38,13 @@ export function activeDispatchTarget({ conv, roles, pipelines } = {}) {
   return { roleId, pipelineId, role };
 }
 
-/** Visible chip text: `Agent · grok-4.6`, or just `Agent` when no model is configured. */
+/** Visible chip text: `编码 · grok-build`, or `Agent · grok-build` for the default role. */
 export function composerAgentText({ agentName = 'Agent', model = '', roleLabel = '' } = {}) {
   const name = trimmed(agentName) || 'Agent';
   const id = trimmed(model);
-  if (id) return `${name} · ${id}`;
   const role = trimmed(roleLabel);
+  const head = role && role !== name ? role : name;
+  if (id) return `${head} · ${id}`;
   if (role && role !== name) return `${name} · ${role}`;
   return name;
 }

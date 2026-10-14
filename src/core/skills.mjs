@@ -49,15 +49,22 @@ export async function listSkillRecords(dirs) {
   const map = new Map();
   for (const dir of dirs || []) {
     const rows = await scanSkills(dir);
+    const root = path.resolve(dir);
     for (const row of rows) {
       if (!SKILL_ID.test(row.id)) continue;
-      map.set(row.id, row);
+      map.set(row.id, { ...row, dir: root });
     }
   }
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function listSkills(dirs, enabledMap = {}) {
+export function skillDeletable(skill, userDir) {
+  if (!skill || skill.source === 'bundled' || skill.source === 'builtin') return false;
+  if (!userDir) return false;
+  return path.resolve(skill.dir || '') === path.resolve(userDir);
+}
+
+export async function listSkills(dirs, enabledMap = {}, userDir) {
   const records = await listSkillRecords(dirs);
   return records.map((skill) => ({
     id: skill.id,
@@ -66,6 +73,7 @@ export async function listSkills(dirs, enabledMap = {}) {
     version: skill.version,
     source: skill.source,
     enabled: enabledMap[skill.id] !== false,
+    deletable: skillDeletable(skill, userDir),
   }));
 }
 
@@ -134,4 +142,20 @@ export async function updateSkill(dirs, userDir, id, patch = {}) {
   };
   await writeSkillFile(userDir, next);
   return next;
+}
+
+export async function deleteSkill(dirs, userDir, id) {
+  if (!SKILL_ID.test(id)) throw catalogError(400, 'err_skill_invalid', 'invalid skill id');
+  const current = (await listSkillRecords(dirs)).find((skill) => skill.id === id);
+  if (!current) throw catalogError(404, 'err_skill_not_found', 'skill not found');
+  if (!skillDeletable(current, userDir)) {
+    throw catalogError(403, 'err_skill_builtin', 'built-in skill cannot be deleted');
+  }
+  const root = path.resolve(userDir);
+  const dir = path.resolve(root, id);
+  if (dir !== root && !dir.startsWith(`${root}${path.sep}`)) {
+    throw catalogError(400, 'err_skill_invalid', 'invalid skill id');
+  }
+  await fs.rm(dir, { recursive: true, force: true });
+  return { id };
 }
