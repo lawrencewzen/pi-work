@@ -828,6 +828,10 @@ export function connectSSE(cid) {
           const item = state.conversations.find((c) => c.id === cid);
           if (item) item.title = data.title;
         }
+        if (data.status && data.status !== 'failed' && data.status !== 'recovering' && state.activeConversationData.llmError) {
+          state.activeConversationData.llmError = null;
+          renderChatThread();
+        }
         renderStatusBar();
         renderConversations();
       }
@@ -974,8 +978,21 @@ export function connectSSE(cid) {
     } catch { /* ignore */ }
   });
 
-  sse.addEventListener('error', () => {
-    // SSE error
+  sse.addEventListener('error', (ev) => {
+    // Connection drops also fire "error" with no payload. Named SSE error
+    // events (E_LLM and friends) arrive as MessageEvents with JSON data.
+    if (typeof ev?.data !== 'string' || !ev.data) return;
+    try {
+      const data = JSON.parse(ev.data);
+      if (!state.activeConversationData || state.activeConversationId !== cid) return;
+      const message = String(data?.message || '').trim();
+      const code = String(data?.code || 'E_LLM').trim() || 'E_LLM';
+      if (!message && !code) return;
+      state.activeConversationData.llmError = { code, message };
+      renderStatusBar();
+      renderChatThread();
+      if (message) showToast(message);
+    } catch { /* ignore malformed payloads */ }
   });
 }
 
@@ -1061,6 +1078,7 @@ export async function sendMessage(text) {
       role: 'user',
       text,
     });
+    state.activeConversationData.llmError = null;
     state.activeConversationData.status = 'running';
     renderChatThread();
     renderStatusBar();
@@ -1337,7 +1355,12 @@ export function renderStatusBar() {
   const statusTextStr = t(`status_${status}`) || status;
 
   const statusTextEl = document.getElementById('status-text');
-  if (statusTextEl) statusTextEl.textContent = statusTextStr;
+  if (statusTextEl) {
+    statusTextEl.textContent = statusTextStr;
+    const failedText = status === 'failed' ? String(conv?.llmError?.message || '').trim() : '';
+    if (failedText) statusTextEl.title = failedText;
+    else statusTextEl.removeAttribute('title');
+  }
 
   const ws = (state.workspaces || []).find((w) => w.id === state.activeWorkspaceId);
   const wsEl = document.getElementById('topbar-workspace');
@@ -1462,7 +1485,8 @@ export function renderChatThread() {
 
   const conv = state.activeConversationData;
   if (!conv || !conv.messages || conv.messages.length === 0) {
-    thread.innerHTML = `
+    const errHtml = llmErrorHtml(conv);
+    thread.innerHTML = errHtml || `
       <div class="empty-placeholder">
         <div>
           <h3 style="margin-bottom:8px;font-weight:600;">${escapeHtml(t('empty_chat_title'))}</h3>
@@ -1470,6 +1494,7 @@ export function renderChatThread() {
         </div>
       </div>
     `;
+    if (errHtml) thread.scrollTop = thread.scrollHeight;
     return;
   }
 
@@ -1533,8 +1558,25 @@ export function renderChatThread() {
     }
   }
 
+  const errHtml = llmErrorHtml(conv);
+  if (errHtml) rendered.push(errHtml);
+
   thread.innerHTML = rendered.join('');
   thread.scrollTop = thread.scrollHeight;
+}
+
+function llmErrorHtml(conv) {
+  const err = conv?.llmError;
+  if (!err) return '';
+  const message = String(err.message || '').trim();
+  const code = String(err.code || '').trim();
+  if (!message && !code) return '';
+  return (
+    `<div class="llm-error" data-testid="llm-error" role="alert">` +
+    (code ? `<div class="llm-error-code">${escapeHtml(code)}</div>` : '') +
+    (message ? `<div class="llm-error-text">${escapeHtml(message)}</div>` : '') +
+    `</div>`
+  );
 }
 
 export function renderToolRowHtml(tool) {
