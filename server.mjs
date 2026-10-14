@@ -24,6 +24,7 @@ import {
   sourceFromEnv,
   probeModels,
   probeFailurePayload,
+  modelsAfterProbe,
   effectiveBaseUrl,
   vendorPreset,
   sourceNeedsKey,
@@ -591,7 +592,17 @@ async function handleSources(req, res, p, m) {
         ? { ok: Boolean(grok.signedIn), models: [GROK_SESSION_MODEL], error: grok.signedIn ? undefined : 'signed out' }
         : await probeModels({ baseUrl: effectiveBaseUrl(probeSource), apiKey: probeSource.apiKey });
       if (!hasOverride) {
-        const sources = settings.sources.map((item) => (item.id === source.id ? { ...item, lastTest: lastTestFrom(result) } : item));
+        const sources = settings.sources.map((item) => {
+          if (item.id !== source.id) return item;
+          const next = { ...item, lastTest: lastTestFrom(result) };
+          if (result?.ok) {
+            const merged = modelsAfterProbe(item.models, result.models);
+            next.models = merged.models;
+            if (merged.catalog.length) next.catalog = merged.catalog;
+            else delete next.catalog;
+          }
+          return next;
+        });
         await store.putSettings({ sources });
       }
       sendJson(res, 200, probeSource.kind === 'grok' ? { ok: result.ok, models: result.models } : presentProbe(result));

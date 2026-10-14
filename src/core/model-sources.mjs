@@ -73,6 +73,19 @@ export function normalizeModelList(value) {
   return out;
 }
 
+/**
+ * Enabled names after a successful source-row probe.
+ * A refresh never drops a name the user already enabled (including ones typed in by hand).
+ * An empty enabled list takes the whole fetched list.
+ * An existing list stays as-is; `catalog` is the full fetch so the edit drawer can check new names.
+ */
+export function modelsAfterProbe(current, fetched) {
+  const enabled = normalizeModelList(current) || [];
+  const found = normalizeModelList(fetched) || [];
+  if (!enabled.length) return { models: found, catalog: found.slice() };
+  return { models: enabled.slice(), catalog: found.slice() };
+}
+
 const PROBE_CODES = new Set(['network', 'timeout', 'bad_json', 'auth', 'not_found', 'http']);
 
 function probeStatus(value) {
@@ -118,6 +131,8 @@ function blankSource(partial) {
     models: partial.models || [],
   };
   if (lastTest) source.lastTest = lastTest;
+  const catalog = normalizeModelList(partial.catalog);
+  if (catalog?.length) source.catalog = catalog;
   return source;
 }
 
@@ -141,6 +156,7 @@ export function normalizeSources(list) {
         apiKey: '',
         models: models.length ? models : [GROK_SESSION_MODEL],
         lastTest: item.lastTest,
+        catalog: item.catalog,
       }));
       continue;
     }
@@ -159,6 +175,7 @@ export function normalizeSources(list) {
       apiKey: typeof item.apiKey === 'string' ? item.apiKey : '',
       models,
       lastTest: item.lastTest,
+      catalog: item.catalog,
     }));
   }
   return out;
@@ -191,6 +208,7 @@ export function publicSource(source, grokStatus) {
     hasApiKey: Boolean(normalized.apiKey),
     models: [...normalized.models],
   };
+  if (normalized.catalog?.length) body.catalog = [...normalized.catalog];
   if (normalized.lastTest) body.lastTest = { ...normalized.lastTest };
   if (normalized.kind === 'grok') {
     body.session = {

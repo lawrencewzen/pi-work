@@ -2514,7 +2514,7 @@ export function renderSettingsModal() {
   const models = tTab === 'models';
   const ctx = models ? modelsCtx() : null;
   ov.innerHTML = `
-    <div class="sm${models ? ' is-models' : ''}">
+    <div class="sm">
       <div class="sm-nav">
         <h3>${escapeHtml(t('settings_title'))}</h3>
         <div class="${tTab === 'general' ? 'on' : ''}" data-action="set-settings-tab" data-tab="general">${escapeHtml(t('settings_tab_general'))}</div>

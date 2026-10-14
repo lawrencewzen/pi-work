@@ -13,6 +13,7 @@ const {
   publicSource,
   probeModels,
   probeFailurePayload,
+  modelsAfterProbe,
   GROK_SOURCE_ID,
 } = sources;
 
@@ -299,6 +300,21 @@ test('public settings and public sources do not leak a raw key', () => {
   assert.equal(merged.provider, undefined);
   assert.equal(merged.apiKey, undefined);
   assert.equal(JSON.stringify(merged).includes('sk-should-not-stick'), false);
+});
+
+test('modelsAfterProbe enables every fetched name only when none are enabled', () => {
+  assert.deepEqual(modelsAfterProbe([], ['deepseek-chat', 'deepseek-reasoner']), {
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    catalog: ['deepseek-chat', 'deepseek-reasoner'],
+  });
+  assert.deepEqual(modelsAfterProbe(['keep-me', 'gone'], ['new-one', 'keep-me']), {
+    models: ['keep-me', 'gone'],
+    catalog: ['new-one', 'keep-me'],
+  });
+  assert.deepEqual(modelsAfterProbe(['only'], []), {
+    models: ['only'],
+    catalog: [],
+  });
 });
 
 test('probeModels reports success, failure, timeout, and redacts keys', async () => {

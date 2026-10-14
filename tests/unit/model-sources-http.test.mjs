@@ -435,9 +435,80 @@ test('POST /api/sources/test keeps the redacted error and stores a probe code', 
     assert.equal(stored.lastTest.ok, false);
     assert.equal(stored.lastTest.code, 'auth');
     assert.equal(stored.lastTest.status, 401);
+    assert.deepEqual(stored.models, []);
+    assert.equal(stored.catalog, undefined);
     assert.equal(JSON.stringify(settings.body).includes(secret), false);
   } finally {
     await stopProcess(srv.proc);
     await new Promise((resolve) => fake.close(resolve));
+  }
+});
+
+function modelsServer(ids) {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: ids.map((id) => ({ id })) }));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+        close: () => new Promise((done) => server.close(done)),
+      });
+    });
+  });
+}
+
+test('POST /api/sources/test enables fetched models when none are enabled, and keeps every name already enabled', async () => {
+  const emptyUpstream = await modelsServer(['deepseek-chat', 'deepseek-reasoner']);
+  const keptUpstream = await modelsServer(['new-one', 'keep-me']);
+  const srv = await startServer();
+  try {
+    const empty = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'DeepSeek',
+      baseUrl: emptyUpstream.baseUrl,
+      apiKey: 'sk-empty-models-key1',
+      models: [],
+    });
+    assert.equal(empty.status, 201);
+    const filled = await request(srv.base, 'POST', '/api/sources/test', { sourceId: empty.body.id });
+    assert.equal(filled.status, 200);
+    assert.equal(filled.body.ok, true);
+    assert.deepEqual(filled.body.models, ['deepseek-chat', 'deepseek-reasoner']);
+    const afterEmpty = await request(srv.base, 'GET', '/api/settings');
+    const storedEmpty = afterEmpty.body.sources.find((source) => source.id === empty.body.id);
+    assert.deepEqual(storedEmpty.models, ['deepseek-chat', 'deepseek-reasoner']);
+    assert.deepEqual(storedEmpty.catalog, ['deepseek-chat', 'deepseek-reasoner']);
+    assert.equal(storedEmpty.lastTest.ok, true);
+
+    const kept = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'Kept',
+      baseUrl: keptUpstream.baseUrl,
+      apiKey: 'sk-kept-models-key1',
+      models: ['keep-me', 'gone'],
+    });
+    assert.equal(kept.status, 201);
+    const narrowed = await request(srv.base, 'POST', '/api/sources/test', { sourceId: kept.body.id });
+    assert.equal(narrowed.body.ok, true);
+    const afterKept = await request(srv.base, 'GET', '/api/settings');
+    const storedKept = afterKept.body.sources.find((source) => source.id === kept.body.id);
+    assert.deepEqual(storedKept.models, ['keep-me', 'gone']);
+    assert.deepEqual(storedKept.catalog, ['new-one', 'keep-me']);
+
+    const overridden = await request(srv.base, 'POST', '/api/sources/test', {
+      sourceId: empty.body.id,
+      vendor: 'custom',
+      baseUrl: emptyUpstream.baseUrl,
+    });
+    assert.equal(overridden.body.ok, true);
+    const afterOverride = await request(srv.base, 'GET', '/api/settings');
+    const untouched = afterOverride.body.sources.find((source) => source.id === empty.body.id);
+    assert.deepEqual(untouched.models, ['deepseek-chat', 'deepseek-reasoner']);
+  } finally {
+    await stopProcess(srv.proc);
+    await emptyUpstream.close();
+    await keptUpstream.close();
   }
 });
