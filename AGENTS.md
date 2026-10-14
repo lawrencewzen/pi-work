@@ -15,8 +15,8 @@ pi-work 是基于 Pi Durable（`@earendil-works/pi-durable`，作为库嵌入）
 
 ## 分工
 - **编排者（总指挥）**：拆分任务、合并分支、最终亲手验收并截图，只有编排者往 `main` 合并。
-- **Coder**：在 `backend`（或编排者指定的功能分支）上开发，可以提交并推送自己的分支，**禁止提交或推送 `main`**；不编写、不修改测试。
-- **Tester**：独立 Agent，只在测试目录（`tests/`、单元测试与 Playwright e2e、fixtures）工作，不改业务代码。
+- **Coder**：在 `backend`（或编排者指定的功能分支）上开发，可以提交并推送自己的分支，**禁止提交或推送 `main`**。
+- **测试**：单元测试、`tests/e2e/` 验收用例的编写和执行都交给 cloud agent。可以由写代码的同一个 agent 在同一个 PR 里完成，也可以另派 agent 单独验证，由编排者按任务决定。
 - **Auditor**：独立 Agent，只做代码审计与报告，不直接改代码。
 - **设计**：Antigravity（`--model gemini-3.8-flash-high`）出设计稿；设计稿和架构由用户确认。
 
