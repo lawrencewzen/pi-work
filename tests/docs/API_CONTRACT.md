@@ -18,6 +18,8 @@
 | `PI_WORK_TOOL_NUDGE` | 本步已执行这么多次工具、且还没有助手文字时，注入「请根据已有结果直接回答」，默认 8。只提醒一次，不立刻结束 | 不设 |
 | `PI_WORK_EXPLORE_REPEAT` | 对同一文件 `read`、或对同一路径 `ls` / `grep`（以及 bash 里列出、搜索、读同一路径），忽略其余参数，执行超过这么多次就注入「不要再重复查看」，默认 2。再重复则结束该步 | 不设 |
 | `PI_WORK_TOKEN` | 可选 Bearer 鉴权；设置后所有 /api 需 `Authorization: Bearer` | 不设 |
+| `PI_WORK_KERNEL` | `durable` 时对话 HTTP 走 Pi Durable 内核。未设置时这些接口仍走编排器 | 不设 |
+| `PI_WORK_MAX_SUBAGENTS` | 内核子 Agent 并发上限。只在 `PI_WORK_KERNEL=durable` 时生效。正整数；缺省或非法值是 4。数的是花名册里未停止、未结束的子 Agent（含已经空闲的后台子 Agent）。被停止后释放名额 | 不设 |
 启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。`GET /api/health` → `{ok:true}`。
 
 未设置 `PI_WORK_LLM=faux`、`LLM_API=faux`、`PI_WORK_FAUX_SCRIPT` 时，没有已登录的 Grok 来源，也没有可用的 API 来源，就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。模型来源与按角色绑定见 §8。
@@ -188,3 +190,20 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true}
 `GET /api/skills` 返回全部 Skill：`{id, name, description, version, source, enabled, deletable}`。Agent 页的复选列表用其中 `enabled === true` 的 `id`、`name`、`description`（`description` 是一句说明）。全局开关仍是 `settings.skills[id] === false` 表示关闭，缺省为开启。
 
 运行时：当前角色的 `skills` 缺省时，系统提示词带上全部全局已启用的 Skill；是数组时只带这些 id 里全局仍启用的；`[]` 不带 Skill。主 Agent（`default`）也看它自己的 `skills`。`pluginTools === false` 的角色，工具列表里没有插件工具，模型若仍调用，结果是 `E_UNKNOWN_TOOL`。缺省与现在一样，已启用的插件工具会并进该角色的工具列表。
+
+## 10. 内核子 Agent（`PI_WORK_KERNEL=durable`）
+
+只在内核开关打开时生效。开关关闭时没有这些工具，`GET /api/conversations/:cid/agents/:aid/messages` 仍是 `404 {error:'not found'}`，`POST .../stop` 仍只停编排器里的那一次运行。
+
+主 Agent 多两个工具：`delegate`（前台，参数 `{agent, task}`，`agent` 是角色 id）和 `subagent`（后台，`action` 为 `spawn` / `send` / `wait` / `stop` / `list`）。可用角色的 id、名称和 `description` 写在主 Agent 的 `subagents` 系统提示 section。子 Agent 按该角色的模型绑定、工具白名单、Skills 和插件工具各自 `configure`，不能再派子 Agent。
+
+`GET /api/conversations/:cid` 的 `agents` 在原有角色 / 流水线芯片之后追加真实子 Agent 实例：`{id, roleId, name, status, step, totalSteps, toolCalls, lastText}`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。没有子 Agent 时，`agents` 与原来相同。
+
+父对话 SSE 不混入子对话的 `message.delta` / `tool.*`。子 Agent 状态变化时，父对话收到 `agent` 事件，字段与芯片相同。
+
+| 方法 路径 | 响应 |
+|---|---|
+| `GET /api/conversations/:cid/agents/:aid/messages` | `200 {id, roleId, name, status, messages}`。`messages` 与父对话消息同形。对话不存在 `404 {error:'conversation not found'}`；`aid` 不是这个对话的子 Agent `404 {error:'agent not found'}` |
+| `POST /api/conversations/:cid/stop` | `200 {status:'stopped'}`。停掉这条对话里的全部工作，包括后台子 Agent |
+
+暂停仍不是本接口的停止语义。

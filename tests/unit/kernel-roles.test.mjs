@@ -331,7 +331,7 @@ test('kernel path: switching role changes the system prompt, skills, and tool li
     const [openCall] = await readRecords(record);
     assert.match(sectionText(openCall, 'instructions'), /OPEN PROMPT/);
     assert.match(sectionText(openCall, 'skills'), /Lead with findings/);
-    assert.deepEqual(openCall.tools, ['read', 'ls', 'echo']);
+    assert.deepEqual(openCall.tools, ['read', 'ls', 'echo', 'delegate', 'subagent']);
 
     const shut = await request(srv.base, 'PATCH', `/api/conversations/${conv.body.id}`, { roleId: 'beta' });
     assert.equal(shut.status, 200);
@@ -346,7 +346,7 @@ test('kernel path: switching role changes the system prompt, skills, and tool li
     const shutCall = calls[calls.length - 1];
     assert.match(sectionText(shutCall, 'instructions'), /SHUT PROMPT/);
     assert.equal(shutCall.sections.some((item) => item.key === 'skills'), false);
-    assert.deepEqual(shutCall.tools, ['bash']);
+    assert.deepEqual(shutCall.tools, ['bash', 'delegate', 'subagent']);
   } finally {
     await stopProcess(srv.proc);
     await rm(dataDir, { recursive: true, force: true });

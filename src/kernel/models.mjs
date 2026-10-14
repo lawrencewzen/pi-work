@@ -292,6 +292,12 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
   }
 
   return {
+    /** Install every available source before resume, so a restarted child can call its model. */
+    async warm() {
+      if (typeof getSettings !== 'function') return;
+      const settings = await getSettings();
+      sync(settings, { grokSignedIn: await signedIn(), target: null });
+    },
     async modelFor(conv) {
       if (typeof getSettings !== 'function') return null;
       const settings = await getSettings();
