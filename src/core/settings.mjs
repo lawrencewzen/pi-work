@@ -59,6 +59,9 @@ export function normalizeSettings(raw = {}) {
   if (typeof out.apiKey !== 'string') out.apiKey = '';
   if (v2) {
     out.version = 2;
+    delete out.provider;
+    delete out.baseUrl;
+    delete out.apiKey;
     out.sources = normalizeSources(out.sources);
     out.models = normalizeRoleModels(out.models);
   } else {
@@ -73,10 +76,6 @@ export function normalizeSettings(raw = {}) {
 export function publicSettings(s) {
   const n = normalizeSettings(s);
   const body = {
-    provider: n.provider,
-    baseUrl: n.baseUrl,
-    apiKey: maskApiKey(n.apiKey),
-    hasApiKey: Boolean(n.apiKey),
     models: { ...n.models },
     language: n.language,
     theme: n.theme,
@@ -87,6 +86,11 @@ export function publicSettings(s) {
   if (n.version === 2) {
     body.version = 2;
     body.sources = (n.sources || []).map((source) => publicSource(source));
+  } else {
+    body.provider = n.provider;
+    body.baseUrl = n.baseUrl;
+    body.apiKey = maskApiKey(n.apiKey);
+    body.hasApiKey = Boolean(n.apiKey);
   }
   return body;
 }
@@ -107,17 +111,19 @@ export function mergeSettings(prev, patch = {}) {
     }
     : { ...cur };
   if (!replacingLegacy) {
-    if (patchObj.provider != null) next.provider = String(patchObj.provider);
-    if (patchObj.baseUrl != null) next.baseUrl = String(patchObj.baseUrl);
+    if (cur.version !== 2) {
+      if (patchObj.provider != null) next.provider = String(patchObj.provider);
+      if (patchObj.baseUrl != null) next.baseUrl = String(patchObj.baseUrl);
+      const hasNewKey = Object.prototype.hasOwnProperty.call(patchObj, 'apiKey')
+        && !isMaskedOrEmptyApiKey(patchObj.apiKey, maskApiKey(cur.apiKey));
+      if (hasNewKey) next.apiKey = String(patchObj.apiKey);
+      const baseUrlChanging = patchObj.baseUrl != null && String(patchObj.baseUrl) !== String(cur.baseUrl);
+      const providerChanging = patchObj.provider != null && String(patchObj.provider) !== String(cur.provider);
+      if ((baseUrlChanging || providerChanging) && !hasNewKey) next.apiKey = '';
+    }
     if (patchObj.language != null) next.language = String(patchObj.language);
     if (patchObj.theme != null) next.theme = String(patchObj.theme);
     if (patchObj.appearance != null) next.appearance = String(patchObj.appearance);
-    const hasNewKey = Object.prototype.hasOwnProperty.call(patchObj, 'apiKey')
-      && !isMaskedOrEmptyApiKey(patchObj.apiKey, maskApiKey(cur.apiKey));
-    if (hasNewKey) next.apiKey = String(patchObj.apiKey);
-    const baseUrlChanging = patchObj.baseUrl != null && String(patchObj.baseUrl) !== String(cur.baseUrl);
-    const providerChanging = patchObj.provider != null && String(patchObj.provider) !== String(cur.provider);
-    if ((baseUrlChanging || providerChanging) && !hasNewKey) next.apiKey = '';
     if (patchObj.models && typeof patchObj.models === 'object' && !Array.isArray(patchObj.models)) {
       const models = { ...(cur.models && typeof cur.models === 'object' ? cur.models : {}) };
       for (const [key, value] of Object.entries(patchObj.models)) {

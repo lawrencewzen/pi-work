@@ -171,12 +171,22 @@ async function currentGrok() {
   }
 }
 
+let droppedLegacySettingsFields = false;
+
 async function ensureSettings() {
   const current = await store.getSettings();
-  if (current.version === 2) return current;
+  if (current.version === 2) {
+    if (!droppedLegacySettingsFields) {
+      await store.putSettings({});
+      droppedLegacySettingsFields = true;
+      return store.getSettings();
+    }
+    return current;
+  }
   const grok = await currentGrok();
   const migrated = migrateLegacySettings(current, { grokSignedIn: Boolean(grok?.signedIn) });
   await store.putSettings(migrated);
+  droppedLegacySettingsFields = true;
   const saved = await store.getSettings();
   return saved.version === 2 ? saved : migrated;
 }
@@ -396,9 +406,7 @@ async function llmConfig({ roleId, model: modelOverride } = {}) {
       };
     }
   }
-  if (!target || target.source?.kind === 'grok') {
-    return { api: 'chat', baseUrl: '', apiKey: '', model: undefined };
-  }
+  if (!target || target.source?.kind === 'grok') throw unconfiguredModelError();
   return chatSourceConfig(target);
 }
 
@@ -559,12 +567,28 @@ async function handleSources(req, res, p, m) {
         sendJson(res, 404, { error: 'not found' });
         return true;
       }
-      const result = source.kind === 'grok'
+      const override = {};
+      for (const key of ['vendor', 'baseUrl', 'apiKey']) {
+        if (body[key] != null) override[key] = body[key];
+      }
+      const hasOverride = Object.keys(override).length > 0;
+      let probeSource = source;
+      if (hasOverride) {
+        const patched = applySourcePatch(source, override);
+        if (!patched.source) {
+          sendJson(res, 400, { error: patched.error || 'invalid source' });
+          return true;
+        }
+        probeSource = patched.source;
+      }
+      const result = probeSource.kind === 'grok'
         ? { ok: Boolean(grok.signedIn), models: [GROK_SESSION_MODEL], error: grok.signedIn ? undefined : 'signed out' }
-        : await probeModels({ baseUrl: effectiveBaseUrl(source), apiKey: source.apiKey });
-      const sources = settings.sources.map((item) => (item.id === source.id ? { ...item, lastTest: lastTestFrom(result) } : item));
-      await store.putSettings({ sources });
-      sendJson(res, 200, source.kind === 'grok' ? { ok: result.ok, models: result.models } : presentProbe(result));
+        : await probeModels({ baseUrl: effectiveBaseUrl(probeSource), apiKey: probeSource.apiKey });
+      if (!hasOverride) {
+        const sources = settings.sources.map((item) => (item.id === source.id ? { ...item, lastTest: lastTestFrom(result) } : item));
+        await store.putSettings({ sources });
+      }
+      sendJson(res, 200, probeSource.kind === 'grok' ? { ok: result.ok, models: result.models } : presentProbe(result));
       return true;
     }
     const preset = vendorPreset(body?.vendor);
@@ -1107,6 +1131,10 @@ async function routeApi(req, res, url) {
     delete patch.sources;
     delete patch.version;
     delete patch.grok;
+    delete patch.provider;
+    delete patch.baseUrl;
+    delete patch.apiKey;
+    delete patch.hasApiKey;
     const saved = await store.putSettings(patch);
     sendJson(res, 200, await settingsResponse(saved));
     return;

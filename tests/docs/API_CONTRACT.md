@@ -20,7 +20,7 @@
 | `PI_WORK_TOKEN` | 可选 Bearer 鉴权；设置后所有 /api 需 `Authorization: Bearer` | 不设 |
 启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。`GET /api/health` → `{ok:true}`。
 
-未设置 `PI_WORK_LLM=faux`、`LLM_API=faux`、`PI_WORK_FAUX_SCRIPT` 时，没有 Grok 会话、API Key、Base URL 就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。
+未设置 `PI_WORK_LLM=faux`、`LLM_API=faux`、`PI_WORK_FAUX_SCRIPT` 时，没有已登录的 Grok 来源，也没有可用的 API 来源，就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。模型来源与按角色绑定见 §8。
 
 ## 2. 纯函数模块（单元测试直接 import，均为 ESM，路径相对仓库根）
 - `src/core/paths.mjs`
@@ -98,3 +98,64 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true}
 | `right-panel` / `diff-view` / `file-view` / `md-editor` / `md-editor-save` / `changed-file` (+`data-path`) | 右栏 |
 | `file-open-editor` | 右栏中打开当前文件（.md→`md-editor`，其他→`file-view`） |
 | `agent-status-item` (+`data-id`,`data-status`) | 左栏「Agent 状态」区，列出所有工作区中非 idle 的会话 |
+
+## 8. 模型来源（settings version 2）
+
+`GET /api/settings` 的设置主体：
+
+```json
+{
+  "version": 2,
+  "sources": [],
+  "models": { "default": { "sourceId": "a1b2c3d4", "model": "gpt-4o" } },
+  "language": "zh",
+  "theme": "white",
+  "appearance": "light",
+  "plugins": {},
+  "skills": {},
+  "vendors": [{ "id": "openai", "name": "OpenAI", "baseUrl": "https://api.openai.com/v1", "needsKey": true }],
+  "grok": { "signedIn": false },
+  "runtime": "none"
+}
+```
+
+顶层不再返回 `provider`、`baseUrl`、`apiKey`、`hasApiKey`。密钥只出现在某条 `sources[]` 里，而且是掩码 `••••` 加原密钥最后 4 位，另有 `hasApiKey`。响应体不得含明文密钥。
+
+`models` 的值是 `{ sourceId, model }`。`PUT /api/settings` 只接受这一种；字符串会被 400。`null` 表示去掉该角色的绑定。`PUT` 忽略 `provider`、`baseUrl`、`apiKey`、`hasApiKey`、`sources`、`version`，这些都不能从这条接口写回去。
+
+旧的单行 `{ provider, baseUrl, apiKey, models:{ role: "模型名" } }` 在第一次读到时迁移到 version 2，并且只迁移一次（已经是 version 2 的记录按原样保留来源，读出时仍会去掉顶层那三个旧字段）：
+
+- 有非空 `apiKey`，或 `provider` 是 `ollama` 且有 `baseUrl`，或 `baseUrl` 非空且不等于该 provider 的预设地址，才建一条 API 来源。
+- 默认的 `{ provider:'openai', baseUrl:'', apiKey:'' }`、只选了预设厂商但没填地址和密钥、以及 `baseUrl` 恰好等于预设地址且没有密钥，都不建来源。
+- 建不出 API 来源、也没有已登录的 Grok 时，旧的字符串 `models` 丢掉。
+- 已登录 Grok 时，字符串模型挂到 Grok 来源；否则挂到新建的那条 API 来源。
+- 迁移后顶层 `apiKey`、`baseUrl` 清空，`provider` 回到 `openai`，库里的 JSON 不再保留这三个字段。
+
+来源对象：`{ id, kind:'api'|'grok', vendor, name, baseUrl, apiKey, hasApiKey, models:string[], lastTest?:{ ok, at, error? } }`。Grok 的 id 固定为 `grok`，并带 `session:{ signedIn, email, expiresAt }`。`lastTest.error` 与探测失败文本都要去掉密钥（`sk-***`、以及原文里的完整 key）。
+
+| 方法 路径 | 请求 | 响应 |
+|---|---|---|
+| `GET /api/sources` | 无单独列表接口 | 来源在 `GET /api/settings` 的 `sources` |
+| `POST /api/sources` | `{ vendor, name?, baseUrl?, apiKey?, models? }` | `201` 公开来源。`vendor` 必须是预设 id |
+| `PUT /api/sources/:id` | 局部更新 `name` / `vendor` / `baseUrl` / `apiKey` / `models` | `200` 公开来源。掩码或空的 `apiKey` 表示不改密钥 |
+| `DELETE /api/sources/:id` | | `200 {ok:true,id}`。引用该来源的角色绑定被去掉。删除 Grok 来源会退出登录 |
+| `POST /api/sources/test` | `{ vendor, baseUrl?, apiKey? }` 或 `{ sourceId, vendor?, baseUrl?, apiKey? }` | `200 {ok, models? , error?}` |
+
+错误码：
+
+| 状态 | `error` | 何时 |
+|---|---|---|
+| 400 | `unknown vendor` | `vendor` 不在预设里 |
+| 400 | `invalid models` | `models` 不是字符串数组 |
+| 400 | `base url required` | 没有可用的 base URL |
+| 400 | `api key required` | 该厂商需要密钥，但没有新密钥。改 `baseUrl` 时，新地址的 origin（协议 + 主机 + 端口）和旧地址不同，且这次没有带新密钥，也是这个错误：旧密钥先被丢掉。只改路径、origin 不变，旧密钥保留。Ollama 不需要密钥，换 origin 会清空旧密钥并成功 |
+| 400 | `invalid model binding` | `models` 不是对象，或某个值不是 `{ sourceId, model }` / `null` |
+| 400 | `invalid role id` | 角色 id 不合法 |
+| 400 | `unknown source` | `sourceId` 不存在 |
+| 400 | `model not in source` | `model` 不在该来源的 `models` 列表里 |
+| 404 | `not found` | 来源 id 不存在 |
+| 409 | `exists` | 新建时 id 冲突 |
+
+`POST /api/sources/test` 带 `sourceId` 时，把请求里的 `vendor` / `baseUrl` / `apiKey` 叠到已保存的来源上再探测，不写回这条来源。origin 变了又没带新密钥，同样 400 `api key required`，不探测。只有请求里完全没有这些覆盖字段时，才把结果写入该来源的 `lastTest`。
+
+发消息时按角色选来源：该角色的 `{ sourceId, model }`，没有再用 `default`，再没有就用第一个可用的来源上的第一个模型。角色模板上的 `model` 字符串若出现在某个可用的来源列表里，就改走那个来源；否则沿用上面选中的来源，但模型名改成模板里的字符串。目标是 Grok 但拿不到 access token，并且没有别的可用目标时，本轮以 `E_NO_MODEL` / `err_no_model` 失败，而不是拿空的 base URL 去请求。

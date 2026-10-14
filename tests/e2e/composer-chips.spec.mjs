@@ -22,11 +22,29 @@ async function boot({ script, models } = {}) {
     },
   });
   const token = await authToken(srv.dataDir);
+  let sourceId = null;
   if (models) {
-    const saved = await api(srv.url, 'PUT', '/settings', { models }, token);
+    const names = [];
+    const bindings = {};
+    for (const [roleId, value] of Object.entries(models)) {
+      const model = value?.model;
+      if (!model) continue;
+      if (!names.includes(model)) names.push(model);
+      bindings[roleId] = { model };
+    }
+    const created = await api(srv.url, 'POST', '/sources', {
+      vendor: 'openai',
+      name: 'Chip',
+      apiKey: 'sk-chip-test-key1',
+      models: names,
+    }, token);
+    expect(created.status).toBe(201);
+    sourceId = created.body.id;
+    for (const binding of Object.values(bindings)) binding.sourceId = sourceId;
+    const saved = await api(srv.url, 'PUT', '/settings', { models: bindings }, token);
     expect(saved.status).toBe(200);
   }
-  return { ws, token };
+  return { ws, token, sourceId };
 }
 
 async function openApp(page, token) {
@@ -95,7 +113,7 @@ test('context chip stays an em dash when the model reports no usage', async ({ p
 test('agent chip lists configured roles and switches the conversation target', async ({ page }) => {
   const { ws, token } = await boot({
     script: 'no-usage.json',
-    models: { default: 'grok-4.6', coder: 'grok-4' },
+    models: { default: { model: 'grok-4.6' }, coder: { model: 'grok-4' } },
   });
   await openApp(page, token);
   await expect(chip(page)).toHaveText('Agent · grok-4.6');
@@ -150,7 +168,7 @@ test('agent chip lists configured roles and switches the conversation target', a
 test('agent chip does not open while a run is busy', async ({ page }) => {
   const { ws, token } = await boot({
     script: 'slow.json',
-    models: { default: 'grok-4.6', coder: 'grok-4' },
+    models: { default: { model: 'grok-4.6' }, coder: { model: 'grok-4' } },
   });
   await openApp(page, token);
   await createWorkspace(page, 'busy', ws);

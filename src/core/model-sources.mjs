@@ -194,6 +194,25 @@ function legacyStringModels(models) {
   return pairs;
 }
 
+/**
+ * A leftover provider row becomes an API source only when it was actually configured:
+ * a key, an Ollama base URL, or a base URL that is not that vendor's preset.
+ */
+function wantsLegacyApiSource(provider, baseUrl, apiKey) {
+  if (String(apiKey || '').trim()) return true;
+  const url = normalizeHttpUrl(baseUrl);
+  if (String(provider || '').trim().toLowerCase() === 'ollama' && url) return true;
+  if (!url) return false;
+  const presetUrl = normalizeHttpUrl(vendorPreset(provider)?.baseUrl);
+  return url !== presetUrl;
+}
+
+function httpOrigin(value) {
+  const normalized = normalizeHttpUrl(value);
+  if (!normalized) return '';
+  try { return new URL(normalized).origin; } catch { return ''; }
+}
+
 function pushModel(source, model) {
   if (!source.models.includes(model)) source.models.push(model);
 }
@@ -213,7 +232,7 @@ export function migrateLegacySettings(raw, { grokSignedIn = false, createId = cr
   const apiKey = typeof input.apiKey === 'string' ? input.apiKey : '';
   const sources = [];
   let apiSource = null;
-  if (provider || baseUrl || apiKey) {
+  if (wantsLegacyApiSource(provider, baseUrl, apiKey)) {
     const preset = vendorPreset(provider);
     const vendor = preset?.id || (provider ? provider.toLowerCase().slice(0, 32) : 'custom');
     let id = createId();
@@ -254,6 +273,9 @@ export function migrateLegacySettings(raw, { grokSignedIn = false, createId = cr
   return {
     ...input,
     version: SETTINGS_VERSION,
+    provider: 'openai',
+    baseUrl: '',
+    apiKey: '',
     sources,
     models,
   };
@@ -403,15 +425,17 @@ export function applySourcePatch(source, patch = {}) {
     if (!baseUrl) return { error: 'base url required' };
     next.baseUrl = baseUrl;
   }
-  if (Object.prototype.hasOwnProperty.call(patch, 'apiKey')
-    && !isMaskedOrEmptyApiKey(patch.apiKey, maskApiKey(source.apiKey))) {
-    next.apiKey = String(patch.apiKey);
-  }
+  const suppliedNewKey = Object.prototype.hasOwnProperty.call(patch, 'apiKey')
+    && !isMaskedOrEmptyApiKey(patch.apiKey, maskApiKey(source.apiKey));
+  if (suppliedNewKey) next.apiKey = String(patch.apiKey);
   if (patch.models != null) {
     const models = normalizeModelList(patch.models);
     if (!models) return { error: 'invalid models' };
     next.models = models;
   }
+  const prevOrigin = httpOrigin(effectiveBaseUrl(source));
+  const nextOrigin = httpOrigin(effectiveBaseUrl(next));
+  if (prevOrigin !== nextOrigin && !suppliedNewKey) next.apiKey = '';
   if (sourceNeedsKey(next) && !String(next.apiKey || '').trim()) return { error: 'api key required' };
   if (!effectiveBaseUrl(next)) return { error: 'base url required' };
   return { source: next };
