@@ -1,0 +1,21 @@
+name: kernel windows
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, feat/kernel-harness]
+
+jobs:
+  kernel-unit:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Pi Durable kernel unit tests
+        run: node --test tests/unit/kernel.test.mjs
