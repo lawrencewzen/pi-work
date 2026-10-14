@@ -95,14 +95,20 @@ export function startFakeModel({ mode, text, access1 = 'access-1', access2 = 'ac
       grokModel: req.headers['x-grok-model-override'] || '',
       tokenAuth: req.headers['x-xai-token-auth'] || '',
     };
-    seen.push(record);
+    let raw = '';
     try {
-      await readBody(req);
+      raw = await readBody(req);
     } catch {
+      seen.push(record);
       res.writeHead(400);
       res.end('bad body');
       return;
     }
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.model === 'string') record.model = parsed.model;
+    } catch { /* a token request is form-encoded */ }
+    seen.push(record);
 
     if (mode === 'grok' && url.pathname.endsWith('/oauth2/token')) {
       refreshed += 1;

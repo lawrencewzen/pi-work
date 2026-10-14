@@ -301,11 +301,12 @@ export async function openConversationKernel({
     await store.updateConversation(row.id, { status: failed ? 'failed' : 'done', hostMark: null });
   }
 
-  async function resolveModel(conv) {
+  async function resolveModel(conv, role) {
     if (!routes || !conv?.harnessId) return;
     const conversation = await harness.conversation(conv.harnessId, context);
     if (!conversation) return;
-    const model = await routes.modelFor(conv);
+    const roleId = role?.id || conv.roleId;
+    const model = await routes.modelFor({ ...conv, roleId });
     await conversation.configure({ model: model ?? null }, context);
   }
 

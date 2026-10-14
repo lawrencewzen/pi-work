@@ -219,7 +219,7 @@ export function createRoleHost({
       instructions: String(role?.systemPrompt || ''),
       tools: toolsFor(role),
     }, context);
-    if (typeof resolveModel === 'function') await resolveModel(conv);
+    if (typeof resolveModel === 'function') await resolveModel(conv, role);
   }
 
   async function submissionFor(conv, step) {
