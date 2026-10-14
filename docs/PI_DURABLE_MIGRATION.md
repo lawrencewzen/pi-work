@@ -242,3 +242,21 @@ T5-11 之前产品行为就是今天的行为。T5-11 之后产品行为是契�
 - 没有跑 Playwright。原型没有页面。
 - 没有调用真实的 `cli-chat-proxy.grok.com` 或 `auth.x.ai`。Grok 断言打在本地假服务上。
 - Windows：GitHub Actions [`38600496463`](https://github.com/lawrencewzen/pi-work/actions/runs/38600496463)，`windows-2025`，Node v22.23.3，结论 success。日志里的 `=== smoke passed ===` 和 `1f result` 与 Linux 一致：`conversations:2`、`holdUserEntries:1`、`rootRequestStatus:done`，子文本含 `resumed-after-kill`。
+
+## 已拍板的决定（2026-10-14）
+
+用户确认，迁移各批按此执行，不再另议：
+
+1. **暂停**：选乙。暂停 = 等当前这一步（进行中的模型请求和工具调用）做完，宿主不再发下一次模型请求；继续 = 从下一步接着做。不 abort 进行中的工具。
+2. **卡住（stallMs）**：宿主计时；超时后提交一条「继续」，计入 `autoContinues`，受现有自动继续上限约束；超过上限按失败处理。
+3. **停止**：停止 = 这条对话里的所有工作全停，包括后台子 Agent（`abort(context, { background: true })`）。
+4. **崩溃时进行中的工具**：沿用内核默认。`write` / `edit` / `bash` 为 `replay: "unsafe"`，崩溃后不重跑，模型收到 `interrupted` 自行处理；不额外记录「已成功」结果去替代。
+5. **用量芯片**：显示最近一次调用，不用 `pi.usage` 累计值；会话级成本以后另做。
+6. **旧对话**：只读归档，不导入。可查看消息和 Diff，不能再发消息，提供「用这段历史开新对话」（只复制可见文本）。设置、工作区、角色、流水线全部保留。
+7. **Grok**：用本文的自定义 provider，不改 `xaiProvider`，不加依赖。
+8. **Windows shell**：工具批次里把 bash 改成不依赖 `/bin/sh` 的实现，`windows-latest` 跑冒烟。
+9. **子 Agent 并发上限**：沿用原型（在创建那次 commit 里数花名册中未停止的子 Agent），默认上限 4，可配置；子 Agent 被停止后释放名额。
+10. **流水线**：同一对话内按步 `configure` + `submit` 交接，不拆成子 Agent。
+11. **子 Agent 事件**：不混进父对话 SSE，父对话只看到工具结果；界面需要查看子 Agent 时单独挂 watch。
+12. **Node 版本**：切换默认内核的那一批把 `engines` 抬到 `>=22.19`。
+13. **角色来源**：T4-1 已合并（PR #34），子 Agent 批次直接读角色的 `description`、`skills`、`pluginTools` 和 `settings.models`，只写一套角色加载。
