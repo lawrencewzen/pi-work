@@ -320,8 +320,9 @@ const file = process.env.HELPER_LOG;
 if (file) appendFileSync(file, 'called\\n');
 process.stdout.write('username=git\\npassword=nope\\n');
 `);
-  const quote = (value) => `"${String(value).replace(/"/g, '')}"`;
-  await fs.writeFile(config, `[credential]\n\thelper = !${quote(process.execPath)} ${quote(helper)}\n`);
+  const node = process.execPath.replace(/\\/g, '/');
+  const script = helper.replace(/\\/g, '/');
+  await fs.writeFile(config, `[credential]\n\thelper = !'${node}' '${script}'\n`);
   return { helper, log, config };
 }
 
