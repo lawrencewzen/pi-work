@@ -9,12 +9,36 @@ import { latestCallUsage, reportedUsage } from './usage.mjs';
 /** messageId for an assistant partial that has no transcript entry yet. */
 export const LIVE_MESSAGE_ID = 'live';
 
+/** True for the legacy `'live'` id and for `live-1`, `live-2`, … */
+export function isLiveMessageId(id) {
+  const value = id == null ? '' : String(id);
+  return value === LIVE_MESSAGE_ID || value.startsWith('live-');
+}
+
+function noteLiveId(ctx, id) {
+  if (!ctx || !id) return;
+  ctx.liveId = String(id);
+  const match = /^live-(\d+)$/.exec(ctx.liveId);
+  if (match) ctx.liveSeq = Math.max(Number(ctx.liveSeq) || 0, Number(match[1]));
+}
+
+/** One id per in-flight assistant generation. Cleared when that message ends. */
+function ensureLiveId(ctx) {
+  if (!ctx) return LIVE_MESSAGE_ID;
+  if (ctx.liveId) return ctx.liveId;
+  ctx.liveSeq = (Number(ctx.liveSeq) || 0) + 1;
+  ctx.liveId = `live-${ctx.liveSeq}`;
+  return ctx.liveId;
+}
+
 export function createMapContext({ retry = DEFAULT_RETRY_POLICY, step = 0 } = {}) {
   return {
     retry,
     step,
     toolInputs: new Map(),
     toolDiffs: new Map(),
+    liveSeq: 0,
+    liveId: null,
   };
 }
 
@@ -126,14 +150,19 @@ export function mapHarnessBatch(batch, ctx) {
         if (change?.type === 'text_delta' && change.delta) {
           events.push({
             event: 'message.delta',
-            data: { messageId: LIVE_MESSAGE_ID, text: String(change.delta) },
+            data: { messageId: ensureLiveId(ctx), text: String(change.delta) },
           });
         }
       }
       continue;
     }
     if (ev.type === 'message_end' && (ev.entry?.kind === 'pi.user' || ev.entry?.kind === 'pi.assistant')) {
-      events.push(messageDone(ev.entry));
+      const done = messageDone(ev.entry);
+      if (ev.entry.kind === 'pi.assistant' && ctx.liveId) {
+        done.data.liveId = ctx.liveId;
+        ctx.liveId = null;
+      }
+      events.push(done);
       const usage = usageEvent(ev.entry);
       if (usage) events.push(usage);
       continue;
@@ -196,12 +225,31 @@ export function mapHarnessBatch(batch, ctx) {
   return { events, snapshots };
 }
 
-function mergeDelta(current, incoming) {
-  if (!incoming) return current;
-  if (!current) return incoming;
-  if (incoming.startsWith(current)) return incoming;
-  if (current === incoming || current.endsWith(incoming) || current.includes(incoming)) return current;
-  return current + incoming;
+/** Rebuild the open live bubble from deltas already stored. Incremental text is appended; `replace` overwrites. */
+function foldLive(existing) {
+  let liveId = null;
+  let liveText = '';
+  for (const ev of existing || []) {
+    if (ev?.event === 'message.delta' && isLiveMessageId(ev.data?.messageId)) {
+      const id = String(ev.data.messageId);
+      if (liveId && liveId !== id) liveText = '';
+      liveId = id;
+      const text = String(ev.data.text || '');
+      liveText = ev.data.replace ? text : liveText + text;
+      continue;
+    }
+    if (ev?.event === 'message.done' && ev.data?.role !== 'user' && liveId) {
+      const doneLive = ev.data.liveId != null ? String(ev.data.liveId) : null;
+      // A done without liveId is the legacy protocol: it closes the open bubble
+      // only when it carries the assistant text. A tool-only done must not.
+      const closes = doneLive ? doneLive === liveId : Boolean(ev.data.text);
+      if (closes) {
+        liveId = null;
+        liveText = '';
+      }
+    }
+  }
+  return { liveId, liveText };
 }
 
 function toolFromResultEntry(entry, ctx) {
@@ -233,20 +281,25 @@ function toolFromResultEntry(entry, ctx) {
 export function snapshotGap(snapshot, existing, ctx) {
   const seenDone = new Set();
   const seenTools = new Set();
-  let liveText = '';
   for (const ev of existing || []) {
     if (ev?.event === 'message.done' && ev.data?.messageId != null) seenDone.add(String(ev.data.messageId));
     if (ev?.event === 'tool.end' && ev.data?.tool?.id != null) seenTools.add(String(ev.data.tool.id));
-    if (ev?.event === 'message.delta' && ev.data?.messageId === LIVE_MESSAGE_ID) {
-      liveText = mergeDelta(liveText, String(ev.data.text || ''));
-    }
   }
+  const open = foldLive(existing);
+  if (open.liveId) noteLiveId(ctx, open.liveId);
+  const liveText = open.liveText;
   const events = [];
   for (const entry of snapshot?.entries || []) {
     if (entry?.kind === 'pi.user' || entry?.kind === 'pi.assistant') {
       const id = String(entry.id);
       if (seenDone.has(id)) continue;
-      events.push(messageDone(entry));
+      const done = messageDone(entry);
+      if (entry.kind === 'pi.assistant' && open.liveId && done.data.text && done.data.text === liveText) {
+        done.data.liveId = open.liveId;
+        open.liveId = null;
+        if (ctx) ctx.liveId = null;
+      }
+      events.push(done);
       seenDone.add(id);
       const usage = usageEvent(entry);
       if (usage) events.push(usage);
@@ -267,7 +320,12 @@ export function snapshotGap(snapshot, existing, ctx) {
       && textOf(entry.model?.[0]?.content) === partial
     ));
     if (!already) {
-      events.push({ event: 'message.delta', data: { messageId: LIVE_MESSAGE_ID, text: partial } });
+      const messageId = open.liveId || ensureLiveId(ctx);
+      noteLiveId(ctx, messageId);
+      events.push({
+        event: 'message.delta',
+        data: { messageId, text: partial, replace: true },
+      });
     }
   }
   return events;

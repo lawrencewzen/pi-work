@@ -252,6 +252,22 @@ test('a scripted demo turn follows committed assistant messages', () => {
   assert.equal(second.content[0].text, 'continued');
 });
 
+test('a tools array is one assistant message with each call', () => {
+  const turns = [
+    {
+      tools: [
+        { tool: 'read', args: { path: 'a.txt' }, id: 'a' },
+        { tool: 'read', args: { path: 'b.txt' }, id: 'b' },
+        { tool: 'ls', args: { path: '.' }, id: 'c' },
+      ],
+    },
+  ];
+  const message = fauxTurnFromScript(turns, { messages: [{ role: 'user', content: 'go' }] });
+  assert.equal(message.stopReason, 'toolUse');
+  assert.deepEqual(message.content.map((block) => block.name), ['read', 'read', 'ls']);
+  assert.deepEqual(message.content.map((block) => block.id), ['a', 'b', 'c']);
+});
+
 test('kernel path: path escape is E_SANDBOX and bash stays in the workspace', { timeout: 40_000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksand-'));
   const command = process.platform === 'win32'
