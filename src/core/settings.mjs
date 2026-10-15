@@ -1,4 +1,5 @@
 import { normalizeRoleModels, normalizeSources, publicSource } from './model-sources.mjs';
+import { normalizeGitConnections } from './git-connections.mjs';
 
 export const DEFAULT_SETTINGS = {
   version: 2,
@@ -70,6 +71,9 @@ export function normalizeSettings(raw = {}) {
   }
   // Grok session lives in ~/.grok/auth.json, never in the settings row.
   delete out.grok;
+  const gitConnections = normalizeGitConnections(out.gitConnections);
+  if (gitConnections.length) out.gitConnections = gitConnections;
+  else delete out.gitConnections;
   return out;
 }
 
@@ -140,6 +144,9 @@ export function mergeSettings(prev, patch = {}) {
   }
   if (patchObj.skills && typeof patchObj.skills === 'object' && !Array.isArray(patchObj.skills)) {
     next.skills = { ...(cur.skills || {}), ...patchObj.skills };
+  }
+  if (Object.prototype.hasOwnProperty.call(patchObj, 'gitConnections')) {
+    next.gitConnections = patchObj.gitConnections;
   }
   delete next.grok;
   return normalizeSettings(next);

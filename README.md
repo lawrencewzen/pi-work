@@ -26,13 +26,15 @@
 
 ## Windows 下导入 GitLab 仓库
 
-新建工作区 → Git 导入。pi-work 调用这台机器上的 git，并沿用系统级和用户级配置。只要本机 git 能拉这个仓库（Git Credential Manager 里已经有凭证，或已经配好 SSH 密钥），就可以直接导入。
+在设置 → Git 里添加 GitLab 连接（自建或 GitLab.com），填入个人访问令牌（`read_repository` 和 `read_api`）。新建工作区 → Git 导入可以「从 GitLab 选择」项目和分支。克隆时使用连接里的令牌，通过 Git 的 `http.extraHeader`（`Authorization: Bearer`，只放在 `GIT_CONFIG_VALUE_*` 环境变量里）交给 git，并清空这一次的 `credential.helper`。令牌不会写进仓库地址、工作区记录或 `.git/config`，也不会调用系统的 git 凭证助手。
+
+不添加连接时，仍可以「填写地址」。pi-work 调用这台机器上的 git，并沿用系统级和用户级配置。只要本机 git 能拉这个仓库（Git Credential Manager 里已经有凭证，或已经配好 SSH 密钥），就可以直接导入。地址的主机如果属于某个已连接的服务，会自动用那个连接的令牌。自建服务的「允许 http」和「高级」里的 CA 证书路径对测试和克隆同样生效。
 
 - 安装 Git for Windows，或把 `PI_WORK_GIT_BIN` 设为 `git.exe` 的完整路径。找不到 git 时，导入对话框会提示安装或设置该变量。
 - 导入过程不会弹出登录窗口。请先在终端用 git 克隆一次，让 Git Credential Manager 记住口令；或配置 SSH 密钥。
-- 内网 `http://` 默认拒绝。把主机名写入 `PI_WORK_GIT_HTTP_HOSTS`（逗号分隔，不含端口）后才放行，例如 `PI_WORK_GIT_HTTP_HOSTS=gitlab.corp.local`。
-- 自签证书把 CA 文件路径设到 `PI_WORK_GIT_CA_FILE`。
-- 地址里的 `user:token@` 不会写入工作区记录。克隆成功后，`.git/config` 里的 origin 也会改成去掉凭证的地址。这种地址只在这一次克隆里加上 `-c credential.helper=`，避免 git 把口令写进钥匙串或 Windows 凭据管理器；地址不带凭证时，仍使用本机已配置的凭证助手。
+- 没有连接时，内网 `http://` 默认拒绝。把主机名写入 `PI_WORK_GIT_HTTP_HOSTS`（逗号分隔，不含端口）后才放行，例如 `PI_WORK_GIT_HTTP_HOSTS=gitlab.corp.local`。已添加的自建连接则用该连接的「允许 http」。
+- 自签证书把 CA 文件路径设到 `PI_WORK_GIT_CA_FILE`，或填在连接的「高级」里。
+- 地址里的 `user:token@` 不会写入工作区记录。克隆成功后，`.git/config` 里的 origin 也会改成去掉凭证的地址。这种地址只在这一次克隆里加上 `-c credential.helper=`，避免 git 把口令写进钥匙串或 Windows 凭据管理器；地址不带凭证、也没有连接令牌时，仍使用本机已配置的凭证助手。
 
 ## 插件
 

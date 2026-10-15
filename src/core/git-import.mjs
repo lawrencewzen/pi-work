@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { buildConnectionCloneEnv, redactSecrets, sanitizeConnectionCloneUrl } from './git-connection-clone.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -276,24 +277,65 @@ async function assertConfigClean(dest, url) {
   }
 }
 
+function scrubCloneError(err, token) {
+  if (!token) return err;
+  const scrub = (value) => redactSecrets(typeof value === 'string' ? value : String(value || ''), [token]);
+  err.stderr = scrub(err?.stderr);
+  err.stdout = scrub(err?.stdout);
+  err.message = scrub(err?.message);
+  return err;
+}
+
+async function assertTokenNotInConfig(dest, token) {
+  if (!token) return;
+  let cfg = '';
+  try {
+    cfg = await readFile(path.join(dest, '.git', 'config'), 'utf8');
+  } catch {
+    await removeDest(dest);
+    throw cloneError('unknown');
+  }
+  if (cfg.includes(token) || /authorization:\s*bearer/i.test(cfg)) {
+    await removeDest(dest);
+    throw cloneError('unknown');
+  }
+}
+
 /**
  * Clone with `git clone --depth 1` via execFile (no shell).
  * Destination parent is created as needed.
  * When the URL embeds user:pass, credential helpers are disabled for this clone
  * and origin is rewritten to the stripped URL.
+ * A connection token is passed only as GIT_CONFIG_VALUE_* (`http.extraHeader`
+ * `Authorization: Bearer`), with `credential.helper` cleared for that command.
  */
-export async function cloneGitRepo({ url, branch, dest, env = process.env } = {}) {
-  const trimmed = String(url || '').trim();
-  if (!validateGitUrl(trimmed, { env })) throw badRequest('invalid gitUrl');
+export async function cloneGitRepo({ url, branch, dest, env = process.env, connection } = {}) {
+  let trimmed = String(url || '').trim();
+  if (connection) trimmed = sanitizeConnectionCloneUrl(trimmed, connection);
+  const validateEnv = connection && /^http:\/\//i.test(trimmed)
+    ? { ...env, PI_WORK_GIT_HTTP_HOSTS: new URL(trimmed).hostname }
+    : env;
+  if (!validateGitUrl(trimmed, { env: validateEnv })) throw badRequest('invalid gitUrl');
   if (!validateBranch(branch)) throw badRequest('invalid branch');
 
+  const token = String(connection?.token || '');
+  const connectionCa = String(connection?.caFile || '').trim();
   await mkdir(path.dirname(dest), { recursive: true });
-  const plan = prepareGitClone({ url: trimmed, branch, dest, env });
+  const plan = prepareGitClone({
+    url: trimmed,
+    branch,
+    dest,
+    env: connectionCa ? { ...env, PI_WORK_GIT_CA_FILE: connectionCa } : env,
+  });
+  const childEnv = token || connectionCa
+    ? buildConnectionCloneEnv(plan.env, { token, caFile: connectionCa })
+    : plan.env;
+  if (token && plan.args.some((arg) => String(arg).includes(token))) throw cloneError('unknown');
   try {
-    await runGit(plan.bin, plan.args, plan.env, CLONE_TIMEOUT_MS);
+    await runGit(plan.bin, plan.args, childEnv, CLONE_TIMEOUT_MS);
   } catch (err) {
-    if (credentialMarkers(trimmed).length) await removeDest(dest);
-    throw toCloneError(err);
+    if (token || credentialMarkers(trimmed).length) await removeDest(dest);
+    throw toCloneError(scrubCloneError(err, token));
   }
 
   const clean = stripGitUrlCredentials(trimmed);
@@ -305,12 +347,13 @@ export async function cloneGitRepo({ url, branch, dest, env = process.env } = {}
       'remote', 'set-url', 'origin', clean,
     ];
     try {
-      await runGit(plan.bin, args, plan.env, SET_URL_TIMEOUT_MS);
+      await runGit(plan.bin, args, childEnv, SET_URL_TIMEOUT_MS);
     } catch (err) {
       await removeDest(dest);
-      throw toCloneError(err);
+      throw toCloneError(scrubCloneError(err, token));
     }
     await assertConfigClean(dest, trimmed);
   }
+  await assertTokenNotInConfig(dest, token);
   return dest;
 }
