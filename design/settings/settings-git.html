@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="white-light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi-work · 设置 Git 与导入仓库</title>
+<link rel="stylesheet" href="../themes/themes.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg-app);color:var(--text-primary);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans CJK SC","WenQuanYi Micro Hei","Droid Sans Fallback",sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:inherit}
+.mono{font-family:ui-monospace,"SF Mono",Consolas,"WenQuanYi Micro Hei Mono",monospace}
+.muted{color:var(--text-muted)}
+.sec{color:var(--text-secondary)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0;background:var(--text-muted)}
+.dot.ok{background:var(--status-done)}
+.dot.bad{background:var(--status-failed)}
+.dot.warn{background:var(--status-waiting)}
+.btn{height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--bg-hover)}
+.btn.p{background:var(--accent);color:var(--text-inverse);border-color:var(--accent)}
+.btn.p:hover{opacity:.92}
+.btn.g{border-color:transparent;background:transparent;color:var(--text-secondary)}
+.btn.g:hover{background:var(--bg-hover);color:var(--text-primary)}
+.btn.sm{height:24px;padding:0 8px;font-size:12px}
+.btn.danger{color:var(--status-failed)}
+.btn[disabled]{opacity:.45;cursor:default}
+.in{height:30px;width:100%;padding:0 10px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface-subtle);outline:none}
+.in:focus{border-color:var(--border-focus)}
+.in[readonly]{color:var(--text-secondary)}
+.in.mask{color:var(--text-muted)}
+.tag{font-size:11px;padding:0 6px;border-radius:4px;border:1px solid var(--border-subtle);color:var(--text-secondary);background:var(--bg-surface-subtle);white-space:nowrap}
+.bg-shell{position:fixed;inset:0;display:flex}
+.bg-side{width:260px;background:var(--bg-sidebar);border-right:1px solid var(--border-subtle)}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.28)}
+[data-theme="white-dark"] .scrim,[data-theme$="-dark"] .scrim{background:rgba(0,0,0,.55)}
+
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(1080px,calc(100vw - 32px));height:min(760px,calc(100vh - 32px));display:flex;border:1px solid var(--border-subtle);border-radius:12px;background:var(--bg-surface);overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.16)}
+.nav{width:200px;flex-shrink:0;background:var(--bg-sidebar);border-right:1px solid var(--border-subtle);padding:18px 10px}
+.nav h3{font-size:13px;font-weight:600;padding:0 8px 14px}
+.nav div{padding:7px 10px;border-radius:6px;color:var(--text-secondary);cursor:default;margin-bottom:2px}
+.nav div.on{background:var(--bg-active);color:var(--text-primary);font-weight:500}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.head{padding:22px 28px 12px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.head h2{font-size:17px;font-weight:600;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.head h2 .aside{font-size:12px;font-weight:400;color:var(--text-muted)}
+.head p{color:var(--text-muted);margin-top:4px;max-width:46em}
+.body{flex:1;overflow:auto;padding:4px 28px 24px;min-height:0}
+.section-title{display:flex;align-items:baseline;gap:8px;margin:6px 0 8px}
+.section-title b{font-size:13px;font-weight:600}
+.section-title span{color:var(--text-muted);font-size:12px}
+
+.src{border:1px solid var(--border-subtle);border-radius:8px;overflow:hidden}
+.src-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border-top:1px solid var(--border-subtle)}
+.src-row:first-child{border-top:0}
+.src-row:hover{background:var(--bg-surface-subtle)}
+.src-row .t{display:flex;align-items:center;gap:8px;font-weight:500;min-width:0}
+.src-row .t b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.src-row .s{color:var(--text-muted);font-size:12px;margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0}
+.src-row .s .sep{opacity:.5}
+.src-row .why{color:var(--status-failed)}
+.src-row .acts{display:flex;gap:2px;flex-shrink:0}
+.empty{border:1px solid var(--border-subtle);border-radius:8px;padding:36px 28px;text-align:center;background:var(--bg-surface-subtle)}
+.empty b{display:block;font-size:14px;font-weight:600;margin-bottom:6px}
+.empty p{color:var(--text-secondary);max-width:46em;margin:0 auto;line-height:1.6}
+
+.drawer-scrim{position:absolute;inset:0;background:rgba(0,0,0,.28);display:none}
+[data-theme$="-dark"] .drawer-scrim{background:rgba(0,0,0,.45)}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:min(440px,100%);background:var(--bg-surface);border-left:1px solid var(--border-strong);display:none;flex-direction:column;z-index:2}
+.show .drawer-scrim,.show .drawer{display:flex}
+.dr-head{padding:18px 22px 8px;display:flex;align-items:center;gap:8px}
+.dr-head b{font-size:15px;font-weight:600;flex:1}
+.dr-body{flex:1;overflow:auto;padding:4px 22px 18px}
+.dr-foot{border-top:1px solid var(--border-subtle);padding:12px 22px;display:flex;gap:8px;justify-content:flex-end}
+.field{margin-top:14px}
+.field label{display:block;font-size:12px;color:var(--text-secondary);margin-bottom:5px}
+.field .hint{font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.55}
+.hint a,.link{color:var(--text-primary);text-underline-offset:2px}
+.kinds{display:flex;flex-wrap:wrap;gap:6px}
+.kinds button{padding:4px 10px;border:1px solid var(--border-subtle);border-radius:6px;background:transparent;color:var(--text-secondary)}
+.kinds button:hover{background:var(--bg-hover)}
+.kinds button.on{border-color:var(--border-focus);color:var(--text-primary);background:var(--bg-active)}
+.chk{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text-primary);margin-top:14px}
+.chk input{margin-top:2px;accent-color:var(--text-secondary)}
+.adv-toggle{margin-top:16px;background:none;border:0;padding:0;color:var(--text-secondary);display:inline-flex;align-items:center;gap:6px}
+.adv-toggle:hover{color:var(--text-primary)}
+.caret{width:8px;height:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);display:inline-block}
+.caret.up{transform:rotate(225deg) translate(-2px,-1px)}
+.adv{display:none;margin-top:8px}
+.adv.open{display:block}
+.result{margin-top:14px;border:1px solid var(--border-subtle);border-radius:8px;padding:10px 12px;background:var(--bg-surface-subtle);font-size:12.5px;line-height:1.5}
+.result .line{display:flex;align-items:center;gap:8px}
+.result .okt{color:var(--status-done)}
+.result .badt{color:var(--status-failed)}
+.spin{width:12px;height:12px;border:1.5px solid var(--border-strong);border-top-color:var(--text-secondary);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hidden{display:none!important}
+
+.confirm{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.28);z-index:3}
+.confirm.open{display:flex}
+.confirm .box{width:min(420px,calc(100% - 32px));background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.16);padding:20px 22px}
+.confirm h3{font-size:15px;font-weight:600;margin-bottom:8px}
+.confirm p{color:var(--text-secondary);line-height:1.55}
+.confirm .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+
+.ws{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(640px,calc(100vw - 32px));max-height:min(760px,calc(100vh - 32px));display:none;flex-direction:column;background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.16);padding:22px;gap:14px;z-index:5;overflow:hidden}
+.ws.open{display:flex}
+.ws h3{font-size:15px;font-weight:600;display:flex;align-items:center;justify-content:space-between}
+.ws h3 button{border:0;background:transparent;color:var(--text-muted);font-size:18px;line-height:1;padding:0 2px}
+.seg{display:flex;border:1px solid var(--border-subtle);border-radius:7px;overflow:hidden;flex-shrink:0}
+.seg button{flex:1;border:0;background:transparent;color:var(--text-secondary);padding:6px 12px;font-size:12px}
+.seg button:hover{background:var(--bg-hover);color:var(--text-primary)}
+.seg button.on{background:var(--text-primary);color:var(--text-inverse)}
+.ws-body{overflow:auto;min-height:0;flex:1 1 auto;display:flex;flex-direction:column;gap:12px}
+.flabel{display:block;font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:5px}
+.pick{position:relative}
+.pick-btn{width:100%;height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-surface-subtle);display:flex;align-items:center;gap:8px;text-align:left}
+.pick-btn .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick-btn .from{color:var(--text-muted);font-size:12px}
+.pop{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--bg-surface);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.16);z-index:6;padding:4px;display:none}
+.pop.up{top:auto;bottom:calc(100% + 4px)}
+.pop.open{display:block}
+.pop button{width:100%;text-align:left;border:0;background:transparent;border-radius:5px;padding:6px 8px;display:flex;align-items:center;gap:8px}
+.pop button:hover{background:var(--bg-hover)}
+.pop button.on{background:var(--bg-active)}
+.pop button .x{margin-left:auto;font-size:11px;color:var(--text-muted)}
+.projects{border:1px solid var(--border-subtle);border-radius:8px;overflow:auto;max-height:220px}
+.proj{width:100%;text-align:left;border:0;border-top:1px solid var(--border-subtle);background:transparent;padding:10px 12px;display:block}
+.proj:first-child{border-top:0}
+.proj:hover{background:var(--bg-hover)}
+.proj.on{background:var(--bg-active)}
+.proj .pn{display:flex;align-items:center;gap:8px;min-width:0}
+.proj .pn b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj .pd{color:var(--text-secondary);font-size:12px;margin-top:2px}
+.proj .pm{color:var(--text-muted);font-size:12px;margin-top:2px;display:flex;gap:6px;flex-wrap:wrap}
+.none{padding:22px 16px;text-align:center;color:var(--text-secondary);line-height:1.6}
+.err{display:none;font-size:12.5px;line-height:1.5;color:var(--status-failed);background:var(--diff-del-bg);border:1px solid var(--diff-del-num);border-radius:6px;padding:8px 10px}
+.err.on{display:block}
+.progress{display:none;align-items:center;gap:8px;color:var(--text-secondary);font-size:12.5px}
+.progress.on{display:flex}
+.ws-actions{display:flex;justify-content:flex-end;gap:8px;flex-shrink:0}
+.ws.is-busy .in,.ws.is-busy .pick-btn,.ws.is-busy .proj,.ws.is-busy .seg button{pointer-events:none;opacity:.7}
+
+.notes{position:fixed;left:12px;top:14px;width:168px;font-size:12px;color:var(--text-secondary);line-height:1.55;z-index:8}
+.notes b{color:var(--text-primary);font-weight:600}
+.notes .demo{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+body.shot .notes{display:none}
+@media (max-width:1200px){
+  .notes{display:none}
+  .nav{width:168px}
+  .head{padding:18px 20px 10px}
+  .body{padding:4px 20px 20px}
+}
+@media (max-width:720px){
+  .modal{flex-direction:column}
+  .nav{width:100%;display:flex;gap:4px;overflow:auto;padding:10px;border-right:0;border-bottom:1px solid var(--border-subtle)}
+  .nav h3{display:none}
+  .nav div{white-space:nowrap}
+  .src-row{grid-template-columns:16px minmax(0,1fr)}
+  .src-row .acts{grid-column:1 / -1;justify-content:flex-end}
+}
+</style>
+</head>
+<body>
+<div class="bg-shell"><div class="bg-side"></div></div>
+<div class="scrim"></div>
+
+<div class="notes">
+  <b>演示（不属于界面）</b>
+  <div class="muted">打开即可切换画面。正式界面没有这块。</div>
+  <div class="demo" id="demo"></div>
+</div>
+
+<div class="modal" id="settings">
+  <div class="nav">
+    <h3>系统设置</h3>
+    <div>通用</div>
+    <div>模型</div>
+    <div class="on">Git</div>
+    <div>Agent</div>
+    <div>插件</div>
+    <div>Skills</div>
+    <div>流程</div>
+    <div>关于</div>
+  </div>
+  <div class="main" id="main">
+    <div class="head">
+      <div>
+        <h2>Git <span class="aside">用于导入仓库</span></h2>
+        <p>连接后，新建工作区可以从项目列表里选，不用手贴地址。</p>
+      </div>
+      <button class="btn" id="add-btn" type="button">＋ 添加</button>
+    </div>
+    <div class="body" id="settings-body"></div>
+
+    <div class="drawer-scrim" id="drawer-scrim"></div>
+    <div class="drawer" id="drawer">
+      <div class="dr-head"><b id="drawer-title">添加 Git 服务</b><button class="btn g sm" id="drawer-x" type="button">✕</button></div>
+      <div class="dr-body">
+        <div class="field">
+          <label>类型</label>
+          <div class="kinds" id="kinds">
+            <button type="button" data-kind="self">GitLab 自建</button>
+            <button type="button" data-kind="com">GitLab.com</button>
+            <button type="button" data-kind="other">其他</button>
+          </div>
+          <div class="hint" id="kind-hint"></div>
+        </div>
+        <div class="field">
+          <label>名称</label>
+          <input class="in" id="f-name" placeholder="例如：公司 GitLab">
+        </div>
+        <div class="field">
+          <label>地址</label>
+          <input class="in mono" id="f-url" placeholder="https://gitlab.example.com" spellcheck="false">
+          <div class="hint" id="url-hint"></div>
+        </div>
+        <div class="field">
+          <label>个人访问令牌</label>
+          <input class="in mono" id="f-token" type="password" spellcheck="false" autocomplete="off">
+          <div class="hint">需要 <span class="mono">read_repository</span> 和 <span class="mono">read_api</span>。令牌只由 pi-work 保存在本机；克隆时交给 git，不写进仓库地址，也不写入 <span class="mono">.git/config</span>。</div>
+          <div class="hint" id="token-hint"></div>
+          <div class="hint"><a id="token-link" href="#" target="_blank" rel="noreferrer">去 GitLab 创建令牌</a></div>
+          <div class="hint mono" id="token-url"></div>
+        </div>
+        <label class="chk" id="http-row">
+          <input type="checkbox" id="f-http">
+          <span>允许 http<span class="hint" style="display:block;margin:2px 0 0">仅自建。默认只接受 https。内网暂时没有证书时可以打开。</span></span>
+        </label>
+        <button class="adv-toggle" id="adv-toggle" type="button"><span class="caret" id="adv-caret"></span>高级</button>
+        <div class="adv" id="adv">
+          <div class="field" style="margin-top:8px">
+            <label>自定义 CA 证书路径</label>
+            <input class="in mono" id="f-ca" placeholder="例如 C:\certs\corp-root.pem" spellcheck="false">
+            <div class="hint">内网私有根证书。留空则使用系统已经信任的证书。</div>
+          </div>
+        </div>
+        <div style="margin-top:16px"><button class="btn" id="test-btn" type="button">测试</button></div>
+        <div class="result hidden" id="test-result"></div>
+      </div>
+      <div class="dr-foot">
+        <button class="btn g danger hidden" id="drawer-del" type="button">删除</button>
+        <button class="btn g" id="drawer-cancel" type="button">取消</button>
+        <button class="btn p" id="drawer-save" type="button">添加</button>
+      </div>
+    </div>
+
+    <div class="confirm" id="confirm">
+      <div class="box">
+        <h3 id="confirm-title">删除这个连接？</h3>
+        <p id="confirm-copy"></p>
+        <div class="acts">
+          <button class="btn" id="confirm-cancel" type="button">取消</button>
+          <button class="btn danger" id="confirm-ok" type="button">删除</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="ws" id="ws">
+  <h3>新建工作区 <button type="button" id="ws-x" aria-label="关闭">×</button></h3>
+  <div class="seg" id="ws-tabs">
+    <button type="button" data-tab="local">本地目录</button>
+    <button type="button" data-tab="git" class="on">Git 导入</button>
+  </div>
+  <div class="ws-body" id="ws-body"></div>
+  <div class="err" id="ws-err"></div>
+  <div class="progress" id="ws-progress"><span class="spin"></span><span id="ws-progress-text">正在克隆…</span></div>
+  <div class="ws-actions">
+    <button class="btn" type="button" id="ws-cancel">取消</button>
+    <button class="btn p" type="button" id="ws-submit">创建</button>
+  </div>
+</div>
+
+<script>
+const SERVICES = [
+  { id: 'corp', name: '公司 GitLab', kind: 'self', kindLabel: 'GitLab 自建', url: 'https://gitlab.corp.example', user: 'zhangsan', status: 'ok', detail: '已连接' },
+  { id: 'com', name: 'GitLab.com', kind: 'com', kindLabel: 'GitLab.com', url: 'https://gitlab.com', user: 'alice', status: 'ok', detail: '已连接' },
+  { id: 'old', name: '旧 GitLab', kind: 'self', kindLabel: 'GitLab 自建', url: 'https://gitlab.old.example', user: '', status: 'bad', detail: '认证失败：令牌已过期' },
+];
+const PROJECTS = {
+  corp: [
+    { id: 'pi', path: 'platform/pi-work', desc: '内网编码工作台', branch: 'main', branches: ['main', 'develop', 'release/1.2'], updated: '10 月 14 日' },
+    { id: 'runner', path: 'platform/runner', desc: 'CI 执行器', branch: 'main', branches: ['main', 'dev'], updated: '10 月 12 日' },
+    { id: 'charts', path: 'infra/charts', desc: '部署清单', branch: 'master', branches: ['master', 'main'], updated: '10 月 8 日' },
+    { id: 'book', path: 'docs/handbook', desc: '内部手册', branch: 'main', branches: ['main'], updated: '9 月 30 日' },
+  ],
+  com: [
+    { id: 'demo', path: 'alice/notes', desc: '个人笔记', branch: 'main', branches: ['main'], updated: '10 月 2 日' },
+  ],
+};
+const TEST_FAIL = {
+  auth: '认证失败：令牌无效，或缺少 read_repository / read_api',
+  cert: '证书错误：服务器证书不受信任。可在「高级」里填写自定义 CA 证书路径',
+  network: '连不上该地址，请检查地址和网络',
+  api: '这不是 GitLab，或 API 不可用。GitHub、Gitea 仍是预留，导入时请用「填写地址」',
+};
+const CLONE_FAIL = {
+  auth: '认证失败。令牌无效或已过期，请到设置 → Git 重新测试该连接。',
+  cert: '证书错误。服务器证书不受信任。自建 GitLab 可在该连接的「高级」里填写自定义 CA 证书路径。',
+  not_found: '仓库不存在，或当前账号没有访问权限。',
+  network: '连不上服务器，请检查地址和网络。',
+  branch: '分支不存在。',
+  http: '该地址使用 http。自建服务需要在设置里勾选「允许 http」。',
+};
+const MASK = 'glpat-••••••••7k2q';
+
+const q = new URLSearchParams(location.search);
+const ui = {
+  scene: q.get('scene') === 'import' ? 'import' : 'settings',
+  theme: q.get('theme') || 'white-light',
+  list: q.get('state') === 'empty' ? 'empty' : 'list',
+  drawer: 'closed',
+  editing: null,
+  kind: 'self',
+  advanced: false,
+  allowHttp: false,
+  test: 'idle',
+  testFail: q.get('why') || 'auth',
+  confirm: false,
+  rowTest: null,
+  wsTab: 'git',
+  source: 'pick',
+  conn: 'corp',
+  search: '',
+  project: 'pi',
+  branchOpen: false,
+  connOpen: false,
+  branch: 'main',
+  name: 'pi-work',
+  nameTouched: false,
+  phase: 'idle',
+  err: q.get('err') || 'auth',
+};
+
+function $(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function tokenLink(raw) {
+  const text = String(raw || '').trim().replace(/\/+$/, '');
+  if (!text) return '';
+  try {
+    const u = new URL(text.includes('://') ? text : 'https://' + text);
+    return u.origin + '/-/user_settings/personal_access_tokens';
+  } catch {
+    return '';
+  }
+}
+function service(id) { return SERVICES.find((s) => s.id === id); }
+
+function applySceneFromQuery() {
+  const state = q.get('state') || 'list';
+  if (ui.scene === 'import') {
+    ui.wsTab = 'git';
+    ui.source = 'pick';
+    ui.project = 'pi';
+    ui.branch = 'main';
+    ui.name = 'pi-work';
+    ui.phase = 'idle';
+    if (state === 'address') ui.source = 'address';
+    if (state === 'branch') ui.branchOpen = true;
+    if (state === 'cloning') ui.phase = 'cloning';
+    if (state === 'fail') ui.phase = 'fail';
+    if (state === 'noconn') ui.list = 'empty';
+    if (state === 'pick-none') ui.project = '';
+    if (q.get('source') === 'address') ui.source = 'address';
+    if (q.get('source') === 'pick') ui.source = 'pick';
+    return;
+  }
+  if (state === 'empty') ui.list = 'empty';
+  if (state === 'add' || state === 'add-testing' || state === 'add-ok' || state === 'add-fail' || state === 'advanced' || state === 'other' || state === 'com') {
+    ui.drawer = 'add';
+  }
+  if (state === 'edit') ui.drawer = 'edit';
+  if (state === 'delete') ui.confirm = true;
+  if (state === 'add-testing') ui.test = 'testing';
+  if (state === 'add-ok') ui.test = 'ok';
+  if (state === 'add-fail') ui.test = 'fail';
+  if (state === 'advanced') { ui.advanced = true; ui.allowHttp = true; }
+  if (state === 'other') ui.kind = 'other';
+  if (state === 'com') ui.kind = 'com';
+  if (state === 'row-testing') ui.rowTest = 'com';
+}
+
+function renderList() {
+  if (ui.list === 'empty') {
+    $('settings-body').innerHTML = `
+      <div class="empty">
+        <b>还没有连接 Git 服务</b>
+        <p>不添加也可以导入。新建工作区里选择「填写地址」时，会使用本机 git 已经配置的凭证。添加 GitLab 之后，才可以从项目列表里选。</p>
+        <p class="muted" style="margin-top:8px">GitHub、Gitea 先预留。现在可以在「其他」里记下地址和令牌，导入时仍用填写地址。</p>
+      </div>`;
+    return;
+  }
+  const rows = SERVICES.map((s) => {
+    const testing = ui.rowTest === s.id;
+    const dot = testing ? 'warn' : s.status === 'ok' ? 'ok' : 'bad';
+    const meta = testing
+      ? `<span class="spin"></span><span>正在测试…</span>`
+      : s.status === 'ok'
+        ? `<span class="mono">${esc(s.url.replace(/^https:\/\//, ''))}</span><span class="sep">·</span><span>${esc(s.user)}</span><span class="sep">·</span><span>${esc(s.detail)}</span>`
+        : `<span class="mono">${esc(s.url.replace(/^https:\/\//, ''))}</span><span class="sep">·</span><span class="why">${esc(s.detail)}</span>`;
+    return `<div class="src-row">
+      <span class="dot ${dot}"></span>
+      <div>
+        <div class="t"><b>${esc(s.name)}</b><span class="tag">${esc(s.kindLabel)}</span></div>
+        <div class="s">${meta}</div>
+      </div>
+      <div class="acts">
+        <button class="btn g sm" type="button" data-act="test-row" data-id="${s.id}">测试</button>
+        <button class="btn g sm" type="button" data-act="edit" data-id="${s.id}">编辑</button>
+        <button class="btn g sm" type="button" data-act="delete" data-id="${s.id}">删除</button>
+      </div>
+    </div>`;
+  }).join('');
+  const ok = SERVICES.filter((s) => s.status === 'ok').length;
+  $('settings-body').innerHTML = `
+    <div class="section-title"><b>已连接的服务</b><span>${ok} 个可用 · ${SERVICES.length - ok} 个需要处理</span></div>
+    <div class="src">${rows}</div>
+    <p class="muted" style="font-size:12px;margin-top:10px;line-height:1.55">测试只检查令牌能不能访问 API。克隆时 pi-work 把令牌交给 git，不放进地址，也不留在 <span class="mono">.git/config</span>。GitHub、Gitea 预留，项目列表目前只支持 GitLab。</p>`;
+}
+
+function formUrl() {
+  if (ui.kind === 'com') return 'https://gitlab.com';
+  if (ui.drawer === 'edit') return service(ui.editing)?.url || '';
+  if (ui.kind === 'other') return 'https://gitea.corp.example';
+  return 'https://gitlab.corp.example';
+}
+function formName() {
+  if (ui.drawer === 'edit') return service(ui.editing)?.name || '';
+  if (ui.kind === 'com') return 'GitLab.com';
+  if (ui.kind === 'other') return '内网 Gitea';
+  return '公司 GitLab';
+}
+
+function renderDrawer() {
+  const open = ui.drawer !== 'closed';
+  $('main').classList.toggle('show', open);
+  if (!open) return;
+  const edit = ui.drawer === 'edit';
+  $('drawer-title').textContent = edit ? '编辑 · ' + (service(ui.editing)?.name || '') : '添加 Git 服务';
+  $('drawer-save').textContent = edit ? '保存' : '添加';
+  $('drawer-del').classList.toggle('hidden', !edit);
+  $('kinds').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.kind === ui.kind));
+  const hints = {
+    self: '内网自建 GitLab。地址填实例根地址，不要带项目路径。',
+    com: '地址固定为 https://gitlab.com。',
+    other: 'GitHub、Gitea 预留。可以先保存地址和令牌，导入时用「填写地址」。从项目列表选择目前只支持 GitLab。',
+  };
+  $('kind-hint').textContent = hints[ui.kind];
+  $('f-name').value = formName();
+  const url = $('f-url');
+  url.value = formUrl();
+  url.readOnly = ui.kind === 'com';
+  $('url-hint').textContent = ui.kind === 'com' ? 'GitLab.com 使用固定地址。' : '例如 https://gitlab.corp.example';
+  const token = $('f-token');
+  if (edit) {
+    token.value = MASK;
+    token.classList.add('mask');
+    token.type = 'text';
+  } else {
+    token.value = '';
+    token.classList.remove('mask');
+    token.type = 'password';
+    token.placeholder = 'glpat-…';
+  }
+  $('token-hint').textContent = edit
+    ? '这是已保存令牌的掩码，不是令牌本身。留空表示不修改。要更换时，删掉掩码再填入新令牌。'
+    : (ui.kind === 'other'
+      ? '保存后只显示掩码。「去 GitLab 创建令牌」按 GitLab 的页面拼接；GitHub、Gitea 还没有单独的创建页。'
+      : '保存后只显示掩码。');
+  const link = tokenLink(url.value);
+  const a = $('token-link');
+  a.href = link || '#';
+  a.style.pointerEvents = link ? '' : 'none';
+  a.style.opacity = link ? '' : '.45';
+  $('token-url').textContent = link || '填写地址后，链接会拼成「地址/-/user_settings/personal_access_tokens」';
+  $('http-row').classList.toggle('hidden', ui.kind !== 'self');
+  $('f-http').checked = ui.kind === 'self' && ui.allowHttp;
+  $('adv').classList.toggle('open', ui.advanced);
+  $('adv-caret').classList.toggle('up', ui.advanced);
+  $('f-ca').value = ui.advanced && ui.drawer === 'add' ? 'C:\\certs\\corp-root.pem' : (edit ? '' : '');
+  renderTest();
+  if (ui.test !== 'idle') $('test-result').scrollIntoView({ block: 'nearest' });
+  else if (ui.advanced) $('f-ca').scrollIntoView({ block: 'nearest' });
+}
+
+function renderTest() {
+  const box = $('test-result');
+  const btn = $('test-btn');
+  if (ui.test === 'idle') {
+    box.classList.add('hidden');
+    btn.disabled = false;
+    btn.innerHTML = '测试';
+    return;
+  }
+  box.classList.remove('hidden');
+  if (ui.test === 'testing') {
+    btn.disabled = true;
+    box.innerHTML = `<div class="line"><span class="spin"></span><span>正在测试…</span></div>`;
+    return;
+  }
+  btn.disabled = false;
+  if (ui.test === 'ok') {
+    const user = ui.kind === 'com' ? 'alice' : 'zhangsan';
+    box.innerHTML = `<div class="line okt"><span>✓</span><b>${esc(user)}</b></div><div class="muted" style="margin-top:4px">可以读取项目列表。</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="badt">${esc(TEST_FAIL[ui.testFail] || TEST_FAIL.auth)}</div>`;
+}
+
+function renderSettings() {
+  $('settings').style.display = '';
+  $('ws').classList.remove('open');
+  renderList();
+  renderDrawer();
+  const c = $('confirm');
+  c.classList.toggle('open', ui.confirm);
+  if (ui.confirm) {
+    const name = service(ui.editing || 'corp')?.name || '公司 GitLab';
+    $('confirm-title').textContent = '删除「' + name + '」？';
+    $('confirm-copy').textContent = '已经导入的工作区保留。之后不能再从该连接的项目列表里选。保存在本机的令牌会一并删除。';
+  }
+}
+
+function projects() {
+  const all = PROJECTS[ui.conn] || [];
+  const s = ui.search.trim().toLowerCase();
+  if (!s) return all;
+  return all.filter((p) => (p.path + ' ' + p.desc).toLowerCase().includes(s));
+}
+function selectedProject() {
+  return (PROJECTS[ui.conn] || []).find((p) => p.id === ui.project) || null;
+}
+
+function renderWs() {
+  $('settings').style.display = 'none';
+  $('ws').classList.add('open');
+  $('ws-tabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.wsTab));
+  const busy = ui.phase === 'cloning';
+  $('ws').classList.toggle('is-busy', busy);
+  $('ws-submit').disabled = busy || (ui.wsTab === 'git' && ui.source === 'pick' && !selectedProject());
+  $('ws-submit').textContent = busy ? '正在克隆…' : '创建';
+  const prog = $('ws-progress');
+  prog.classList.toggle('on', busy);
+  const err = $('ws-err');
+  err.classList.toggle('on', ui.phase === 'fail');
+  if (ui.wsTab === 'local') {
+    err.classList.remove('on');
+    prog.classList.remove('on');
+    $('ws-submit').disabled = false;
+    $('ws-submit').textContent = '创建';
+    $('ws-body').innerHTML = `
+      <div><label class="flabel">工作区名称</label><input class="in" value="" placeholder="例如: my-project"></div>
+      <div><label class="flabel">本地路径</label><input class="in mono" placeholder="例如: D:\\work\\my-project"><div class="hint">本地目录须位于允许的根目录内。</div></div>`;
+    return;
+  }
+  if (ui.source === 'address') {
+    const p = selectedProject();
+    $('ws-progress-text').textContent = '正在克隆…';
+    err.textContent = CLONE_FAIL[ui.err] || CLONE_FAIL.auth;
+    $('ws-body').innerHTML = `
+      <div class="seg" id="source-seg">
+        <button type="button" data-source="pick">从 GitLab 选择</button>
+        <button type="button" data-source="address" class="on">填写地址</button>
+      </div>
+      <div><label class="flabel">工作区名称</label><input class="in" id="addr-name" value="pi-work"></div>
+      <div><label class="flabel">Git 仓库地址</label><input class="in mono" id="addr-url" value="https://gitlab.corp.example/platform/pi-work.git" spellcheck="false"></div>
+      <div><label class="flabel">分支 (可选)</label><input class="in mono" id="addr-branch" value="main" spellcheck="false"></div>
+      <p class="hint">如果地址属于已连接的服务，克隆时用该服务的令牌；否则用本机 git 凭证。令牌不会出现在地址里，也不会写入 <span class="mono">.git/config</span>。</p>`;
+    if (busy) $('ws-progress-text').textContent = '正在克隆 pi-work（main）…';
+    return;
+  }
+  const usable = ui.list === 'empty' ? [] : SERVICES.filter((s) => s.status === 'ok');
+  const conn = usable.find((s) => s.id === ui.conn) || usable[0];
+  if (conn) ui.conn = conn.id;
+  const list = conn ? projects() : [];
+  const cur = selectedProject();
+  if (cur && !ui.nameTouched) ui.name = cur.path.split('/').pop();
+  if (cur && !cur.branches.includes(ui.branch)) ui.branch = cur.branch;
+  const projHtml = !conn
+    ? `<div class="none">还没有可用的 GitLab 连接。<br>可以到设置 → Git 添加，或改用「填写地址」，用本机 git 凭证导入。</div>`
+    : list.length
+      ? list.map((p) => `<button type="button" class="proj ${p.id === ui.project ? 'on' : ''}" data-project="${p.id}">
+          <div class="pn"><b class="mono">${esc(p.path)}</b></div>
+          <div class="pd">${esc(p.desc)}</div>
+          <div class="pm"><span>默认分支 ${esc(p.branch)}</span><span>·</span><span>更新于 ${esc(p.updated)}</span></div>
+        </button>`).join('')
+      : `<div class="none">没有匹配的项目。</div>`;
+  const branchBlock = cur ? `
+    <div>
+      <label class="flabel">分支</label>
+      <div class="pick">
+        <button class="pick-btn" type="button" id="branch-btn"><span class="m mono">${esc(ui.branch)}</span><span class="from">${ui.branch === cur.branch ? '默认' : ''}</span><span class="caret"></span></button>
+        <div class="pop up ${ui.branchOpen ? 'open' : ''}" id="branch-pop">
+          ${cur.branches.map((b) => `<button type="button" class="${b === ui.branch ? 'on' : ''}" data-branch="${esc(b)}"><span class="mono">${esc(b)}</span>${b === cur.branch ? '<span class="x">默认</span>' : ''}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div>
+      <label class="flabel">工作区名称</label>
+      <input class="in" id="pick-name" value="${esc(ui.name)}">
+      <div class="hint">按项目名填好，可以改。</div>
+    </div>` : `<p class="hint">选中一个项目后，在这里选分支。默认就是该项目的默认分支，名称会按项目名填上。</p>`;
+  err.textContent = CLONE_FAIL[ui.err] || CLONE_FAIL.auth;
+  const progName = cur ? `${cur.path.split('/').pop()}（${ui.branch}）` : '';
+  $('ws-progress-text').textContent = progName ? `正在克隆 ${progName}…` : '正在克隆…';
+  $('ws-body').innerHTML = `
+    <div class="seg" id="source-seg">
+      <button type="button" data-source="pick" class="on">从 GitLab 选择</button>
+      <button type="button" data-source="address">填写地址</button>
+    </div>
+    ${conn ? `<div>
+      <label class="flabel">连接</label>
+      <div class="pick">
+        <button class="pick-btn" type="button" id="conn-btn"><span class="dot ok"></span><span class="m">${esc(conn.name)}</span><span class="from">${esc(conn.user)}</span><span class="caret"></span></button>
+        <div class="pop ${ui.connOpen ? 'open' : ''}">
+          ${usable.map((s) => `<button type="button" data-conn="${s.id}" class="${s.id === conn.id ? 'on' : ''}"><span class="dot ok"></span><span>${esc(s.name)}</span><span class="x">${esc(s.user)}</span></button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div><label class="flabel">搜索</label><input class="in" id="proj-search" placeholder="搜索命名空间或项目名" value="${esc(ui.search)}"></div>` : ''}
+    <div class="projects">${projHtml}</div>
+    ${branchBlock}`;
+}
+
+function render() {
+  document.documentElement.dataset.theme = ui.theme;
+  if (ui.scene === 'import') renderWs();
+  else renderSettings();
+}
+
+function openAdd() {
+  ui.scene = 'settings';
+  ui.drawer = 'add';
+  ui.editing = null;
+  ui.kind = 'self';
+  ui.test = 'idle';
+  ui.advanced = false;
+  ui.allowHttp = false;
+  ui.confirm = false;
+  render();
+}
+function openEdit(id) {
+  const s = service(id);
+  ui.scene = 'settings';
+  ui.drawer = 'edit';
+  ui.editing = id;
+  ui.kind = s?.kind || 'self';
+  ui.test = 'idle';
+  ui.advanced = false;
+  ui.allowHttp = false;
+  ui.confirm = false;
+  render();
+}
+
+$('demo').innerHTML = [
+  ['设置 · 列表', () => { ui.scene = 'settings'; ui.list = 'list'; ui.drawer = 'closed'; ui.confirm = false; ui.rowTest = null; }],
+  ['设置 · 空列表', () => { ui.scene = 'settings'; ui.list = 'empty'; ui.drawer = 'closed'; ui.confirm = false; }],
+  ['添加', () => openAdd()],
+  ['添加 · 测试中', () => { openAdd(); ui.test = 'testing'; }],
+  ['添加 · 成功', () => { openAdd(); ui.test = 'ok'; }],
+  ['添加 · 失败', () => { openAdd(); ui.test = 'fail'; ui.testFail = 'auth'; }],
+  ['添加 · 证书失败', () => { openAdd(); ui.test = 'fail'; ui.testFail = 'cert'; }],
+  ['添加 · 高级', () => { openAdd(); ui.advanced = true; ui.allowHttp = true; }],
+  ['添加 · GitLab.com', () => { openAdd(); ui.kind = 'com'; }],
+  ['添加 · 其他', () => { openAdd(); ui.kind = 'other'; }],
+  ['编辑 · 掩码', () => openEdit('corp')],
+  ['删除确认', () => { ui.scene = 'settings'; ui.drawer = 'closed'; ui.editing = 'corp'; ui.confirm = true; }],
+  ['列表 · 测试中', () => { ui.scene = 'settings'; ui.list = 'list'; ui.drawer = 'closed'; ui.rowTest = 'com'; }],
+  ['导入 · 选择', () => { ui.scene = 'import'; ui.list = 'list'; ui.source = 'pick'; ui.phase = 'idle'; ui.project = 'pi'; ui.branchOpen = false; }],
+  ['导入 · 分支', () => { ui.scene = 'import'; ui.source = 'pick'; ui.phase = 'idle'; ui.project = 'pi'; ui.branchOpen = true; }],
+  ['导入 · 无连接', () => { ui.scene = 'import'; ui.list = 'empty'; ui.source = 'pick'; ui.phase = 'idle'; ui.project = ''; }],
+  ['导入 · 填写地址', () => { ui.scene = 'import'; ui.source = 'address'; ui.phase = 'idle'; }],
+  ['导入 · 正在克隆', () => { ui.scene = 'import'; ui.source = 'pick'; ui.phase = 'cloning'; ui.project = 'pi'; }],
+  ['失败 · 认证', () => { ui.scene = 'import'; ui.source = 'pick'; ui.phase = 'fail'; ui.err = 'auth'; }],
+  ['失败 · 证书', () => { ui.scene = 'import'; ui.source = 'pick'; ui.phase = 'fail'; ui.err = 'cert'; }],
+  ['失败 · 仓库不存在', () => { ui.scene = 'import'; ui.source = 'address'; ui.phase = 'fail'; ui.err = 'not_found'; }],
+  ['失败 · 分支', () => { ui.scene = 'import'; ui.source = 'pick'; ui.phase = 'fail'; ui.err = 'branch'; }],
+  ['失败 · http', () => { ui.scene = 'import'; ui.source = 'address'; ui.phase = 'fail'; ui.err = 'http'; }],
+  ['浅色 / 深色', () => { ui.theme = ui.theme === 'white-dark' ? 'white-light' : 'white-dark'; }],
+].map(([label, fn], i) => {
+  const b = document.createElement('button');
+  b.className = 'btn sm';
+  b.type = 'button';
+  b.textContent = label;
+  b.addEventListener('click', () => { fn(); render(); });
+  return b;
+}).reduce((box, b) => { box.appendChild(b); return box; }, $('demo'));
+
+document.body.addEventListener('click', (e) => {
+  const t = e.target.closest('button');
+  if (!t) return;
+  const act = t.dataset.act;
+  if (t.id === 'add-btn') openAdd();
+  if (act === 'edit') openEdit(t.dataset.id);
+  if (act === 'delete') { ui.editing = t.dataset.id; ui.confirm = true; ui.drawer = 'closed'; render(); }
+  if (act === 'test-row') {
+    const id = t.dataset.id;
+    ui.rowTest = id;
+    render();
+    setTimeout(() => { if (ui.rowTest === id) { ui.rowTest = null; render(); } }, 800);
+  }
+  if (t.id === 'drawer-x' || t.id === 'drawer-cancel' || t.id === 'drawer-scrim') { ui.drawer = 'closed'; ui.test = 'idle'; render(); }
+  if (t.id === 'drawer-save') { ui.drawer = 'closed'; render(); }
+  if (t.id === 'drawer-del') { ui.confirm = true; render(); }
+  if (t.id === 'confirm-cancel') { ui.confirm = false; render(); }
+  if (t.id === 'confirm-ok') { ui.confirm = false; ui.drawer = 'closed'; render(); }
+  if (t.id === 'adv-toggle') { ui.advanced = !ui.advanced; render(); }
+  if (t.dataset.kind) { ui.kind = t.dataset.kind; if (ui.kind !== 'self') ui.allowHttp = false; render(); }
+  if (t.id === 'test-btn' && ui.test !== 'testing') {
+    ui.test = 'testing';
+    render();
+    setTimeout(() => { if (ui.test === 'testing') { ui.test = 'ok'; render(); } }, 700);
+  }
+  if (t.dataset.tab) { ui.wsTab = t.dataset.tab; ui.phase = 'idle'; render(); }
+  if (t.dataset.source) { ui.source = t.dataset.source; ui.phase = 'idle'; ui.branchOpen = false; ui.connOpen = false; render(); }
+  if (t.id === 'conn-btn') { ui.connOpen = !ui.connOpen; ui.branchOpen = false; render(); }
+  if (t.dataset.conn) {
+    ui.conn = t.dataset.conn;
+    ui.connOpen = false;
+    ui.project = (PROJECTS[ui.conn] || [])[0]?.id || '';
+    ui.nameTouched = false;
+    const p = selectedProject();
+    ui.branch = p?.branch || 'main';
+    render();
+  }
+  if (t.dataset.project) {
+    ui.project = t.dataset.project;
+    ui.nameTouched = false;
+    ui.branch = selectedProject()?.branch || 'main';
+    ui.branchOpen = false;
+    render();
+  }
+  if (t.id === 'branch-btn') { ui.branchOpen = !ui.branchOpen; render(); }
+  if (t.dataset.branch) { ui.branch = t.dataset.branch; ui.branchOpen = false; render(); }
+  if (t.id === 'ws-submit' && !t.disabled) { ui.phase = 'cloning'; render(); }
+  if (t.id === 'ws-cancel' || t.id === 'ws-x') { ui.phase = 'idle'; }
+});
+
+document.body.addEventListener('input', (e) => {
+  if (e.target.id === 'f-url') {
+    const link = tokenLink(e.target.value);
+    $('token-link').href = link || '#';
+    $('token-url').textContent = link || '填写地址后，链接会拼成「地址/-/user_settings/personal_access_tokens」';
+  }
+  if (e.target.id === 'f-token' && e.target.classList.contains('mask')) {
+    e.target.classList.remove('mask');
+    if (e.target.value === MASK) e.target.value = '';
+    $('token-hint').textContent = '留空表示不修改。';
+  }
+  if (e.target.id === 'f-http') ui.allowHttp = e.target.checked;
+  if (e.target.id === 'proj-search') { ui.search = e.target.value; ui.branchOpen = false; render(); e.target.focus(); }
+  if (e.target.id === 'pick-name') ui.nameTouched = true;
+});
+document.body.addEventListener('focusin', (e) => {
+  if (e.target.id === 'f-token' && e.target.value === MASK) {
+    e.target.value = '';
+    e.target.classList.remove('mask');
+    e.target.placeholder = '留空表示不修改';
+    $('token-hint').textContent = '留空表示不修改。';
+  }
+});
+
+if (q.get('shot') === '1') document.body.classList.add('shot');
+document.documentElement.dataset.theme = ui.theme;
+applySceneFromQuery();
+render();
+</script>
+</body>
+</html>
