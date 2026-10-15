@@ -31,6 +31,14 @@ import {
   GROK_SOURCE_ID,
 } from './src/core/model-sources.mjs';
 import { cloneGitRepo, stripGitUrlCredentials } from './src/core/git-import.mjs';
+import {
+  createGitConnection,
+  matchConnectionByUrl,
+  publicGitConnection,
+  recordGitTest,
+  updateGitConnection,
+} from './src/core/git-connections.mjs';
+import { cloneUrlForProject, getGitlabProject, listGitlabBranches, listGitlabProjects, testGitlabConnection } from './src/core/gitlab-api.mjs';
 import { createExtensionHost } from './src/core/extensions.mjs';
 import { describePlugins, installPlugin, PLUGIN_ID } from './src/core/plugins.mjs';
 import { listSkills, listSkillRecords, createSkill, updateSkill, deleteSkill, SKILL_ID } from './src/core/skills.mjs';
@@ -645,9 +653,232 @@ async function handleSources(req, res, p, m) {
   return false;
 }
 
+async function loadGitConnections() {
+  const settings = await store.getSettings();
+  return Array.isArray(settings.gitConnections) ? settings.gitConnections : [];
+}
+
+async function saveGitConnections(list) {
+  await store.putSettings({ gitConnections: list });
+  return loadGitConnections();
+}
+
+function gitFailureBody(err) {
+  const failure = { error: err?.message || 'git clone failed' };
+  if (err?.gitCode) failure.code = err.gitCode;
+  if (err?.gitCode === 'unknown' && err.detail) failure.detail = String(err.detail).slice(0, 800);
+  if (err?.via) failure.via = err.via;
+  return failure;
+}
+
+function connectionCloneError(code, via = 'connection') {
+  const err = new Error(code === 'http_not_allowed' ? 'http not allowed' : 'git clone failed');
+  err.status = 400;
+  err.gitCode = code || 'unknown';
+  err.via = via;
+  return err;
+}
+
+function usesConnectionClone(connection, gitUrl) {
+  if (!connection || !/^https?:\/\//i.test(gitUrl)) return false;
+  if (connection.token) return true;
+  if (connection.caFile) return true;
+  return /^http:\/\//i.test(gitUrl);
+}
+
+async function planWorkspaceGit(body) {
+  const connections = await loadGitConnections();
+  let connection = null;
+  if (body.connectionId) {
+    connection = connections.find((item) => item.id === String(body.connectionId)) || null;
+    if (!connection) {
+      const err = new Error('not found');
+      err.status = 404;
+      throw err;
+    }
+  }
+  let gitUrl = String(body.gitUrl || '').trim();
+  let branch = body.branch || '';
+  const projectId = body.projectId != null ? String(body.projectId).trim() : '';
+  if (projectId) {
+    if (!connection) {
+      const err = new Error('connection required');
+      err.status = 400;
+      throw err;
+    }
+    const found = await getGitlabProject(connection, projectId);
+    if (!found.ok) throw connectionCloneError(found.code || 'unknown');
+    try {
+      gitUrl = cloneUrlForProject(connection, found.project);
+    } catch (err) {
+      if (!err.via) err.via = 'connection';
+      throw err;
+    }
+    if (!branch) branch = found.project.defaultBranch || '';
+  } else if (!connection && gitUrl) {
+    connection = matchConnectionByUrl(connections, gitUrl);
+  }
+  if (!gitUrl) {
+    const err = new Error('invalid gitUrl');
+    err.status = 400;
+    throw err;
+  }
+  return { connection, gitUrl, branch };
+}
+
+async function testConnectionRecord(connection) {
+  const result = await testGitlabConnection(connection);
+  return { ok: result.ok === true, username: result.username || '', code: result.ok ? '' : (result.code || 'unknown') };
+}
+
+async function handleGitConnections(req, res, p, m) {
+  if (!p.startsWith('/api/git/connections')) return false;
+
+  if (p === '/api/git/connections' && m === 'GET') {
+    sendJson(res, 200, (await loadGitConnections()).map(publicGitConnection));
+    return true;
+  }
+  if (p === '/api/git/connections' && m === 'POST') {
+    const body = await readBody(req);
+    const list = await loadGitConnections();
+    if (list.length >= 50) {
+      sendJson(res, 400, { error: 'invalid connection', errors: ['too many connections'] });
+      return true;
+    }
+    const built = createGitConnection(body || {});
+    if (!built.ok) {
+      sendJson(res, 400, { error: 'invalid connection', errors: built.errors });
+      return true;
+    }
+    list.push(built.value);
+    await saveGitConnections(list);
+    sendJson(res, 201, publicGitConnection(built.value));
+    return true;
+  }
+  if (p === '/api/git/connections/test' && m === 'POST') {
+    const body = await readBody(req) || {};
+    let connection;
+    if (body.id) {
+      const current = (await loadGitConnections()).find((item) => item.id === String(body.id));
+      if (!current) {
+        sendJson(res, 404, { error: 'not_found' });
+        return true;
+      }
+      const updated = updateGitConnection(current, body);
+      if (!updated.ok) {
+        const code = updated.errors?.includes('token required') ? 'auth_failed' : 'unknown';
+        sendJson(res, 200, { ok: false, code });
+        return true;
+      }
+      connection = updated.value;
+    } else {
+      const built = createGitConnection(body);
+      if (!built.ok) {
+        const code = built.errors?.includes('token required') ? 'auth_failed' : 'unknown';
+        sendJson(res, 200, { ok: false, code });
+        return true;
+      }
+      connection = built.value;
+    }
+    const result = await testConnectionRecord(connection);
+    sendJson(res, 200, result.ok ? { ok: true, username: result.username } : { ok: false, code: result.code });
+    return true;
+  }
+
+  let match = p.match(/^\/api\/git\/connections\/([^/]+)\/projects\/([^/]+)\/branches$/);
+  if (match && m === 'GET') {
+    const connection = (await loadGitConnections()).find((item) => item.id === decodeURIComponent(match[1]));
+    if (!connection) {
+      sendJson(res, 404, { error: 'not_found' });
+      return true;
+    }
+    const result = await listGitlabBranches(connection, decodeURIComponent(match[2]));
+    if (!result.ok) {
+      sendJson(res, 400, { error: 'git clone failed', code: result.code || 'unknown', via: 'connection' });
+      return true;
+    }
+    sendJson(res, 200, { branches: result.branches, defaultBranch: result.defaultBranch || '' });
+    return true;
+  }
+  match = p.match(/^\/api\/git\/connections\/([^/]+)\/projects$/);
+  if (match && m === 'GET') {
+    const connection = (await loadGitConnections()).find((item) => item.id === decodeURIComponent(match[1]));
+    if (!connection) {
+      sendJson(res, 404, { error: 'not_found' });
+      return true;
+    }
+    const result = await listGitlabProjects(connection, urlSearch(req));
+    if (!result.ok) {
+      sendJson(res, 400, { error: 'git clone failed', code: result.code || 'unknown', via: 'connection' });
+      return true;
+    }
+    sendJson(res, 200, { projects: result.projects });
+    return true;
+  }
+  match = p.match(/^\/api\/git\/connections\/([^/]+)\/test$/);
+  if (match && m === 'POST') {
+    const id = decodeURIComponent(match[1]);
+    const list = await loadGitConnections();
+    const index = list.findIndex((item) => item.id === id);
+    if (index < 0) {
+      sendJson(res, 404, { error: 'not_found' });
+      return true;
+    }
+    const result = await testConnectionRecord(list[index]);
+    list[index] = recordGitTest(list[index], result);
+    await saveGitConnections(list);
+    sendJson(res, 200, result.ok
+      ? { ok: true, username: result.username, connection: publicGitConnection(list[index]) }
+      : { ok: false, code: result.code, connection: publicGitConnection(list[index]) });
+    return true;
+  }
+  match = p.match(/^\/api\/git\/connections\/([^/]+)$/);
+  if (match && m === 'PATCH') {
+    const id = decodeURIComponent(match[1]);
+    const list = await loadGitConnections();
+    const index = list.findIndex((item) => item.id === id);
+    if (index < 0) {
+      sendJson(res, 404, { error: 'not_found' });
+      return true;
+    }
+    const body = await readBody(req) || {};
+    const updated = updateGitConnection(list[index], body);
+    if (!updated.ok) {
+      sendJson(res, 400, { error: 'invalid connection', errors: updated.errors });
+      return true;
+    }
+    list[index] = updated.value;
+    await saveGitConnections(list);
+    sendJson(res, 200, publicGitConnection(updated.value));
+    return true;
+  }
+  if (match && m === 'DELETE') {
+    const id = decodeURIComponent(match[1]);
+    const list = await loadGitConnections();
+    if (!list.some((item) => item.id === id)) {
+      sendJson(res, 404, { error: 'not_found' });
+      return true;
+    }
+    await saveGitConnections(list.filter((item) => item.id !== id));
+    sendJson(res, 200, { ok: true, id });
+    return true;
+  }
+  return false;
+}
+
+function urlSearch(req) {
+  try {
+    return new URL(req.url, 'http://127.0.0.1').searchParams.get('search') || '';
+  } catch {
+    return '';
+  }
+}
+
 async function routeApi(req, res, url) {
   const p = url.pathname.replace(/\/$/, '') || '/';
   const m = req.method;
+
+  if (await handleGitConnections(req, res, p, m)) return;
 
   if (m === 'GET' && p === '/api/health') {
     sendJson(res, 200, { ok: true });
@@ -670,30 +901,36 @@ async function routeApi(req, res, url) {
       sendJson(res, 400, { error: 'name required' });
       return;
     }
-    if (body.gitUrl) {
+    const wantsGit = Boolean(body.gitUrl) || Boolean(body.connectionId) || (body.projectId != null && String(body.projectId).trim() !== '');
+    if (wantsGit) {
       const id = randomUUID();
       const dest = path.join(DATA_DIR, 'workspaces', id, 'repo');
       try {
-        await cloneGitRepo({ url: body.gitUrl, branch: body.branch, dest });
+        const planned = await planWorkspaceGit(body);
+        let gitUrl = planned.gitUrl;
+        let branch = planned.branch || '';
+        const connection = usesConnectionClone(planned.connection, gitUrl) ? planned.connection : null;
+        try {
+          await cloneGitRepo({ url: gitUrl, branch, dest, connection });
+        } catch (err) {
+          if (connection && !err.via) err.via = 'connection';
+          throw err;
+        }
+        gitUrl = stripGitUrlCredentials(gitUrl);
+        const ws = await store.createWorkspace({
+          id,
+          name: body.name,
+          path: dest,
+          source: 'git',
+          gitUrl,
+          branch: branch || null,
+          rootPath: dest,
+          worktrees: [],
+        });
+        sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path, source: ws.source, gitUrl: ws.gitUrl, branch: ws.branch, rootPath: ws.rootPath, worktrees: ws.worktrees });
       } catch (err) {
-        const failure = { error: err.message || 'git clone failed' };
-        if (err.gitCode) failure.code = err.gitCode;
-        if (err.gitCode === 'unknown' && err.detail) failure.detail = err.detail;
-        sendJson(res, err.status || 400, failure);
-        return;
+        sendJson(res, err.status || 400, gitFailureBody(err));
       }
-      const gitUrl = stripGitUrlCredentials(body.gitUrl);
-      const ws = await store.createWorkspace({
-        id,
-        name: body.name,
-        path: dest,
-        source: 'git',
-        gitUrl,
-        branch: body.branch || null,
-        rootPath: dest,
-        worktrees: [],
-      });
-      sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path, source: ws.source, gitUrl: ws.gitUrl, branch: ws.branch, rootPath: ws.rootPath, worktrees: ws.worktrees });
       return;
     }
     if (!body.path) {
@@ -1103,6 +1340,7 @@ async function routeApi(req, res, url) {
     delete patch.baseUrl;
     delete patch.apiKey;
     delete patch.hasApiKey;
+    delete patch.gitConnections;
     const saved = await store.putSettings(patch);
     sendJson(res, 200, await settingsResponse(saved));
     return;

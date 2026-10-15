@@ -20,6 +20,19 @@ import {
   closeModelPop,
   noteSettingsReloaded,
 } from './model-settings.js';
+import { renderGitPane, handleGitAction, onGitField, onGitTokenFocus } from './git-settings.js';
+import {
+  resetGitImport,
+  activateGitImport,
+  renderGitImportBody,
+  gitImportPayload,
+  gitImportProgressText,
+  gitImportCloneMessage,
+  handleGitImportAction,
+  onGitImportInput,
+  gitImportSource,
+  closeGitImportPops,
+} from './git-import-ui.js';
 import { renderWorkflowTab, handleWorkflowAction, filterWorkflow, pipelineTitle, captureWorkflowDraft } from './workflow-settings.js';
 import {
   renderAgentsPane,
@@ -2862,6 +2875,14 @@ function agentCtx() {
   return { state, t, escapeHtml, api, showToast, localizeRoleLabel, render: renderSettingsModal, confirm: confirmDialog };
 }
 
+function gitCtx() {
+  return { state, t, escapeHtml, api, showToast, render: renderSettingsModal, confirm: confirmDialog };
+}
+
+function gitImportCtx() {
+  return { state, t, escapeHtml, api, locale: getLocale };
+}
+
 export function renderSettingsModal() {
   captureWorkflowDraft(workflowCtx());
   captureAgentDraft(agentCtx());
@@ -2878,18 +2899,22 @@ export function renderSettingsModal() {
 
   const models = tTab === 'models';
   const agents = tTab === 'agents';
+  const git = tTab === 'git';
   const ctx = models || agents ? modelsCtx() : null;
   const pane = models
     ? renderModelsPane(ctx)
-    : agents
-      ? renderAgentsPane(agentCtx())
-      : `<div class="sm-body"><span class="sm-x" data-action="close-settings">×</span>${renderSettingsTabContent(tTab)}</div>`;
+    : git
+      ? renderGitPane(gitCtx())
+      : agents
+        ? renderAgentsPane(agentCtx())
+        : `<div class="sm-body"><span class="sm-x" data-action="close-settings">×</span>${renderSettingsTabContent(tTab)}</div>`;
   ov.innerHTML = `
     <div class="sm">
       <div class="sm-nav">
         <h3>${escapeHtml(t('settings_title'))}</h3>
         <div class="${tTab === 'general' ? 'on' : ''}" data-action="set-settings-tab" data-tab="general">${escapeHtml(t('settings_tab_general'))}</div>
         <div class="${tTab === 'models' ? 'on' : ''}" data-action="set-settings-tab" data-tab="models">${escapeHtml(t('settings_tab_models'))}</div>
+        <div class="${tTab === 'git' ? 'on' : ''}" data-action="set-settings-tab" data-tab="git" data-testid="settings-tab-git">${escapeHtml(t('settings_tab_git'))}</div>
         <div class="${tTab === 'agents' ? 'on' : ''}" data-action="set-settings-tab" data-tab="agents" data-testid="settings-tab-agents">${escapeHtml(t('settings_tab_agents'))}<span class="sm-nav-new">${escapeHtml(t('settings_tab_new'))}</span></div>
         <div class="${tTab === 'plugins' ? 'on' : ''}" data-action="set-settings-tab" data-tab="plugins">${escapeHtml(t('settings_tab_plugins'))}</div>
         <div class="${tTab === 'skills' ? 'on' : ''}" data-action="set-settings-tab" data-tab="skills">${escapeHtml(t('settings_tab_skills'))}</div>
@@ -3327,6 +3352,9 @@ const GIT_IMPORT_CODE_KEYS = {
 
 function friendlyWorkspaceError(err) {
   const code = err?.body?.code;
+  if (code && (err?.body?.via === 'connection' || code === 'http_not_allowed' || code === 'not_gitlab')) {
+    return gitImportCloneMessage(code, t);
+  }
   const key = GIT_IMPORT_CODE_KEYS[code];
   if (key) {
     const text = t(key);
@@ -3374,12 +3402,19 @@ function setWorkspaceSubmitBusy(busy) {
     btn.disabled = true;
     btn.classList.add('is-busy');
     btn.setAttribute('aria-busy', 'true');
-    btn.textContent = wsModalMode === 'git' ? t('ws_cloning') : t('ws_creating');
+    btn.textContent = wsModalMode === 'git' ? gitImportProgressText(t) : t('ws_creating');
+    document.getElementById('ws-dialog')?.classList.add('is-busy');
+    const progress = document.getElementById('ws-modal-progress');
+    progress?.classList.add('on');
+    const text = document.getElementById('ws-progress-text');
+    if (text) text.textContent = wsModalMode === 'git' ? gitImportProgressText(t) : t('ws_creating');
   } else {
     btn.disabled = false;
     btn.classList.remove('is-busy');
     btn.removeAttribute('aria-busy');
     btn.textContent = btn.dataset.idleLabel || t('btn_create');
+    document.getElementById('ws-dialog')?.classList.remove('is-busy');
+    document.getElementById('ws-modal-progress')?.classList.remove('on');
   }
 }
 
@@ -3411,29 +3446,30 @@ export async function startNewConversation(wid) {
 }
 
 export function openNewWorkspaceModal() {
-  if (!wsCreating) wsModalMode = 'local';
+  if (!wsCreating) {
+    wsModalMode = 'local';
+    resetGitImport();
+  }
   openModal(`
-    <div class="modal-dialog">
+    <div class="modal-dialog" id="ws-dialog">
       <h3>${escapeHtml(t('new_workspace'))} <span style="cursor:pointer;color:var(--text-muted)" data-action="close-modal">×</span></h3>
       <div class="seg seg-split" style="margin-bottom:8px">
         <span id="ws-modal-tab-local" class="on" data-action="toggle-ws-modal-tab" data-tab="local">${escapeHtml(t('ws_local_tab'))}</span>
         <span id="ws-modal-tab-git" data-action="toggle-ws-modal-tab" data-tab="git">${escapeHtml(t('ws_git_tab'))}</span>
       </div>
-      <div class="form-group">
-        <label>${escapeHtml(t('ws_name_label'))}</label>
-        <input id="ws-name-input" data-testid="workspace-name-input" placeholder="${escapeHtml(t('ws_name_placeholder'))}" />
+      <div id="ws-local-fields">
+        <div class="form-group">
+          <label>${escapeHtml(t('ws_name_label'))}</label>
+          <input id="ws-name-input" data-testid="workspace-name-input" placeholder="${escapeHtml(t('ws_name_placeholder'))}" />
+        </div>
+        <div class="form-group">
+          <label>${escapeHtml(t('ws_path_label'))}</label>
+          <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${escapeHtml(t('ws_path_placeholder'))}" />
+          <div id="ws-path-hint" class="form-hint">${state.allowedWorkspaceRoot ? escapeHtml(t('ws_path_hint', { root: state.allowedWorkspaceRoot })) : ''}</div>
+        </div>
       </div>
-      <div id="ws-local-fields" class="form-group">
-        <label>${escapeHtml(t('ws_path_label'))}</label>
-        <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${escapeHtml(t('ws_path_placeholder'))}" />
-        <div id="ws-path-hint" class="form-hint">${state.allowedWorkspaceRoot ? escapeHtml(t('ws_path_hint', { root: state.allowedWorkspaceRoot })) : ''}</div>
-      </div>
-      <div id="ws-git-fields" class="form-group" style="display:none">
-        <label>${escapeHtml(t('ws_git_url_label'))}</label>
-        <input id="ws-git-url-input" placeholder="${escapeHtml(t('ws_git_url_placeholder'))}" />
-        <label style="margin-top:6px;">${escapeHtml(t('ws_branch_label'))}</label>
-        <input id="ws-branch-input" placeholder="${escapeHtml(t('ws_branch_placeholder'))}" />
-      </div>
+      <div id="ws-git-fields" class="git-import-body" style="display:none">${renderGitImportBody(gitImportCtx())}</div>
+      <div id="ws-modal-progress" class="git-progress" data-testid="git-progress"><span class="ms-spin" aria-hidden="true"></span><span id="ws-progress-text">${escapeHtml(t('ws_cloning'))}</span></div>
       <div id="ws-modal-error" class="modal-inline-error" role="alert"></div>
       <div class="modal-actions">
         <button class="btn" data-action="close-modal">${escapeHtml(t('btn_cancel'))}</button>
@@ -3463,17 +3499,23 @@ export function toggleWsModalTab(mode) {
   const tabGit = document.getElementById('ws-modal-tab-git');
   const locFields = document.getElementById('ws-local-fields');
   const gitFields = document.getElementById('ws-git-fields');
+  const dialog = document.getElementById('ws-dialog');
 
   if (mode === 'local') {
     tabLoc?.classList.add('on');
     tabGit?.classList.remove('on');
+    dialog?.classList.remove('git-import');
     if (locFields) locFields.style.display = 'flex';
     if (gitFields) gitFields.style.display = 'none';
+    const submit = document.querySelector('[data-testid="workspace-create-submit"]');
+    if (submit && !wsCreating) submit.disabled = false;
   } else {
     tabLoc?.classList.remove('on');
     tabGit?.classList.add('on');
+    dialog?.classList.add('git-import');
     if (locFields) locFields.style.display = 'none';
     if (gitFields) gitFields.style.display = 'flex';
+    void activateGitImport(gitImportCtx());
   }
 }
 
@@ -3481,24 +3523,33 @@ export async function submitWorkspaceModal() {
   if (wsCreating) return;
   clearWorkspaceModalError();
   const name = document.getElementById('ws-name-input')?.value.trim();
-  if (!name) {
+  if (wsModalMode !== 'git' && !name) {
     showWorkspaceModalError(t('ws_name_required'));
     return;
   }
 
   let payload;
   if (wsModalMode === 'git') {
-    const gitUrl = document.getElementById('ws-git-url-input')?.value.trim();
-    const branch = document.getElementById('ws-branch-input')?.value.trim();
-    if (!gitUrl) {
-      showWorkspaceModalError(t('ws_git_required'));
+    const picked = gitImportPayload();
+    if (picked.error === 'project') {
+      showWorkspaceModalError(t('git_need_project'));
       return;
     }
-    if (!isSupportedGitUrl(gitUrl)) {
-      showWorkspaceModalError(t('ws_err_git_url'));
+    if (!picked.name) {
+      showWorkspaceModalError(t('ws_name_required'));
       return;
     }
-    payload = { name, gitUrl, branch };
+    if (gitImportSource() === 'address') {
+      if (!picked.gitUrl) {
+        showWorkspaceModalError(t('ws_git_required'));
+        return;
+      }
+      if (!isSupportedGitUrl(picked.gitUrl)) {
+        showWorkspaceModalError(t('ws_err_git_url'));
+        return;
+      }
+    }
+    payload = picked;
   } else {
     const path = document.getElementById('ws-path-input')?.value.trim();
     if (!path) {
@@ -3696,6 +3747,8 @@ document.addEventListener('click', (e) => {
     return;
   }
 
+  if (!e.target.closest?.('.git-pick')) closeGitImportPops(gitImportCtx());
+
   const actionEl = e.target.closest('[data-action]');
   if (!actionEl) return;
 
@@ -3822,6 +3875,29 @@ document.addEventListener('click', (e) => {
     case 'submit-workspace':
       submitWorkspaceModal();
       break;
+    case 'git-add':
+    case 'git-close-drawer':
+    case 'git-edit':
+    case 'git-delete':
+    case 'git-delete-form':
+    case 'git-toggle-advanced':
+    case 'git-kind':
+    case 'git-test-row':
+    case 'git-test-form':
+    case 'git-save':
+    case 'git-source':
+    case 'git-conn-toggle':
+    case 'git-conn-pick':
+    case 'git-project':
+    case 'git-branch-toggle':
+    case 'git-branch-pick':
+      void (async () => {
+        const handled = await handleGitImportAction(action, actionEl, gitImportCtx());
+        if (!handled) await handleGitAction(action, actionEl, gitCtx());
+      })().catch((err) => {
+        showToast(err?.message || 'err_save');
+      });
+      break;
     case 'close-modal':
       closeModal();
       break;
@@ -3884,7 +3960,15 @@ document.addEventListener('input', (e) => {
     filterAgents(e.target.value, agentCtx());
   } else if (e.target.id === 'ag-name' || e.target.id === 'ag-desc' || e.target.id === 'ag-prompt' || e.target.id === 'ag-skill-search') {
     onAgentField(e.target, agentCtx());
+  } else if (e.target.id === 'git-url' || e.target.id === 'git-token') {
+    onGitField(e.target);
+  } else if (e.target.id === 'git-search' || e.target.id === 'git-pick-name' || e.target.id === 'git-addr-name' || e.target.id === 'ws-git-url-input' || e.target.id === 'ws-branch-input') {
+    onGitImportInput(e.target, gitImportCtx());
   }
+});
+
+document.addEventListener('focusin', (e) => {
+  if (e.target?.id === 'git-token') onGitTokenFocus(e.target, t);
 });
 
 document.addEventListener('change', (e) => {
