@@ -1,0 +1,1852 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="white-light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pi-work 设计稿 · 左侧栏</title>
+  <link rel="stylesheet" href="../themes/themes.css">
+  <style>
+    /* T10-1 interactive mock. Open in a browser. Query: ?scene=main&theme=white-light&chrome=0
+       Screenshots: 1440×900 at scale 8/3 → 3840×2400; 1000×900 at scale 3.84 → 3840×3456. */
+    :root {
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
+      --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      --header-h: 58px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg-app);
+      color: var(--text-primary);
+      font-family: var(--font);
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    ::placeholder { color: var(--text-muted); }
+    :focus { outline: none; }
+    :focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; }
+    .icon {
+      width: 16px;
+      height: 16px;
+      display: block;
+      flex: 0 0 auto;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .icon.dots { stroke-width: 3; }
+    .icon .solid { fill: currentColor; stroke: none; }
+    .icon.spin { transform-origin: center; stroke-width: 2.25; animation: spin 1.2s linear infinite; }
+    .status-ico.recovering .icon.spin { animation-duration: 2.6s; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .icon.spin { animation: none; }
+      .chev { transition: none; }
+    }
+    .chev { transition: transform .15s ease; }
+    .chev.is-open { transform: rotate(90deg); }
+
+    body {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    body.is-framed { height: auto; min-height: 100vh; overflow: auto; background: var(--bg-active); }
+    #chrome {
+      flex: none;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-sidebar);
+    }
+    #chrome.is-hidden { display: none; }
+    .chrome-label { color: var(--text-muted); font-size: 11px; }
+    .chrome-sep { width: 1px; align-self: stretch; background: var(--border-subtle); margin: 2px 2px; }
+    #stage { flex: 1; min-height: 0; min-width: 0; display: flex; }
+    body.is-framed #stage {
+      flex: none;
+      margin: 16px auto 28px;
+      width: 1440px;
+      height: 900px;
+      border: 1px solid var(--border-strong);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, .12);
+      overflow: hidden;
+    }
+    body.is-framed.frame-1000 #stage { width: 1000px; height: 900px; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1;
+    }
+    .btn:hover { background: var(--bg-hover); }
+    .btn.btn-sm { height: 24px; padding: 0 8px; font-size: 12px; }
+    .btn.ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+    .btn.ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .btn.stop:hover {
+      background: var(--diff-del-bg);
+      color: var(--diff-del-text);
+      border-color: var(--diff-del-num);
+    }
+    .btn[aria-pressed="true"] { background: var(--bg-active); }
+    .icon-btn {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+    .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+    kbd {
+      font-family: var(--mono);
+      font-size: 10px;
+      line-height: 16px;
+      color: var(--text-muted);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 0 4px;
+      background: var(--bg-surface-subtle);
+    }
+
+    .app {
+      --sidebar-w: 272px;
+      --right-w: 460px;
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      display: flex;
+      position: relative;
+      background: var(--bg-app);
+      overflow: hidden;
+    }
+    .app.is-narrow { --sidebar-w: 228px; --right-w: 260px; }
+    .app.is-rail { --sidebar-w: 52px; }
+
+    .side {
+      width: var(--sidebar-w);
+      flex: 0 0 var(--sidebar-w);
+      height: 100%;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      user-select: none;
+    }
+    .side input { user-select: text; }
+    .brand {
+      height: var(--header-h);
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .logo {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: var(--text-inverse);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 650;
+      font-size: 13px;
+    }
+    .brand-name { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+    .side-tools { flex: none; padding: 10px 10px 8px; display: flex; flex-direction: column; gap: 8px; }
+    .new-chat, .search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      height: 32px;
+      padding: 0 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      text-align: left;
+    }
+    .new-chat { font-weight: 650; }
+    .new-chat:hover { background: var(--bg-hover); }
+    .new-chat kbd, .search kbd { margin-left: auto; }
+    .search {
+      height: 30px;
+      border-color: var(--border-subtle);
+      background: var(--bg-app);
+      color: var(--text-muted);
+      padding: 0 8px;
+    }
+    .search:focus-within { border-color: var(--border-focus); }
+    .search input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 12px;
+    }
+    .search.has-query kbd { display: none; }
+    .search-count { font-size: 11px; color: var(--text-muted); padding: 0 2px; }
+    .run-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      height: 30px;
+      padding: 0 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      text-align: left;
+    }
+    .run-strip:hover { background: var(--bg-hover); }
+    .run-strip .label { flex: 1; min-width: 0; font-size: 12px; font-weight: 550; }
+    .run-list { display: flex; flex-direction: column; gap: 2px; }
+    .run-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 28px;
+      padding: 4px 8px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-secondary);
+      text-align: left;
+    }
+    .run-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .run-item .run-copy {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    .run-item .run-ws { color: var(--text-muted); }
+    .side-scroll { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 12px; }
+    .section {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 28px;
+      padding: 0 6px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 650;
+    }
+    .section-actions { display: flex; gap: 2px; }
+    .ws { margin-top: 2px; }
+    .ws-head, .archive-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--text-primary);
+      text-align: left;
+      border-radius: 8px;
+    }
+    .ws-head { height: 32px; padding: 0 4px 0 6px; }
+    .ws-head:hover, .archive-head:hover { background: var(--bg-hover); }
+    .ws-name, .archive-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ws-name { font-weight: 650; font-size: 13px; }
+    .count {
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+      font-size: 10px;
+      font-weight: 650;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .more { opacity: 0; }
+    .ws-head:hover .more,
+    .conv:hover .more,
+    .archive-row:hover .more,
+    .is-open-menu .more,
+    .more:focus-visible { opacity: 1; }
+    .conv-block { border-radius: 8px; }
+    .conv-block.is-current { background: var(--bg-active); }
+    .conv { padding: 6px 4px 6px 8px; border-radius: 8px; }
+    .conv-l1, .agent-l1, .conv-l2, .agent-l2 {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .conv-title, .agent-name, .agent-activity {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .conv-title { flex: 1; font-size: 13px; }
+    .conv-block.is-current .conv-title { font-weight: 650; }
+    .conv-l2, .agent-l2 {
+      margin-top: 2px;
+      padding-left: 22px;
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+    .conv-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conv-time { flex: 0 0 auto; margin-left: 8px; }
+    .sep { color: var(--text-muted); }
+    .archive-head {
+      height: 28px;
+      margin: 2px 0 2px 18px;
+      width: calc(100% - 18px);
+      padding: 0 4px 0 6px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+    .archive-list { margin: 0 0 4px 10px; }
+    .agents {
+      margin: 0 6px 8px 28px;
+      padding: 2px 0 2px 10px;
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .agent-name { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+    .agent-role, .agent-mode { font-size: 11px; color: var(--text-muted); flex: 0 0 auto; }
+    .agent-l1 .st { margin-left: auto; flex: 0 0 auto; font-size: 11px; }
+    .agent-activity { flex: 1; color: var(--text-secondary); }
+    .agent-stat { flex: 0 0 auto; }
+    .ws-empty, .filter-empty, .side-empty {
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .ws-empty, .filter-empty { padding: 8px 10px 10px 28px; }
+    .ws-empty p, .filter-empty p, .side-empty p { margin: 0 0 8px; }
+    .side-empty {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 24px 18px;
+      text-align: center;
+      align-items: center;
+    }
+    .side-empty-title, .center-empty h2 {
+      margin: 0 0 6px;
+      color: var(--text-primary);
+      font-size: 15px;
+      font-weight: 650;
+    }
+    .side-empty .empty-actions, .center-empty .empty-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 4px;
+    }
+    .side-foot {
+      flex: none;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px 0 12px;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .runtime {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+    .runtime-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--status-done);
+    }
+    .foot-actions { display: flex; gap: 2px; }
+
+    .side-rail { align-items: center; padding: 8px 0; gap: 4px; }
+    .rail-btn {
+      width: 36px;
+      height: 36px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .rail-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .rail-btn.is-current { background: var(--bg-active); color: var(--text-primary); }
+    .rail-logo {
+      width: 28px;
+      height: 28px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--text-inverse);
+      font-weight: 650;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .rail-spacer { flex: 1; }
+    .rail-line { width: 16px; height: 1px; background: var(--border-subtle); margin: 4px 0; }
+    .rail-dot {
+      position: absolute;
+      top: 7px;
+      right: 7px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--status-running);
+    }
+
+    .splitter {
+      flex: 0 0 0;
+      width: 0;
+      position: relative;
+      z-index: 4;
+      cursor: col-resize;
+    }
+    .splitter::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -3px;
+      width: 6px;
+    }
+    .splitter:hover::before, .splitter.is-on::before { background: var(--border-focus); }
+
+    .center {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      overflow: hidden;
+    }
+    .topbar {
+      flex: none;
+      min-height: var(--header-h);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .top-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .top-title {
+      font-size: 14px;
+      font-weight: 650;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* The pill is not inside an overflow:hidden box. The old pulse ring was
+       drawn outside an 8px dot and sliced by the top bar. */
+    .top-sub {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 22px;
+      padding: 0 8px 0 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface-subtle);
+      color: var(--text-primary);
+      flex: 0 0 auto;
+      overflow: visible;
+      line-height: 1;
+      font-size: 12px;
+    }
+    .status-pill .icon { width: 14px; height: 14px; flex-basis: 14px; }
+    .top-time { flex: 0 0 auto; color: var(--text-muted); }
+    .top-ws {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .top-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+    .thread {
+      flex: 1;
+      min-width: 0;
+      overflow: auto;
+      padding: 16px 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .center-empty {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 8px;
+      padding: 32px 24px;
+      color: var(--text-secondary);
+    }
+    .center-empty p { max-width: 380px; margin: 0; font-size: 13px; line-height: 1.6; }
+    .msg { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .msg header { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+    .avatar {
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      background: var(--bg-active);
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 650;
+    }
+    .avatar.pi { background: var(--accent); color: var(--text-inverse); }
+    .bubble, .msg .text, .fail-note, .banner {
+      margin-left: 28px;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .bubble {
+      background: var(--bg-surface-subtle);
+      border-radius: 8px;
+      padding: 8px 12px;
+      line-height: 1.6;
+    }
+    .msg .text { line-height: 1.65; }
+    .tool {
+      margin-left: 28px;
+      max-width: 100%;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--tool-border);
+      background: var(--tool-bg);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+    .tool b { font-weight: 650; color: var(--text-primary); }
+    .tool span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .correction {
+      margin-left: 28px;
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      width: calc(100% - 28px);
+      max-width: calc(100% - 28px);
+      min-width: 0;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface-subtle);
+      color: var(--text-secondary);
+      text-align: left;
+    }
+    .correction.is-open { border-radius: 8px; }
+    .correction .icon { margin-top: 1px; color: var(--text-muted); }
+    .correction-text { flex: 1; min-width: 0; font-size: 12px; line-height: 1.45; }
+    .correction:not(.is-open) .correction-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .correction.is-open .correction-text { white-space: normal; }
+    .banner {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--bg-surface-subtle);
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+    .fail-note {
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+      border-left: 2px solid var(--status-failed);
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .composer { flex: none; padding: 0 16px 14px; }
+    .composer-box {
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      background: var(--bg-surface);
+      padding: 8px 10px 8px;
+    }
+    .composer textarea {
+      display: block;
+      width: 100%;
+      min-height: 44px;
+      border: 0;
+      resize: none;
+      outline: none;
+      background: transparent;
+      line-height: 1.5;
+    }
+    .composer.is-locked textarea { color: var(--text-muted); }
+    .composer-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .chip {
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface-subtle);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .chip i {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    .ctx { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+    .grow { flex: 1; }
+    .send {
+      width: 28px;
+      height: 28px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--text-inverse);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .send:disabled { opacity: .35; cursor: not-allowed; }
+    .app.is-narrow .composer kbd { display: none; }
+
+    .right {
+      width: var(--right-w);
+      flex: 0 0 var(--right-w);
+      height: 100%;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-surface);
+      overflow: hidden;
+    }
+    .tabs {
+      height: var(--header-h);
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 0 10px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .tab {
+      height: 32px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+    }
+    .tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .tab[aria-selected="true"] {
+      color: var(--text-primary);
+      box-shadow: inset 0 -2px 0 var(--text-primary);
+      border-radius: 0;
+    }
+    .tab-badge {
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
+      background: var(--bg-active);
+      color: var(--text-secondary);
+      font-size: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tabs .btn { margin-left: auto; }
+    .app.is-narrow .tabs .btn span { display: none; }
+    .files {
+      flex: none;
+      display: flex;
+      gap: 6px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      min-width: 0;
+      overflow: hidden;
+    }
+    .file-pill {
+      max-width: 46%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-surface-subtle);
+      color: var(--text-secondary);
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 22px;
+    }
+    .diff { flex: 1; min-height: 0; overflow: auto; padding: 8px 0 16px; }
+    .diff-name {
+      padding: 4px 12px 8px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .diff-row {
+      display: grid;
+      grid-template-columns: 32px 32px minmax(0, 1fr);
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 20px;
+    }
+    .diff-row .ln { color: var(--diff-num-col); text-align: right; padding: 0 6px; }
+    .diff-row .code {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding-right: 8px;
+    }
+    .diff-row.add { background: var(--diff-add-bg); color: var(--diff-add-text); }
+    .diff-row.del { background: var(--diff-del-bg); color: var(--diff-del-text); }
+    .right-empty {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .menu {
+      position: absolute;
+      z-index: 6;
+      right: 8px;
+      top: 32px;
+      min-width: 196px;
+      max-width: calc(100% - 16px);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+    }
+    .ws { position: relative; }
+    .conv-block { position: relative; }
+    .conv-block:has(.menu),
+    .ws:has(> .menu) { z-index: 5; }
+    .conv-block .menu { top: 46px; }
+    .ws > .menu { top: 34px; }
+    .menu-head { padding: 6px 8px 8px; }
+    .menu-head-name { font-size: 12px; font-weight: 650; }
+    .menu-head-path {
+      margin-top: 2px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      height: 28px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 12px;
+      text-align: left;
+    }
+    .menu-item:hover { background: var(--bg-hover); }
+    .menu-item.danger { color: var(--status-failed); }
+    .menu-sep { height: 1px; margin: 4px 6px; background: var(--border-subtle); }
+
+    .status-ico { display: inline-flex; color: var(--text-muted); flex: 0 0 auto; }
+    .status-ico.running { color: var(--status-running); }
+    .status-ico.recovering { color: var(--status-resuming); }
+    .status-ico.waiting { color: var(--status-waiting); }
+    .status-ico.done { color: var(--status-done); }
+    .status-ico.failed { color: var(--status-failed); }
+    .st-running { color: var(--status-running); }
+    .st-recovering { color: var(--status-resuming); }
+    .st-waiting { color: var(--status-waiting); }
+    .st-done { color: var(--status-done); }
+    .st-failed { color: var(--status-failed); }
+    .st-paused, .st-stopped, .st-archived, .st-idle { color: var(--text-muted); }
+
+    .toast {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      max-width: min(520px, calc(100% - 32px));
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: var(--text-primary);
+      color: var(--text-inverse);
+      font-size: 12px;
+      z-index: 20;
+    }
+    dialog {
+      max-width: min(760px, calc(100vw - 32px));
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      padding: 18px 20px 20px;
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, .35); }
+    dialog h2 { margin: 0 0 8px; font-size: 16px; }
+    dialog h3 { margin: 16px 0 6px; font-size: 13px; }
+    dialog p, dialog li { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+    dialog ul { margin: 0; padding-left: 18px; }
+    dialog .dlg-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  </style>
+</head>
+<body>
+  <div id="chrome"></div>
+  <div id="stage"></div>
+  <dialog id="notes">
+    <div class="dlg-bar">
+      <h2>左侧栏设计说明</h2>
+      <button type="button" class="btn btn-sm" id="notes-close">关闭</button>
+    </div>
+    <p>这是给确认用的交互稿，不改产品代码。顶栏可切换画面和主题。侧栏里可以折叠工作区、打开菜单、过滤对话、拖动宽度，也可以收成图标栏。点灰色纠正提示可以展开。</p>
+    <h3>关键决定</h3>
+    <ul>
+      <li>多个工作区用可折叠分组，标题上保留运行数量。Cursor Agents 和 Conductor 要同时看着几个项目里正在跑的 Agent；Claude 和 ChatGPT 的项目切换器一次只显示一个项目。pi-work 会有多个工作区同时在跑，切换器会把别的工作区的运行状态藏起来。</li>
+      <li>运行中条只在有运行或恢复中的对话时出现，放在搜索框下面，可展开成跨工作区列表。对话行本身已经有状态。现在底部那块空的「运行中概览」会把列表往下顶；条带只用来发现折起来的工作区里还有任务。</li>
+      <li>已归档对话放在每个工作区底部的折叠区。归档对话仍属于那个目录。主列表只留按最近更新排序的活动对话。</li>
+      <li>新建对话是主按钮，快捷键 ⌘N。新建工作区和导入在「工作区」标题右侧。搜索是常驻过滤框，⌘K 聚焦，结果就地收窄。</li>
+      <li>只有选中的对话展开主 Agent 和子 Agent。其他行显示正在运行的子 Agent 个数。展开后有名称、角色、前台或后台、状态、正在做的一行、步数和工具次数。动效只在 16px 图标里慢转。</li>
+      <li>顶栏标题单独省略。状态放进胶囊，图标画在胶囊内部，这一行不做 overflow:hidden。旧界面的脉冲环画在 8px 圆点外面，又被顶栏裁掉，所以「已归档」只露出半个。</li>
+      <li>暂停只在运行中出现，继续只在已暂停出现，终止在运行中、已暂停、恢复中出现。完成、失败、等待输入不放灰色按钮。归档对话改成「用这段历史开新对话」。</li>
+      <li>工具上限的灰色提示默认一行省略，点开后在聊天列里换行，宽度不超过这一列。</li>
+      <li>左栏默认 272px，可拖到 220–400，也可收成 52px 图标栏。1000 宽时左栏 228、右栏 260。</li>
+      <li>颜色只用 themes.css 的变量。图标是 1.75 描边的线性 SVG。字号 11 / 12 / 13 / 14，间距取 4 的倍数，圆角 6 和 8。</li>
+    </ul>
+    <h3>需要拍板</h3>
+    <ul>
+      <li>工作区用可折叠分组，还是改成单一工作区切换器。</li>
+      <li>有任务时要不要这根运行中条，还是只靠对话行上的状态。</li>
+      <li>已归档放在各工作区底部，还是收成一个全局归档。</li>
+      <li>暂时不能用的暂停、继续、终止，是直接不显示，还是留着禁用。</li>
+      <li>快捷键在 Windows 上显示 Ctrl，还是沿用现在的 ⌘。</li>
+      <li>打开目录的文案用「在资源管理器中打开」，还是「在访达中打开」。</li>
+      <li>顶栏时间用对话最近更新。检查点只留图标，悬停可见「检查点 · 91 分钟前」。</li>
+      <li>品牌行去掉 workbench 徽标。页脚长文案改成「运行时」和一个状态点，说明放在悬停和设置里。</li>
+      <li>实现时左栏拖拽和图标栏是两个都做，还是只做其中一个。</li>
+      <li>「等待输入」先作为界面状态。要不要在后端增加同名状态。</li>
+      <li>移除工作区只从列表拿掉，不删除磁盘上的目录。删除对话要再确认一次。</li>
+    </ul>
+  </dialog>
+  <script>
+    const ICONS = {
+      plus: '<path d="M12 5v14M5 12h14"/>',
+      search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/>',
+      folder: '<path d="M4 7.5A1.5 1.5 0 0 1 5.5 6H9l2 2h7.5A1.5 1.5 0 0 1 20 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5v-10z"/>',
+      folderPlus: '<path d="M12 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v3"/><path d="M16 19h6M19 16v6"/>',
+      import: '<path d="M12 4v10"/><path d="M8 10l4 4 4-4"/><path d="M4 18h16"/>',
+      chev: '<path d="M9 6l6 6-6 6"/>',
+      dots: '<path d="M5 12h.01M12 12h.01M19 12h.01"/>',
+      check: '<path d="M5 12.5l4.2 4.2L19 7.5"/>',
+      alert: '<circle cx="12" cy="12" r="8"/><path d="M12 8v5"/><circle class="solid" cx="12" cy="16.2" r="0.8"/>',
+      clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 2"/>',
+      pause: '<path d="M8 5v14M16 5v14"/>',
+      stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
+      x: '<path d="M6 6l12 12M18 6L6 18"/>',
+      play: '<path d="M8 5.5v13L19 12 8 5.5z"/>',
+      archive: '<path d="M3 6h18v3H3z"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/>',
+      spin: '<circle cx="12" cy="12" r="8" opacity=".28"/><path d="M12 4a8 8 0 1 1-6.2 13.4"/>',
+      gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+      bookmark: '<path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1z"/>',
+      panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+      pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/>',
+      link: '<path d="M10 13a5 5 0 0 0 7.5.5l1.5-1.5a5 5 0 0 0-7-7L11 6"/><path d="M14 11a5 5 0 0 0-7.5-.5L5 12a5 5 0 0 0 7 7l1-1"/>',
+      copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>',
+      trash: '<path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M7 7l1 13h8l1-13"/>',
+      file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+      send: '<path d="M12 19V6"/><path d="M6 11l6-6 6 6"/>',
+      idle: '<circle cx="12" cy="12" r="8"/>'
+    };
+
+    const STATUS = {
+      running: '运行中',
+      recovering: '恢复中',
+      waiting: '等待输入',
+      paused: '已暂停',
+      done: '已完成',
+      failed: '失败',
+      stopped: '已终止',
+      archived: '已归档',
+      idle: '空闲'
+    };
+
+    const CORRECTION = '请根据已有结果直接回答。本步已经调用了 8 次工具，还没有写出回复。用已经看到的内容回答；如果还缺关键信息，直接说明缺什么，不要继续翻找。';
+
+    const SCENES = [
+      ['main', '主画面'],
+      ['empty', '无工作区'],
+      ['empty-ws', '无对话'],
+      ['multi', '多工作区运行'],
+      ['agents', '子 Agent'],
+      ['failed', '失败'],
+      ['archived', '已归档'],
+      ['search', '搜索'],
+      ['menu', '对话菜单'],
+      ['menu-ws', '工作区菜单'],
+      ['paused', '已暂停'],
+      ['rail', '图标栏']
+    ];
+
+    const FAMILIES = ['white', 'claude', 'codex', 'grok', 'cursor'];
+
+    function svg(name, extra) {
+      const spin = name === 'spin' ? ' spin' : '';
+      const dots = name === 'dots' ? ' dots' : '';
+      const chev = name === 'chev' ? ' chev' : '';
+      return `<svg class="icon${spin}${dots}${chev}${extra ? ' ' + extra : ''}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+    }
+
+    function statusIcon(status) {
+      const spinning = status === 'running' || status === 'recovering';
+      const name = spinning ? 'spin'
+        : status === 'waiting' ? 'clock'
+        : status === 'paused' ? 'pause'
+        : status === 'done' ? 'check'
+        : status === 'failed' ? 'alert'
+        : status === 'stopped' ? 'stop'
+        : status === 'archived' ? 'archive'
+        : 'idle';
+      return `<span class="status-ico ${status}">${svg(name)}</span>`;
+    }
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[ch]));
+    }
+
+    function agoLabel(min) {
+      if (min < 1) return '刚刚';
+      if (min < 60) return `${min} 分钟前`;
+      const hours = Math.round(min / 60);
+      if (hours < 24) return `${hours} 小时前`;
+      const days = Math.round(hours / 24);
+      if (days < 7) return `${days} 天前`;
+      return '上周';
+    }
+
+    function ag(partial) {
+      return Object.assign({ mode: 'foreground', status: 'running', steps: 1, tools: 0, activity: '', role: '', name: '' }, partial);
+    }
+
+    function cv(partial) {
+      return Object.assign({ agents: [], archived: false }, partial);
+    }
+
+    function workspace(partial) {
+      return Object.assign({ open: true, archiveOpen: false, conversations: [] }, partial);
+    }
+
+    function convSidebar() {
+      return cv({
+        id: 'c-sidebar', title: '左侧栏重设计', status: 'running', ago: 0,
+        agents: [
+          ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'running', steps: 12, tools: 3, activity: '正在把侧栏收成可折叠的工作区分组' }),
+          ag({ name: 'coder', role: '实现', mode: 'foreground', status: 'running', steps: 7, tools: 4, activity: '正在对照主题变量改状态图标' }),
+          ag({ name: 'tester', role: '测试', mode: 'background', status: 'running', steps: 3, tools: 1, activity: '正在检查 1000 宽时顶栏会不会被裁切' })
+        ]
+      });
+    }
+    function convLogin() {
+      return cv({ id: 'c-login', title: '设置页模型登录', status: 'done', ago: 120, agents: [
+        ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'done', steps: 8, tools: 2, activity: '登录流程已经接上，这一轮结束了' })
+      ] });
+    }
+    function convGit() {
+      return cv({ id: 'c-git', title: 'Git 连接设计', status: 'paused', ago: 1560, agents: [
+        ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'paused', steps: 6, tools: 2, activity: '停在检查点，等你决定要不要继续' }),
+        ag({ name: 'coder', role: '实现', mode: 'foreground', status: 'stopped', steps: 4, tools: 2, activity: '上次停在设置页的表单' })
+      ] });
+    }
+    function convOld() {
+      return cv({ id: 'c-old', title: '旧内核：模型设置试跑', status: 'archived', ago: 4320, archived: true });
+    }
+    function convTrial() {
+      return cv({ id: 'c-trial', title: '迁移前的试验', status: 'archived', ago: 8640, archived: true });
+    }
+    function convToken() {
+      return cv({ id: 'c-token', title: '修 token 刷新', status: 'running', ago: 4, agents: [
+        ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'running', steps: 5, tools: 2, activity: '正在看刷新失败时的重试' }),
+        ag({ name: 'coder', role: '实现', mode: 'foreground', status: 'running', steps: 3, tools: 2, activity: '正在改过期令牌的分支' })
+      ] });
+    }
+    function convHome() {
+      return cv({ id: 'c-home', title: '首页开放问题', status: 'waiting', ago: 18, agents: [
+        ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'waiting', steps: 4, tools: 1, activity: '在等你选首页标题的写法' })
+      ] });
+    }
+    function convLog() {
+      return cv({ id: 'c-log', title: '生成更新日志', status: 'running', ago: 2, agents: [
+        ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'running', steps: 3, tools: 1, activity: '正在从提交记录里收本周变更' })
+      ] });
+    }
+    function convRecover() {
+      return cv({ id: 'c-recover', title: '恢复上次检查点', status: 'recovering', ago: 1, agents: [
+        ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'recovering', steps: 9, tools: 4, activity: '正在从上次检查点接上' })
+      ] });
+    }
+    function convLoginCb() {
+      return cv({ id: 'c-login-cb', title: '修登录回调', status: 'done', ago: 300, agents: [
+        ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'done', steps: 6, tools: 3, activity: '回调地址已经对齐' })
+      ] });
+    }
+    function convParallel() {
+      return cv({
+        id: 'c-parallel', title: '修认证与回归', status: 'running', ago: 0,
+        agents: [
+          ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'running', steps: 15, tools: 5, activity: '同时看着 coder、tester 和 auditor' }),
+          ag({ name: 'coder', role: '实现', mode: 'foreground', status: 'running', steps: 8, tools: 6, activity: '正在改登录回调的错误分支' }),
+          ag({ name: 'tester', role: '测试', mode: 'foreground', status: 'running', steps: 4, tools: 2, activity: '正在跑认证回归' }),
+          ag({ name: 'auditor', role: '审计', mode: 'background', status: 'running', steps: 3, tools: 1, activity: '正在对一下接口契约' }),
+          ag({ name: 'reviewer', role: '复查', mode: 'background', status: 'done', steps: 2, tools: 1, activity: '这一轮没有新的问题' }),
+          ag({ name: 'writer', role: '记录', mode: 'background', status: 'failed', steps: 2, tools: 1, activity: '生成说明时超时了' })
+        ]
+      });
+    }
+    function convAuth() {
+      return cv({
+        id: 'c-auth', title: '修认证失败', status: 'failed', ago: 6,
+        agents: [
+          ag({ name: '主 Agent', role: '调度', mode: 'main', status: 'failed', steps: 9, tools: 6, activity: '认证接口连续返回 401，这一步已停下' }),
+          ag({ name: 'coder', role: '实现', mode: 'foreground', status: 'failed', steps: 5, tools: 3, activity: '改完 token 刷新后仍是 401' }),
+          ag({ name: 'tester', role: '测试', mode: 'background', status: 'stopped', steps: 1, tools: 0, activity: '回归还没开始' })
+        ]
+      });
+    }
+
+    function pi(extra) {
+      return workspace(Object.assign({
+        id: 'pi', name: 'pi-work', path: 'D:\\work\\pi-work',
+        conversations: [convSidebar(), convLogin(), convGit(), convOld(), convTrial()]
+      }, extra));
+    }
+    function api(extra) {
+      return workspace(Object.assign({
+        id: 'api', name: 'api-gateway', path: 'D:\\work\\api-gateway', open: false,
+        conversations: [convToken(), convLoginCb()]
+      }, extra));
+    }
+    function docs(extra) {
+      return workspace(Object.assign({
+        id: 'docs', name: 'docs-site', path: 'D:\\src\\docs-site',
+        conversations: [convHome()]
+      }, extra));
+    }
+
+    function buildScene(id) {
+      const view = {
+        id,
+        empty: null,
+        workspaces: [],
+        selectedId: 'c-sidebar',
+        stripOpen: false,
+        correctionOpen: false,
+        showAgents: true,
+        query: '',
+        menu: null,
+        rail: false,
+        sidebarW: null
+      };
+      if (id === 'empty') {
+        view.empty = 'none';
+        view.selectedId = '';
+        return view;
+      }
+      if (id === 'empty-ws') {
+        view.empty = 'workspace';
+        view.selectedId = '';
+        view.workspaces = [workspace({ id: 'client', name: 'client-app', path: 'D:\\work\\client-app', conversations: [] })];
+        return view;
+      }
+      if (id === 'multi') {
+        view.stripOpen = true;
+        view.showAgents = false;
+        view.workspaces = [
+          pi({ conversations: [convSidebar(), convLogin(), convOld()] }),
+          api({ open: true, conversations: [convToken(), convRecover(), convLoginCb()] }),
+          docs({ conversations: [convLog(), convHome()] })
+        ];
+        return view;
+      }
+      if (id === 'agents') {
+        view.correctionOpen = true;
+        view.selectedId = 'c-parallel';
+        view.workspaces = [
+          workspace({
+            id: 'pi', name: 'pi-work', path: 'D:\\work\\pi-work',
+            conversations: [convParallel(), convLogin(), convOld(), convTrial()]
+          }),
+          api()
+        ];
+        return view;
+      }
+      if (id === 'failed') {
+        view.selectedId = 'c-auth';
+        view.workspaces = [
+          workspace({
+            id: 'pi', name: 'pi-work', path: 'D:\\work\\pi-work',
+            conversations: [convAuth(), convLogin(), convOld()]
+          }),
+          api()
+        ];
+        return view;
+      }
+      if (id === 'archived') {
+        view.selectedId = 'c-old';
+        view.workspaces = [pi({ archiveOpen: true }), api(), docs({ open: false })];
+        return view;
+      }
+      if (id === 'search') {
+        view.query = '登录';
+        view.selectedId = 'c-login';
+        view.workspaces = [pi(), api({ open: true }), docs()];
+        return view;
+      }
+      if (id === 'menu') {
+        view.menu = { type: 'conv', id: 'c-login' };
+        view.workspaces = [pi(), api(), docs()];
+        return view;
+      }
+      if (id === 'menu-ws') {
+        view.menu = { type: 'ws', id: 'pi' };
+        view.workspaces = [pi(), api(), docs()];
+        return view;
+      }
+      if (id === 'paused') {
+        view.selectedId = 'c-git';
+        view.workspaces = [pi(), api(), docs({ open: false })];
+        return view;
+      }
+      if (id === 'rail') view.rail = true;
+      view.workspaces = [pi(), api(), docs()];
+      return view;
+    }
+
+    const state = {
+      scene: 'main',
+      family: 'white',
+      mode: 'light',
+      frame: 'auto',
+      chrome: true
+    };
+    let view = buildScene('main');
+
+    function themeName() { return `${state.family}-${state.mode}`; }
+    function isNarrow() { return state.frame === '1000' || window.innerWidth <= 1040; }
+
+    function activeItems(source) {
+      const items = [];
+      for (const ws of source.workspaces) {
+        for (const conv of ws.conversations) {
+          if (conv.archived) continue;
+          if (conv.status === 'running' || conv.status === 'recovering') items.push({ ws, conv });
+        }
+      }
+      items.sort((a, b) => a.conv.ago - b.conv.ago);
+      return items;
+    }
+
+    function stripText(items) {
+      const run = items.filter((item) => item.conv.status === 'running').length;
+      const rec = items.filter((item) => item.conv.status === 'recovering').length;
+      const parts = [];
+      if (run) parts.push(`${run} 个运行中`);
+      if (rec) parts.push(`${rec} 个恢复中`);
+      return parts.join(' · ');
+    }
+
+    function subRunning(conv) {
+      return (conv.agents || []).filter((agent) => agent.mode !== 'main' && (agent.status === 'running' || agent.status === 'recovering')).length;
+    }
+
+    function findConv(id) {
+      for (const ws of view.workspaces) {
+        const conv = ws.conversations.find((item) => item.id === id);
+        if (conv) return { ws, conv };
+      }
+      return null;
+    }
+
+    function modeLabel(mode) {
+      if (mode === 'foreground') return '前台';
+      if (mode === 'background') return '后台';
+      return '';
+    }
+
+    function visibleWorkspaces() {
+      const query = view.query.trim().toLowerCase();
+      if (!query) return view.workspaces.map((ws) => ({ ws, query: '' }));
+      return view.workspaces.map((ws) => ({ ws, query })).filter(({ ws }) => (
+        ws.conversations.some((conv) => conv.title.toLowerCase().includes(query))
+      ));
+    }
+
+    function renderMenu(kind, target) {
+      const items = kind === 'ws'
+        ? [
+            { id: 'new-chat', icon: 'plus', label: '新建对话' },
+            { id: 'reveal', icon: 'folder', label: '在资源管理器中打开' },
+            { id: 'path', icon: 'copy', label: '复制路径' },
+            { sep: true },
+            { id: 'remove', icon: 'trash', label: '移除工作区', danger: true }
+          ]
+        : [
+            { id: 'rename', icon: 'pencil', label: '重命名' },
+            { id: 'archive', icon: 'archive', label: target.archived ? '取消归档' : '归档' },
+            { id: 'link', icon: 'link', label: '复制链接' },
+            { id: 'id', icon: 'copy', label: '复制 ID' },
+            { sep: true },
+            { id: 'delete', icon: 'trash', label: '删除', danger: true }
+          ];
+      const head = kind === 'ws'
+        ? `<div class="menu-head"><div class="menu-head-name">${esc(target.name)}</div><div class="menu-head-path">${esc(target.path)}</div></div>`
+        : '';
+      return `<div class="menu" role="menu">${head}${items.map((item) => item.sep
+        ? '<div class="menu-sep"></div>'
+        : `<button type="button" class="menu-item${item.danger ? ' danger' : ''}" role="menuitem" data-act="menu-item" data-item="${item.id}" data-kind="${kind}" data-id="${esc(target.id)}">${svg(item.icon)}<span>${esc(item.label)}</span></button>`
+      ).join('')}</div>`;
+    }
+
+    function renderConv(ws, conv, archivedRow) {
+      const current = conv.id === view.selectedId;
+      const subs = subRunning(conv);
+      const menuOpen = view.menu && view.menu.type === 'conv' && view.menu.id === conv.id;
+      const showAgents = current && view.showAgents && !conv.archived && conv.agents && conv.agents.length && !view.query;
+      const meta = [`<span class="st st-${conv.status}">${esc(STATUS[conv.status] || conv.status)}</span>`];
+      if (subs) meta.push(`<span class="sep"> · </span><span>${subs} 个子 Agent</span>`);
+      const agents = showAgents ? `<div class="agents">${conv.agents.map(renderAgent).join('')}</div>` : '';
+      const menu = menuOpen ? renderMenu('conv', conv) : '';
+      return `<div class="conv-block${current ? ' is-current' : ''}${archivedRow ? ' archive-row' : ''}">
+        <div class="conv${menuOpen ? ' is-open-menu' : ''}" data-act="select" data-id="${esc(conv.id)}">
+          <div class="conv-l1">${statusIcon(conv.status)}<span class="conv-title">${esc(conv.title)}</span>
+            <button type="button" class="icon-btn more" data-act="menu-conv" data-id="${esc(conv.id)}" title="对话操作" aria-label="对话操作" aria-expanded="${menuOpen ? 'true' : 'false'}">${svg('dots')}</button>
+          </div>
+          <div class="conv-l2"><span class="conv-meta">${meta.join('')}</span><span class="conv-time">${esc(agoLabel(conv.ago))}</span></div>
+        </div>
+        ${agents}${menu}
+      </div>`;
+    }
+
+    function renderAgent(agent) {
+      const mode = modeLabel(agent.mode);
+      return `<div class="agent">
+        <div class="agent-l1">${statusIcon(agent.status)}<span class="agent-name">${esc(agent.name)}</span>${agent.role ? `<span class="agent-role">${esc(agent.role)}</span>` : ''}${mode ? `<span class="agent-mode">${mode}</span>` : ''}<span class="st st-${agent.status}">${esc(STATUS[agent.status] || agent.status)}</span></div>
+        <div class="agent-l2"><span class="agent-activity" title="${esc(agent.activity)}">${esc(agent.activity)}</span><span class="agent-stat">${agent.steps} 步 · ${agent.tools} 次工具</span></div>
+      </div>`;
+    }
+
+    function renderWorkspace(ws) {
+      const query = view.query.trim().toLowerCase();
+      const live = ws.conversations.filter((conv) => !conv.archived).sort((a, b) => a.ago - b.ago);
+      const archived = ws.conversations.filter((conv) => conv.archived).sort((a, b) => a.ago - b.ago);
+      const liveShown = query ? live.filter((conv) => conv.title.toLowerCase().includes(query)) : live;
+      const archivedShown = query ? archived.filter((conv) => conv.title.toLowerCase().includes(query)) : archived;
+      const archiveOpen = ws.archiveOpen || (query && archivedShown.length > 0);
+      const running = live.filter((conv) => conv.status === 'running' || conv.status === 'recovering').length;
+      const menuOpen = view.menu && view.menu.type === 'ws' && view.menu.id === ws.id;
+      const body = !ws.open && !query ? '' : `
+        ${liveShown.map((conv) => renderConv(ws, conv, false)).join('')}
+        ${!query && !live.length ? `<div class="ws-empty"><p>还没有对话</p><button type="button" class="btn btn-sm" data-act="new-chat" data-ws="${esc(ws.id)}">新建对话</button></div>` : ''}
+        ${archivedShown.length ? `<div class="archive-head${archiveOpen ? ' is-open-menu' : ''}" data-act="toggle-archive" data-id="${esc(ws.id)}">${svg('chev', archiveOpen ? 'is-open' : '')}${svg('archive')}<span class="archive-name">已归档</span><span class="count">${archivedShown.length}</span></div>` : ''}
+        ${archiveOpen ? `<div class="archive-list">${archivedShown.map((conv) => renderConv(ws, conv, true)).join('')}</div>` : ''}
+      `;
+      return `<section class="ws">
+        <div class="ws-head${menuOpen ? ' is-open-menu' : ''}" data-act="toggle-ws" data-id="${esc(ws.id)}">
+          ${svg('chev', ws.open || query ? 'is-open' : '')}
+          ${svg('folder')}
+          <span class="ws-name">${esc(ws.name)}</span>
+          ${running ? `<span class="count" title="${running} 个运行或恢复中">${running}</span>` : ''}
+          <button type="button" class="icon-btn more" data-act="menu-ws" data-id="${esc(ws.id)}" title="工作区操作" aria-label="工作区操作" aria-expanded="${menuOpen ? 'true' : 'false'}">${svg('dots')}</button>
+        </div>
+        ${menuOpen ? renderMenu('ws', ws) : ''}
+        ${body}
+      </section>`;
+    }
+
+    function renderSide() {
+      if (view.rail) return renderRail();
+      if (view.empty === 'none') {
+        return `<aside class="side">
+          <div class="brand"><span class="logo">π</span><span class="brand-name">pi-work</span></div>
+          <div class="side-empty">
+            <p class="side-empty-title">还没有工作区</p>
+            <p>添加一个本地目录。对话、检查点和子 Agent 会记在这个目录里。</p>
+            <div class="empty-actions">
+              <button type="button" class="btn" data-act="new-ws">新建工作区</button>
+              <button type="button" class="btn ghost" data-act="import-ws">导入文件夹</button>
+            </div>
+          </div>
+          ${renderFoot()}
+        </aside>`;
+      }
+      const items = activeItems(view);
+      const groups = visibleWorkspaces();
+      const query = view.query.trim();
+      const matchCount = query ? groups.reduce((sum, entry) => sum + entry.ws.conversations.filter((conv) => conv.title.toLowerCase().includes(query.toLowerCase())).length, 0) : 0;
+      const strip = items.length ? `
+        <button type="button" class="run-strip" data-act="toggle-strip" aria-expanded="${view.stripOpen ? 'true' : 'false'}">
+          ${statusIcon('running')}
+          <span class="label">${esc(stripText(items))}</span>
+          ${svg('chev', view.stripOpen ? 'is-open' : '')}
+        </button>
+        ${view.stripOpen ? `<div class="run-list">${items.map((item) => `<button type="button" class="run-item" data-act="run-jump" data-id="${esc(item.conv.id)}">${statusIcon(item.conv.status)}<span class="run-copy"><span class="run-ws">${esc(item.ws.name)}</span> › ${esc(item.conv.title)}</span></button>`).join('')}</div>` : ''}
+      ` : '';
+      const list = groups.length
+        ? groups.map((entry) => renderWorkspace(entry.ws)).join('')
+        : `<div class="filter-empty"><p>没有匹配的对话</p></div>`;
+      return `<aside class="side">
+        <div class="brand"><span class="logo">π</span><span class="brand-name">pi-work</span></div>
+        <div class="side-tools">
+          <button type="button" class="new-chat" data-act="new-chat">${svg('plus')}<span>新建对话</span><kbd>⌘N</kbd></button>
+          <label class="search${query ? ' has-query' : ''}">${svg('search')}
+            <input id="q" type="text" placeholder="搜索对话" value="${esc(view.query)}" aria-label="搜索对话">
+            <kbd>⌘K</kbd>
+            ${query ? `<button type="button" class="icon-btn" data-act="clear-search" aria-label="清除搜索">${svg('x')}</button>` : ''}
+          </label>
+          ${query ? `<div class="search-count">${matchCount} 条匹配</div>` : ''}
+          ${strip}
+        </div>
+        <div class="side-scroll">
+          <div class="section"><span>工作区</span><span class="section-actions">
+            <button type="button" class="icon-btn" data-act="new-ws" title="新建工作区" aria-label="新建工作区">${svg('folderPlus')}</button>
+            <button type="button" class="icon-btn" data-act="import-ws" title="导入工作区" aria-label="导入工作区">${svg('import')}</button>
+          </span></div>
+          ${list}
+        </div>
+        ${renderFoot()}
+      </aside>`;
+    }
+
+    function renderFoot() {
+      return `<footer class="side-foot">
+        <span class="runtime" title="持久化运行时，日志写在 SQLite"><i class="runtime-dot"></i><span>运行时</span></span>
+        <span class="foot-actions">
+          <button type="button" class="icon-btn" data-act="settings" title="设置" aria-label="设置">${svg('gear')}</button>
+          <button type="button" class="icon-btn" data-act="toggle-rail" title="收起侧栏" aria-label="收起侧栏">${svg('panel')}</button>
+        </span>
+      </footer>`;
+    }
+
+    function renderRail() {
+      const selected = findConv(view.selectedId);
+      const buttons = view.workspaces.map((ws) => {
+        const running = ws.conversations.some((conv) => !conv.archived && (conv.status === 'running' || conv.status === 'recovering'));
+        const current = selected && selected.ws.id === ws.id;
+        return `<button type="button" class="rail-btn${current ? ' is-current' : ''}" data-act="rail-ws" data-id="${esc(ws.id)}" title="${esc(ws.name)}${running ? ' · 有运行中的对话' : ''}" aria-label="${esc(ws.name)}">${svg('folder')}${running ? '<i class="rail-dot"></i>' : ''}</button>`;
+      }).join('');
+      return `<aside class="side side-rail">
+        <button type="button" class="rail-logo" data-act="toggle-rail" title="展开侧栏" aria-label="展开侧栏">π</button>
+        <button type="button" class="rail-btn" data-act="new-chat" title="新建对话 ⌘N" aria-label="新建对话">${svg('plus')}</button>
+        <button type="button" class="rail-btn" data-act="rail-search" title="搜索对话 ⌘K" aria-label="搜索对话">${svg('search')}</button>
+        <div class="rail-line"></div>
+        ${buttons}
+        <div class="rail-spacer"></div>
+        <button type="button" class="rail-btn" data-act="settings" title="设置" aria-label="设置">${svg('gear')}</button>
+        <button type="button" class="rail-btn" data-act="toggle-rail" title="展开侧栏" aria-label="展开侧栏">${svg('panel')}</button>
+      </aside>`;
+    }
+
+    function actionsFor(conv) {
+      if (!conv) return '';
+      if (conv.archived || conv.status === 'archived') {
+        return `<button type="button" class="btn btn-sm" data-act="fork">用这段历史开新对话</button>`;
+      }
+      const bookmark = `<button type="button" class="icon-btn" data-act="checkpoint" title="检查点 · 91 分钟前" aria-label="检查点">${svg('bookmark')}</button>`;
+      let buttons = '';
+      if (conv.status === 'running') {
+        buttons = `<button type="button" class="btn" data-act="pause">${svg('pause')}<span>暂停</span></button><button type="button" class="btn stop" data-act="stop">${svg('stop')}<span>终止</span></button>`;
+      } else if (conv.status === 'paused') {
+        buttons = `<button type="button" class="btn" data-act="resume">${svg('play')}<span>继续</span></button><button type="button" class="btn stop" data-act="stop">${svg('stop')}<span>终止</span></button>`;
+      } else if (conv.status === 'recovering') {
+        buttons = `<button type="button" class="btn stop" data-act="stop">${svg('stop')}<span>终止</span></button>`;
+      }
+      return bookmark + buttons;
+    }
+
+    function renderTop() {
+      if (view.empty === 'none') {
+        return `<header class="topbar"><div class="top-main"><div class="top-title">pi-work</div><div class="top-sub"><span class="top-ws">还没有工作区</span></div></div></header>`;
+      }
+      if (view.empty === 'workspace') {
+        const ws = view.workspaces[0];
+        return `<header class="topbar"><div class="top-main"><div class="top-title">还没有对话</div><div class="top-sub"><span class="top-ws">${esc(ws.name)}</span></div></div></header>`;
+      }
+      const found = findConv(view.selectedId);
+      if (!found) return `<header class="topbar"><div class="top-main"><div class="top-title">选择一条对话</div></div></header>`;
+      const conv = found.conv;
+      return `<header class="topbar">
+        <div class="top-main">
+          <div class="top-title">${esc(conv.title)}</div>
+          <div class="top-sub">
+            <span class="status-pill">${statusIcon(conv.status)}<span>${esc(STATUS[conv.status] || conv.status)}</span></span>
+            <span class="top-time">${esc(agoLabel(conv.ago))}</span>
+            <span class="sep">·</span>
+            <span class="top-ws">${esc(found.ws.name)}</span>
+          </div>
+        </div>
+        <div class="top-actions">${actionsFor(conv)}</div>
+      </header>`;
+    }
+
+    function correctionButton() {
+      const open = view.correctionOpen;
+      return `<button type="button" class="correction${open ? ' is-open' : ''}" data-act="toggle-correction" aria-expanded="${open ? 'true' : 'false'}">${svg('chev', open ? 'is-open' : '')}<span class="correction-text">${esc(CORRECTION)}</span></button>`;
+    }
+
+    function userMsg(name, text) {
+      return `<article class="msg"><header><span class="avatar">你</span><span>${esc(name)}</span></header><div class="bubble">${esc(text)}</div></article>`;
+    }
+    function agentMsg(text) {
+      return `<article class="msg"><header><span class="avatar pi">π</span><span>主 Agent</span></header><div class="text">${esc(text)}</div></article>`;
+    }
+    function toolMsg(name, arg) {
+      return `<div class="tool">${svg('file')}<b>${esc(name)}</b><span>${esc(arg)}</span></div>`;
+    }
+
+    function renderThread() {
+      if (view.empty === 'none') {
+        return `<div class="center-empty"><h2>还没有工作区</h2><p>先加一个本地目录。之后的对话、检查点和子 Agent 都会留在这个工作区里。</p><div class="empty-actions"><button type="button" class="btn" data-act="new-ws">新建工作区</button><button type="button" class="btn ghost" data-act="import-ws">导入文件夹</button></div></div>`;
+      }
+      if (view.empty === 'workspace') {
+        const ws = view.workspaces[0];
+        return `<div class="center-empty"><h2>还没有对话</h2><p>${esc(ws.name)} 里还是空的。从这里开始一条对话，主 Agent 会记在这个目录下。</p><div class="empty-actions"><button type="button" class="btn" data-act="new-chat">新建对话</button></div></div>`;
+      }
+      const found = findConv(view.selectedId);
+      if (!found) return '<div class="thread"></div>';
+      const id = found.conv.id;
+      let body = '';
+      if (found.conv.archived) {
+        body = `<div class="banner">这是归档对话，只能查看。要用这段历史继续，开一条新对话。</div>${userMsg('你', '先试一下模型设置能不能记住登录。')}${agentMsg('试跑停在切换内核之前。这条对话现在只能回看。')}`;
+      } else if (id === 'c-auth') {
+        body = `${userMsg('你', '认证一直 401，帮我看 token 刷新。')}${toolMsg('read', 'src/kernel/control.mjs')}<div class="fail-note">这一步停住了：认证接口连续返回 401，检查点已保存。可以改完配置后再发一句，或另开一条对话。</div>`;
+      } else if (id === 'c-git') {
+        body = `${userMsg('你', '设置里的 Git 连接先停一下，我要确认文案。')}${agentMsg('已停在检查点。要继续的话，直接说下一步，或点继续。')}`;
+      } else if (id === 'c-home') {
+        body = `${userMsg('你', '首页那句介绍帮我改短一点。')}${agentMsg('首页标题要用产品名，还是用一句说明？回复我即可继续。')}`;
+      } else if (id === 'c-recover') {
+        body = `<div class="banner">正在从检查点恢复，步数会从上次停下的地方接着算。</div>${userMsg('你', '昨天那条改到一半了，接上。')}`;
+      } else {
+        body = `${userMsg('你', '把左侧工作区和对话重排一下。运行中的子 Agent 要能一眼看到，顶栏那个状态图标别再被切掉。')}${toolMsg('read', 'public/app.css')}${correctionButton()}${agentMsg('侧栏按工作区折叠。每条对话保留标题、状态和时间；子 Agent 只在选中时展开。状态图标放进胶囊里，不再被顶栏裁切。')}`;
+      }
+      return `<div class="thread">${body}</div>`;
+    }
+
+    function renderComposer() {
+      if (view.empty) return '';
+      const found = findConv(view.selectedId);
+      const locked = found && (found.conv.archived || found.conv.status === 'archived');
+      const placeholder = locked ? '这条对话已归档，只能查看' : '向 Agent 补充要求或发送指令…';
+      return `<footer class="composer${locked ? ' is-locked' : ''}">
+        <div class="composer-box">
+          <textarea rows="2" ${locked ? 'disabled' : ''} placeholder="${esc(placeholder)}" aria-label="输入"></textarea>
+          <div class="composer-bar">
+            <button type="button" class="chip" data-act="model"><i></i>grok-build</button>
+            <span class="ctx">上下文 18%</span>
+            <span class="grow"></span>
+            <kbd>⌘↵</kbd>
+            <button type="button" class="send" data-act="send" aria-label="发送" ${locked ? 'disabled' : ''}>${svg('send')}</button>
+          </div>
+        </div>
+      </footer>`;
+    }
+
+    function renderRight() {
+      if (view.empty || (findConv(view.selectedId) || {}).conv?.archived) {
+        return `<aside class="right"><header class="tabs"><button type="button" class="tab" aria-selected="true">Diff</button><button type="button" class="tab">文件</button><button type="button" class="tab">Markdown</button></header><div class="right-empty">暂无变更</div></aside>`;
+      }
+      return `<aside class="right">
+        <header class="tabs">
+          <button type="button" class="tab" aria-selected="true">Diff <span class="tab-badge">2</span></button>
+          <button type="button" class="tab">文件</button>
+          <button type="button" class="tab">Markdown</button>
+          <button type="button" class="btn btn-sm ghost" data-act="edit">${svg('pencil')}<span>编辑</span></button>
+        </header>
+        <div class="files"><span class="file-pill">public/app.css</span><span class="file-pill">public/index.html</span></div>
+        <div class="diff">
+          <div class="diff-name">public/app.css</div>
+          <div class="diff-row del"><span class="ln">736</span><span class="ln"></span><span class="code">.step-pulse-ring { width: 8px; }</span></div>
+          <div class="diff-row del"><span class="ln">744</span><span class="ln"></span><span class="code">.step-pulse-ring::after { top: -3px; }</span></div>
+          <div class="diff-row add"><span class="ln"></span><span class="ln">736</span><span class="code">.status-pill { overflow: visible; }</span></div>
+          <div class="diff-row add"><span class="ln"></span><span class="ln">748</span><span class="code">.status-pill .icon { width: 14px; height: 14px; }</span></div>
+        </div>
+      </aside>`;
+    }
+
+    function render() {
+      const narrow = isNarrow();
+      const stage = document.getElementById('stage');
+      stage.innerHTML = `<div class="app${narrow ? ' is-narrow' : ''}${view.rail ? ' is-rail' : ''}" id="app">${renderSide()}<div class="splitter" title="拖动调整宽度"></div><main class="center">${renderTop()}${renderThread()}${renderComposer()}</main>${renderRight()}<div class="toast" id="toast" hidden></div></div>`;
+      const app = document.getElementById('app');
+      if (view.sidebarW && !view.rail) app.style.setProperty('--sidebar-w', `${view.sidebarW}px`);
+      document.documentElement.dataset.theme = themeName();
+      const sceneLabel = (SCENES.find((item) => item[0] === state.scene) || ['', ''])[1];
+      document.title = `pi-work 设计稿 · ${sceneLabel}`;
+      paintChrome();
+      document.documentElement.dataset.ready = '1';
+    }
+
+    function paintChrome() {
+      const chrome = document.getElementById('chrome');
+      chrome.classList.toggle('is-hidden', !state.chrome);
+      if (!state.chrome) return;
+      const sceneButtons = SCENES.map(([id, label]) => `<button type="button" class="btn btn-sm" data-chrome="scene" data-scene="${id}" aria-pressed="${state.scene === id ? 'true' : 'false'}">${label}</button>`).join('');
+      const familyButtons = FAMILIES.map((family) => `<button type="button" class="btn btn-sm" data-chrome="family" data-family="${family}" aria-pressed="${state.family === family ? 'true' : 'false'}">${family}</button>`).join('');
+      chrome.innerHTML = `<span class="chrome-label">画面</span>${sceneButtons}<span class="chrome-sep"></span><span class="chrome-label">主题</span>${familyButtons}
+        <button type="button" class="btn btn-sm" data-chrome="mode" data-mode="light" aria-pressed="${state.mode === 'light' ? 'true' : 'false'}">浅色</button>
+        <button type="button" class="btn btn-sm" data-chrome="mode" data-mode="dark" aria-pressed="${state.mode === 'dark' ? 'true' : 'false'}">深色</button>
+        <span class="chrome-sep"></span><span class="chrome-label">宽度</span>
+        <button type="button" class="btn btn-sm" data-chrome="frame" data-frame="auto" aria-pressed="${state.frame === 'auto' ? 'true' : 'false'}">随窗口</button>
+        <button type="button" class="btn btn-sm" data-chrome="frame" data-frame="1440" aria-pressed="${state.frame === '1440' ? 'true' : 'false'}">1440</button>
+        <button type="button" class="btn btn-sm" data-chrome="frame" data-frame="1000" aria-pressed="${state.frame === '1000' ? 'true' : 'false'}">1000</button>
+        <span class="chrome-sep"></span>
+        <button type="button" class="btn btn-sm" data-chrome="notes">说明</button>`;
+    }
+
+    function toast(text) {
+      const el = document.getElementById('toast');
+      if (!el) return;
+      el.hidden = false;
+      el.textContent = text;
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(() => { el.hidden = true; }, 2400);
+    }
+
+    function loadScene(id) {
+      state.scene = id;
+      const keepW = view.sidebarW;
+      view = buildScene(id);
+      if (!view.rail) view.sidebarW = keepW;
+      render();
+    }
+
+    function currentWorkspaceId() {
+      const found = findConv(view.selectedId);
+      if (found) return found.ws.id;
+      const open = view.workspaces.find((ws) => ws.open);
+      return open ? open.id : (view.workspaces[0] && view.workspaces[0].id);
+    }
+
+    function onClick(event) {
+      const chromeHit = event.target.closest('#chrome button');
+      if (chromeHit) return;
+      const hit = event.target.closest('[data-act]');
+      const act = hit ? hit.dataset.act : '';
+      if (view.menu && act !== 'menu-conv' && act !== 'menu-ws' && act !== 'menu-item' && !event.target.closest('.menu')) {
+        view.menu = null;
+        if (!act) { render(); return; }
+      }
+      if (!act) return;
+      if (act === 'select') {
+        view.selectedId = hit.dataset.id;
+        view.showAgents = true;
+        view.menu = null;
+        render();
+        return;
+      }
+      if (act === 'toggle-ws') {
+        const ws = view.workspaces.find((item) => item.id === hit.dataset.id);
+        if (ws && !view.query.trim()) ws.open = !ws.open;
+        render();
+        return;
+      }
+      if (act === 'toggle-archive') {
+        const ws = view.workspaces.find((item) => item.id === hit.dataset.id);
+        if (ws) ws.archiveOpen = !ws.archiveOpen;
+        render();
+        return;
+      }
+      if (act === 'menu-conv' || act === 'menu-ws') {
+        event.stopPropagation();
+        const type = act === 'menu-conv' ? 'conv' : 'ws';
+        const id = hit.dataset.id;
+        view.menu = view.menu && view.menu.type === type && view.menu.id === id ? null : { type, id };
+        render();
+        return;
+      }
+      if (act === 'menu-item') {
+        onMenu(hit.dataset.kind, hit.dataset.id, hit.dataset.item);
+        return;
+      }
+      if (act === 'toggle-strip') { view.stripOpen = !view.stripOpen; render(); return; }
+      if (act === 'toggle-correction') { view.correctionOpen = !view.correctionOpen; render(); return; }
+      if (act === 'toggle-rail') { view.rail = !view.rail; if (view.rail) view.sidebarW = null; render(); return; }
+      if (act === 'rail-search') { view.rail = false; render(); document.getElementById('q')?.focus(); return; }
+      if (act === 'rail-ws') {
+        const ws = view.workspaces.find((item) => item.id === hit.dataset.id);
+        view.rail = false;
+        if (ws) {
+          ws.open = true;
+          const recent = ws.conversations.filter((conv) => !conv.archived).sort((a, b) => a.ago - b.ago)[0];
+          if (recent) view.selectedId = recent.id;
+        }
+        render();
+        return;
+      }
+      if (act === 'run-jump') {
+        const found = findConv(hit.dataset.id);
+        if (found) { found.ws.open = true; view.selectedId = found.conv.id; }
+        render();
+        return;
+      }
+      if (act === 'clear-search') { view.query = ''; render(); return; }
+      if (act === 'new-chat') { toast(view.workspaces.length ? '将在当前工作区新建对话' : '先新建一个工作区'); return; }
+      if (act === 'new-ws') { toast('将新建一个指向本地目录的工作区'); return; }
+      if (act === 'import-ws') { toast('将导入一个已有文件夹作为工作区'); return; }
+      if (act === 'settings') { toast('设置仍从这里打开'); return; }
+      if (act === 'fork') { toast('将用这段历史开一条新对话'); return; }
+      if (act === 'pause') { toast('暂停当前对话，检查点会留下'); return; }
+      if (act === 'resume') { toast('从检查点继续'); return; }
+      if (act === 'stop') { toast('终止这一轮，并保存检查点'); return; }
+      if (act === 'checkpoint') { toast('检查点 · 91 分钟前'); return; }
+      if (act === 'send') { toast('设计稿里不发送'); return; }
+      if (act === 'model') { toast('模型选择沿用现在的输入框'); return; }
+      if (act === 'edit') { toast('在编辑器中打开当前文件'); }
+    }
+
+    function onMenu(kind, id, item) {
+      view.menu = null;
+      if (kind === 'conv' && item === 'archive') {
+        const found = findConv(id);
+        if (found) {
+          const conv = found.conv;
+          if (conv.archived) {
+            conv.archived = false;
+            conv.status = conv.prevStatus || 'done';
+          } else {
+            conv.prevStatus = conv.status;
+            conv.archived = true;
+            conv.status = 'archived';
+            found.ws.archiveOpen = true;
+          }
+        }
+        render();
+        toast(findConv(id)?.conv.archived ? '已收到这个工作区底部的归档' : '已取消归档');
+        return;
+      }
+      const messages = {
+        rename: '重命名会就地改标题',
+        link: '已复制对话链接',
+        id: `已复制 ID ${id}`,
+        delete: '删除会再确认一次。设计稿里先不移除',
+        'new-chat': '将在这个工作区新建对话',
+        reveal: '将在资源管理器中打开该目录',
+        path: '已复制路径',
+        remove: '移除工作区只从列表拿掉，不删除磁盘上的文件。设计稿里先不移除'
+      };
+      render();
+      toast(messages[item] || '已记录');
+    }
+
+    function onInput(event) {
+      if (event.target.id !== 'q') return;
+      const pos = event.target.selectionStart;
+      view.query = event.target.value;
+      render();
+      const input = document.getElementById('q');
+      if (!input) return;
+      input.focus();
+      const next = Math.min(pos ?? input.value.length, input.value.length);
+      input.setSelectionRange(next, next);
+    }
+
+    function onPointerDown(event) {
+      const splitter = event.target.closest('.splitter');
+      if (!splitter) return;
+      event.preventDefault();
+      const app = document.getElementById('app');
+      const side = app.querySelector('.side');
+      const startX = event.clientX;
+      const startW = side.getBoundingClientRect().width;
+      splitter.classList.add('is-on');
+      function move(ev) {
+        const total = app.getBoundingClientRect().width;
+        const right = app.querySelector('.right').getBoundingClientRect().width;
+        const max = Math.max(220, Math.min(400, total - right - 280));
+        let width = Math.round(startW + ev.clientX - startX);
+        if (width < 120) {
+          view.rail = true;
+          view.sidebarW = null;
+          app.classList.add('is-rail');
+          app.style.removeProperty('--sidebar-w');
+          return;
+        }
+        view.rail = false;
+        app.classList.remove('is-rail');
+        width = Math.min(max, Math.max(220, width));
+        view.sidebarW = width;
+        app.style.setProperty('--sidebar-w', `${width}px`);
+      }
+      function up() {
+        splitter.classList.remove('is-on');
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        render();
+      }
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    }
+
+    function applyFrame() {
+      document.body.classList.toggle('is-framed', state.frame === '1440' || state.frame === '1000');
+      document.body.classList.toggle('frame-1000', state.frame === '1000');
+    }
+
+    function init() {
+      const params = new URLSearchParams(location.search);
+      const scene = params.get('scene');
+      if (scene && SCENES.some((item) => item[0] === scene)) state.scene = scene;
+      const theme = params.get('theme') || 'white-light';
+      const cut = theme.lastIndexOf('-');
+      const family = theme.slice(0, cut);
+      const mode = theme.slice(cut + 1);
+      if (FAMILIES.includes(family) && (mode === 'light' || mode === 'dark')) {
+        state.family = family;
+        state.mode = mode;
+      }
+      state.chrome = params.get('chrome') !== '0';
+      state.frame = params.get('frame') || 'auto';
+      view = buildScene(state.scene);
+      applyFrame();
+      render();
+      const stage = document.getElementById('stage');
+      stage.addEventListener('click', onClick);
+      stage.addEventListener('input', onInput);
+      stage.addEventListener('pointerdown', onPointerDown);
+      document.getElementById('chrome').addEventListener('click', (event) => {
+        const button = event.target.closest('button');
+        if (!button) return;
+        const kind = button.dataset.chrome;
+        if (kind === 'scene') loadScene(button.dataset.scene);
+        if (kind === 'family') { state.family = button.dataset.family; render(); }
+        if (kind === 'mode') { state.mode = button.dataset.mode; render(); }
+        if (kind === 'frame') { state.frame = button.dataset.frame; view.sidebarW = null; applyFrame(); render(); }
+        if (kind === 'notes') document.getElementById('notes').showModal();
+      });
+      document.getElementById('notes-close').addEventListener('click', () => document.getElementById('notes').close());
+      window.addEventListener('resize', () => render());
+      document.addEventListener('keydown', (event) => {
+        const meta = event.metaKey || event.ctrlKey;
+        if (meta && event.key.toLowerCase() === 'k') {
+          event.preventDefault();
+          if (view.rail) { view.rail = false; render(); }
+          document.getElementById('q')?.focus();
+        }
+        if (meta && event.key.toLowerCase() === 'n') {
+          event.preventDefault();
+          toast(view.workspaces.length ? '将在当前工作区新建对话' : '先新建一个工作区');
+        }
+        if (event.key === 'Escape' && view.menu) {
+          view.menu = null;
+          render();
+        }
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>
