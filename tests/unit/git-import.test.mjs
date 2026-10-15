@@ -115,8 +115,28 @@ test('PI_WORK_GIT_CA_FILE is omitted when empty, and an inherited GIT_SSH_COMMAN
     },
   });
   assert.equal(plan.args.some((arg) => String(arg).includes('sslCAInfo')), false);
+  assert.equal(plan.args.includes('credential.helper='), false);
   assert.equal(plan.env.GIT_SSH_COMMAND, 'ssh -i /keys/id_ed25519');
   assert.equal(plan.bin, 'git');
+});
+
+test('prepareGitClone disables credential helpers only when the URL embeds credentials', () => {
+  const withCreds = prepareGitClone({
+    url: 'https://importer:s3cr3t-token-value@example.com/a.git',
+    dest: 'repo',
+    env: { PATH: '/usr/bin', PI_WORK_GIT_CA_FILE: '/certs/ca.pem' },
+  });
+  const helperAt = withCreds.args.indexOf('credential.helper=');
+  assert.equal(withCreds.args[helperAt - 1], '-c');
+  assert.ok(helperAt > withCreds.args.indexOf('http.sslCAInfo=/certs/ca.pem'));
+  assert.ok(helperAt < withCreds.args.indexOf('clone'));
+
+  const plain = prepareGitClone({
+    url: 'https://example.com/a.git',
+    dest: 'repo',
+    env: { PATH: '/usr/bin' },
+  });
+  assert.equal(plain.args.includes('credential.helper='), false);
 });
 
 test('redactGitOutput removes user:token and classifyCloneFailure maps git stderr', () => {
@@ -174,6 +194,24 @@ function splitCgi(raw) {
   return [raw.toString('latin1'), Buffer.alloc(0)];
 }
 
+const PRIVATE_USER = 'importer';
+const PRIVATE_PASS = 's3cr3t-token-value';
+
+function basicAuthorized(req) {
+  const header = String(req.headers.authorization || '');
+  const match = header.match(/^Basic\s+([A-Za-z0-9+/=]+)$/);
+  if (!match) return false;
+  let decoded = '';
+  try {
+    decoded = Buffer.from(match[1], 'base64').toString('utf8');
+  } catch {
+    return false;
+  }
+  const split = decoded.indexOf(':');
+  if (split < 0) return false;
+  return decoded.slice(0, split) === PRIVATE_USER && decoded.slice(split + 1) === PRIVATE_PASS;
+}
+
 async function startSmartGit() {
   const backend = await findHttpBackend();
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-git-'));
@@ -194,7 +232,7 @@ async function startSmartGit() {
   await git(['-c', 'commit.gpgsign=false', '-c', 'user.name=pi-work', '-c', 'user.email=pi-work@example.com', 'commit', '-m', 'init'], src);
   await git(['clone', '--bare', src, bare]);
 
-  function runCgi(req) {
+  function runCgi(req, pathInfo) {
     const u = new URL(req.url, 'http://127.0.0.1');
     return new Promise((resolve, reject) => {
       const child = spawn(backend, [], {
@@ -203,7 +241,7 @@ async function startSmartGit() {
           ...process.env,
           GIT_PROJECT_ROOT: root,
           GIT_HTTP_EXPORT_ALL: '1',
-          PATH_INFO: u.pathname,
+          PATH_INFO: pathInfo,
           QUERY_STRING: u.search.startsWith('?') ? u.search.slice(1) : '',
           REQUEST_METHOD: req.method || 'GET',
           CONTENT_TYPE: req.headers['content-type'] || '',
@@ -230,14 +268,18 @@ async function startSmartGit() {
 
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1');
-    if (u.pathname.startsWith('/private')) {
-      res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="git"', 'Content-Type': 'text/plain' });
-      res.end('Authentication failed');
-      return;
+    let pathInfo = u.pathname;
+    if (pathInfo === '/private' || pathInfo.startsWith('/private/')) {
+      if (!basicAuthorized(req)) {
+        res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="git"', 'Content-Type': 'text/plain' });
+        res.end('Authentication failed');
+        return;
+      }
+      pathInfo = pathInfo.slice('/private'.length) || '/';
     }
     let result;
     try {
-      result = await runCgi(req);
+      result = await runCgi(req, pathInfo);
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
       res.end(err.message);
@@ -318,6 +360,101 @@ test('cloneGitRepo: auth_failed', { timeout: 30_000 }, async (t) => {
     () => cloneGitRepo({ url: `http://127.0.0.1:${git.port}/private/repo.git`, dest, env: cloneEnv() }),
     'auth_failed',
   );
+});
+
+test('cloneGitRepo: correct Basic credentials succeed', { timeout: 30_000 }, async (t) => {
+  const git = await startSmartGit();
+  t.after(() => git.close());
+  const token = PRIVATE_PASS;
+  const dest = path.join(git.root, 'out-private-ok');
+  const url = `http://${PRIVATE_USER}:${token}@127.0.0.1:${git.port}/private/repo.git`;
+  await cloneGitRepo({ url, dest, env: cloneEnv() });
+  const readme = await fs.readFile(path.join(dest, 'README.md'), 'utf8');
+  assert.equal(readme.replace(/\r\n/g, '\n'), 'hello\n');
+  const cfg = await fs.readFile(path.join(dest, '.git', 'config'), 'utf8');
+  assert.equal(cfg.includes(token), false);
+  assert.equal(cfg.includes(`${PRIVATE_USER}:`), false);
+  assert.match(cfg, new RegExp(`url = http://127\\.0\\.0\\.1:${git.port}/private/repo\\.git`));
+  assert.equal(await gitTreeHas(path.join(dest, '.git'), token), '');
+});
+
+test('cloneGitRepo: wrong Basic password is auth_failed', { timeout: 30_000 }, async (t) => {
+  const git = await startSmartGit();
+  t.after(() => git.close());
+  const dest = path.join(git.root, 'out-private-bad');
+  await rejectCode(
+    () => cloneGitRepo({
+      url: `http://${PRIVATE_USER}:wrong-password@127.0.0.1:${git.port}/private/repo.git`,
+      dest,
+      env: cloneEnv(),
+    }),
+    'auth_failed',
+  );
+  await assert.rejects(() => fs.access(dest));
+});
+
+test('cloneGitRepo: a credentialed URL does not ask the credential helper to store', { timeout: 30_000 }, async (t) => {
+  const git = await startSmartGit();
+  t.after(() => git.close());
+  const helperPath = path.join(git.root, 'cred-helper.mjs');
+  const configPath = path.join(git.root, 'cred.gitconfig');
+  const controlLog = path.join(git.root, 'cred-control.log');
+  const cloneLog = path.join(git.root, 'cred-clone.log');
+  await fs.writeFile(helperPath, [
+    "import fs from 'node:fs';",
+    'const logPath = process.env.PIW_CRED_LOG;',
+    'const chunks = [];',
+    'const timer = setTimeout(finish, 1500);',
+    "process.stdin.on('data', (chunk) => chunks.push(chunk));",
+    "process.stdin.on('end', finish);",
+    'function finish() {',
+    '  if (finish.done) return;',
+    '  finish.done = true;',
+    '  clearTimeout(timer);',
+    "  const body = Buffer.concat(chunks).toString('utf8');",
+    '  const text = `argv=${JSON.stringify(process.argv.slice(2))}\\n${body}\\n---\\n`;',
+    '  try { fs.appendFileSync(logPath, text); } catch { /* log is best-effort */ }',
+    '  process.exit(0);',
+    '}',
+    '',
+  ].join('\n'));
+  const node = process.execPath.replace(/\\/g, '/');
+  const helper = helperPath.replace(/\\/g, '/');
+  await fs.writeFile(configPath, `[credential]\n\thelper = !'${node}' '${helper}'\n`);
+
+  const token = PRIVATE_PASS;
+  const url = `http://${PRIVATE_USER}:${token}@127.0.0.1:${git.port}/private/repo.git`;
+  const controlDest = path.join(git.root, 'out-helper-control');
+  await execFileP('git', ['clone', '--depth', '1', '--', url, controlDest], {
+    windowsHide: true,
+    timeout: 30_000,
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: configPath,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'never',
+      PIW_CRED_LOG: controlLog,
+    },
+  });
+  const controlText = await fs.readFile(controlLog, 'utf8');
+  assert.match(controlText, /\bstore\b/);
+
+  const dest = path.join(git.root, 'out-helper');
+  await cloneGitRepo({
+    url,
+    dest,
+    env: cloneEnv({
+      GIT_CONFIG_GLOBAL: configPath,
+      GIT_CONFIG_NOSYSTEM: '1',
+      PIW_CRED_LOG: cloneLog,
+    }),
+  });
+  let cloneText = '';
+  try { cloneText = await fs.readFile(cloneLog, 'utf8'); } catch { cloneText = ''; }
+  assert.doesNotMatch(cloneText, /\bstore\b/);
+  const cfg = await fs.readFile(path.join(dest, '.git', 'config'), 'utf8');
+  assert.equal(cfg.includes(token), false);
 });
 
 test('cloneGitRepo: repo_not_found', { timeout: 30_000 }, async (t) => {

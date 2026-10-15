@@ -139,6 +139,10 @@ export function buildCloneArgs({ url, branch, dest, caFile } = {}) {
   ];
   const ca = String(caFile || '').trim();
   if (ca) args.push('-c', `http.sslCAInfo=${ca}`);
+  // An empty credential.helper resets the helper list for this command only.
+  // A user:token in the URL would otherwise be stored by osxkeychain or Git
+  // Credential Manager. URLs without embedded credentials keep the local helper.
+  if (credentialMarkers(url).length) args.push('-c', 'credential.helper=');
   args.push('clone', '--depth', '1');
   if (branch) args.push('--branch', String(branch));
   args.push('--', String(url ?? '').trim(), dest);
@@ -275,7 +279,8 @@ async function assertConfigClean(dest, url) {
 /**
  * Clone with `git clone --depth 1` via execFile (no shell).
  * Destination parent is created as needed.
- * When the URL embeds user:pass, origin is rewritten to the stripped URL.
+ * When the URL embeds user:pass, credential helpers are disabled for this clone
+ * and origin is rewritten to the stripped URL.
  */
 export async function cloneGitRepo({ url, branch, dest, env = process.env } = {}) {
   const trimmed = String(url || '').trim();

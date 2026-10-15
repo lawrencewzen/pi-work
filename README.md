@@ -32,7 +32,7 @@
 - 导入过程不会弹出登录窗口。请先在终端用 git 克隆一次，让 Git Credential Manager 记住口令；或配置 SSH 密钥。
 - 内网 `http://` 默认拒绝。把主机名写入 `PI_WORK_GIT_HTTP_HOSTS`（逗号分隔，不含端口）后才放行，例如 `PI_WORK_GIT_HTTP_HOSTS=gitlab.corp.local`。
 - 自签证书把 CA 文件路径设到 `PI_WORK_GIT_CA_FILE`。
-- 地址里的 `user:token@` 不会写入工作区记录。克隆成功后，`.git/config` 里的 origin 也会改成去掉凭证的地址。
+- 地址里的 `user:token@` 不会写入工作区记录。克隆成功后，`.git/config` 里的 origin 也会改成去掉凭证的地址。这种地址只在这一次克隆里加上 `-c credential.helper=`，避免 git 把口令写进钥匙串或 Windows 凭据管理器；地址不带凭证时，仍使用本机已配置的凭证助手。
 
 ## 插件
 
