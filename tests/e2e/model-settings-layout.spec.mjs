@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startServer, tmpdir, api, authToken } from './helpers/server.mjs';
+import { startServer, tmpdir, api } from './helpers/server.mjs';
 import { login } from './helpers/ui.mjs';
 
 let srv;
@@ -34,7 +34,7 @@ async function boot() {
     script: 'basic.json',
     extraEnv: { PI_WORK_WORKSPACE_ROOT: root },
   });
-  const token = await authToken(srv.dataDir);
+  const token = '';
   const created = await api(srv.url, 'POST', '/sources', {
     vendor: 'openai',
     name: 'OpenAI',

@@ -20,14 +20,25 @@ export async function prepareWorkspaces(names = ['repo']) {
   return { root, dirs };
 }
 
-/** Start server.mjs with faux LLM. Returns {url, dataDir, proc, kill(signal), restart()} */
+/** Start server.mjs with faux LLM. Returns {url, dataDir, proc, kill(signal), logs()}. Login is off unless extraEnv sets PI_WORK_TOKEN. */
 export async function startServer({ script = 'basic.json', dataDir, port = 0, extraEnv = {} } = {}) {
   dataDir ??= await tmpdir('piw-data-');
+  const env = {
+    ...process.env,
+    PORT: String(port),
+    PI_WORK_DATA_DIR: dataDir,
+    PI_WORK_LLM: 'faux',
+    PI_WORK_FAUX_SCRIPT: path.join(FIXTURES, script),
+    PI_WORK_FAUX_DRAIN: '1',
+    PI_WORK_RETRY_BASE_MS: '50',
+    PI_WORK_RETRY_MAX: '5',
+    PI_WORK_STALL_MS: '2000',
+    ...extraEnv,
+  };
+  if (!Object.prototype.hasOwnProperty.call(extraEnv, 'PI_WORK_TOKEN')) delete env.PI_WORK_TOKEN;
   const proc = spawn(process.execPath, ['server.mjs'], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), PI_WORK_DATA_DIR: dataDir, PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: path.join(FIXTURES, script), PI_WORK_FAUX_DRAIN: '1', PI_WORK_RETRY_BASE_MS: '50', PI_WORK_RETRY_MAX: '5',
-      PI_WORK_STALL_MS: '2000', ...extraEnv },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
@@ -40,10 +51,6 @@ export async function startServer({ script = 'basic.json', dataDir, port = 0, ex
   proc.removeAllListeners('exit');
   const kill = (sig = 'SIGKILL') => new Promise((r) => { if (proc.exitCode !== null) return r(); proc.once('exit', r); proc.kill(sig); });
   return { url, dataDir, proc, kill, logs: () => log, port: Number(new URL(url).port) };
-}
-
-export async function authToken(dataDir) {
-  return (await fs.readFile(path.join(dataDir, 'auth.token'), 'utf8')).trim();
 }
 
 export async function api(url, method, p, body, token) {

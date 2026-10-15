@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { startServer, tmpdir, api, authToken } from './helpers/server.mjs';
+import { startServer, tmpdir, api } from './helpers/server.mjs';
 import { createWorkspace, createConversation, send, statusText, login } from './helpers/ui.mjs';
 
 const EM = '—';
@@ -21,7 +21,7 @@ async function boot({ script, models } = {}) {
       LLM_CONTEXT_WINDOW: '200000',
     },
   });
-  const token = await authToken(srv.dataDir);
+  const token = '';
   let sourceId = null;
   if (models) {
     const names = [];

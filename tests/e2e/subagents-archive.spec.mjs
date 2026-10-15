@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { startServer, prepareWorkspaces, api, authToken } from './helpers/server.mjs';
+import { startServer, prepareWorkspaces, api } from './helpers/server.mjs';
 import { openApp, createWorkspace, newConversation, send } from './helpers/ui.mjs';
 
 const SHOTS = '/opt/cursor/artifacts/screenshots';
@@ -125,7 +125,7 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
         PI_WORK_WORKSPACE_ROOT: prepared.root,
       },
     });
-    const token = await authToken(srv.dataDir);
+    const token = '';
     const role = await api(srv.url, 'POST', '/roles', {
       id: 'scout',
       name: '侦察',
@@ -261,7 +261,7 @@ test('an old conversation is archived and can open a new chat from its history',
   const setup = await startServer({
     extraEnv: { PI_WORK_WORKSPACE_ROOT: prepared.root },
   });
-  const token = await authToken(setup.dataDir);
+  const token = '';
   const ws = await api(setup.url, 'POST', '/workspaces', { name: 'old-ws', path: prepared.dirs[0] }, token);
   expect(ws.status).toBe(201);
   await setup.kill();

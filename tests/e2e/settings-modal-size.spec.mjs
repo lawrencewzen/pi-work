@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { startServer, authToken } from './helpers/server.mjs';
+import { startServer } from './helpers/server.mjs';
 import { login } from './helpers/ui.mjs';
 
 const TABS = ['general', 'models', 'agents', 'plugins', 'skills', 'workflow', 'about'];
@@ -14,9 +14,8 @@ for (const viewport of [
 ]) {
   test(`settings modal keeps one size across tabs at ${viewport.width}x${viewport.height}`, async ({ page }) => {
     srv = await startServer({ script: 'basic.json' });
-    const token = await authToken(srv.dataDir);
     await page.setViewportSize(viewport);
-    await login(page, srv.url, token);
+    await login(page, srv.url);
     await page.locator('[data-action=open-settings]').click();
     const modal = page.locator('.sm');
     await expect(modal).toBeVisible();

@@ -15,7 +15,7 @@ flowchart LR
   end
 
   subgraph Node["Node 单进程（server.mjs）"]
-    API[REST + 鉴权]
+    API[REST + 可选鉴权]
     SSE[SSE]
     K[src/kernel 门面<br/>对话 · 角色 · 流水线 · 子 Agent · 暂停]
     H[Pi Durable Harness<br/>任务 · 检查点 · resume]
@@ -55,7 +55,7 @@ flowchart LR
 - `PRAGMA busy_timeout=5000`
 - `PRAGMA synchronous=NORMAL`
 - `schema_version` 表 + `PRAGMA user_version`（当前为 2；迁移时递增）
-- 数据库文件与 `auth.token` 权限 `0600`
+- 数据库文件权限 `0600`。不设置 `PI_WORK_TOKEN` 时不写 `auth.token`
 - 启动时在 `$PI_WORK_DATA_DIR/.lock` 上用 `O_EXCL` 抢单实例锁；若锁文件中的 pid 在 `/proc` 中仍存活则拒绝启动；进程退出时删除锁
 
 **已知限制：** `node:sqlite` 仍带实验性警告，API 可能变化。多进程写入不受支持（靠锁文件保证单实例）。崩溃只在 e2e 层做过部分覆盖。
@@ -82,11 +82,11 @@ flowchart LR
 
 ## 鉴权与绑定
 
-- 首次启动若 `PI_WORK_TOKEN` 与 `$PI_WORK_DATA_DIR/auth.token` 皆空，生成 32 字节 hex 令牌并打印 `PI_WORK_LOGIN` / `PI_WORK_TOKEN`。
-- `/api/*` 必须 `Authorization: Bearer` 或 cookie `pi_work_token`（HttpOnly, SameSite=Strict）。
-- `GET /login?token=` 校验后 Set-Cookie 并 302 `/`。
-- SSE 优先 cookie；`POST /api/sse-ticket` 签发 60s 一次性 `?ticket=`。不接受长效 token 作为 query。
-- `Host` 必须是 `127.0.0.1:<port>` / `localhost:<port>` / `[::1]:<port>`，可用 `PI_WORK_ALLOWED_HOSTS` 追加。
-- 写方法要求 `Content-Type: application/json`；若带 `Origin` 则必须同源。
+- 默认不鉴权。不设置 `PI_WORK_TOKEN` 时，`/api/*` 和 SSE 不需要 cookie、Bearer 或 ticket。服务不读取、不生成 `$PI_WORK_DATA_DIR/auth.token`。启动只打印 `PI_WORK_READY http://127.0.0.1:<port>`。浏览器打开这个地址即可使用。
+- `GET /login` 在未设置 `PI_WORK_TOKEN` 时一律 302 到 `/`，带不带 `token` 都一样，不种 cookie。
+- 设置 `PI_WORK_TOKEN` 后恢复可选登录：`/api/*` 必须 `Authorization: Bearer` 或 cookie `pi_work_token`（HttpOnly, SameSite=Strict）。`GET /login?token=` 校验通过后 Set-Cookie 并 302 `/`，令牌不对返回 401。SSE 优先 cookie；`POST /api/sse-ticket` 签发 60s 一次性 `?ticket=`。不接受长效 token 作为 query。
+- 设置了 `PI_WORK_ALLOWED_HOSTS` 但没有 `PI_WORK_TOKEN` 时，启动打印一行警告：服务对这些主机开放且没有鉴权。
+- 只监听 `127.0.0.1`。`Host` 必须是 `127.0.0.1:<port>` / `localhost:<port>` / `[::1]:<port>`，可用 `PI_WORK_ALLOWED_HOSTS` 追加，否则 400。
+- 写方法要求 `Content-Type: application/json`，否则 415；若带 `Origin` 则必须同源，否则 403。这些检查在鉴权之前执行。响应带 CSP、`X-Content-Type-Options`、`Referrer-Policy`、`X-Frame-Options`。
 
 自定义 `baseUrl` 可指向任意 OpenAI 兼容主机（openai / x.ai / deepseek / anthropic 为常见值）。更换 `baseUrl` 或 `provider` 且请求中没有新的明文 `apiKey` 时，会清空已存密钥，避免把密钥发到攻击者主机。

@@ -2,26 +2,21 @@
 
 This document describes the backend hardening applied from the 2026-10-13 audit (`/workspace/pi-work-coord/AUDIT.md`). Frontend XSS in `public/` was already patched and is not re-touched here.
 
-The process binds to `127.0.0.1` and requires a login token. Treat it as a **single-user local agent**, not a multi-tenant service.
+The process binds to `127.0.0.1`. Login is off unless `PI_WORK_TOKEN` is set. Treat it as a **single-user local agent**, not a multi-tenant service. Host allowlisting, cross-origin rejection, and the JSON content-type check stay on even when login is off, so a malicious web page cannot call the local server.
 
 ## What was fixed
 
 ### Authentication, CSRF, DNS rebinding (finding 1)
 
-On first start, if `PI_WORK_TOKEN` is empty and `$PI_WORK_DATA_DIR/auth.token` is missing, the server generates a 32-byte hex token, writes it mode `0600`, and prints once:
+By default `PI_WORK_TOKEN` is unset. `/api/*` and SSE then accept requests with no cookie, Bearer, or ticket. The server does not read or create `$PI_WORK_DATA_DIR/auth.token`, and startup prints only `PI_WORK_READY http://127.0.0.1:<port>`. `GET /login` (with or without `token`) 302s to `/` and does not set a cookie.
 
-```
-PI_WORK_LOGIN http://127.0.0.1:<port>/login?token=<token>
-PI_WORK_TOKEN <token>
-```
+Set `PI_WORK_TOKEN` to turn the optional login back on. Every `/api/*` request then needs `Authorization: Bearer <token>` or the `pi_work_token` cookie (`HttpOnly; SameSite=Strict; Path=/`; `Secure` only on HTTPS). `GET /login?token=` sets that cookie and 302s to `/` when the token matches; a wrong token is 401. SSE prefers the cookie; `POST /api/sse-ticket` issues a single-use 60s `?ticket=`.
 
-`bearerOk` no longer bypasses when the token is empty. Every `/api/*` request needs `Authorization: Bearer <token>` or the `pi_work_token` cookie (`HttpOnly; SameSite=Strict; Path=/`; `Secure` only on HTTPS).
-
-`GET /login?token=` sets that cookie and 302s to `/` when the token matches; a wrong token is 401.
+If `PI_WORK_ALLOWED_HOSTS` is set and `PI_WORK_TOKEN` is not, startup prints one warning that the service is open to those hosts without authentication.
 
 Requests whose `Host` is not `127.0.0.1:<port>`, `localhost:<port>`, or `[::1]:<port>` are 400. Extra hosts can be listed in `PI_WORK_ALLOWED_HOSTS` (comma-separated).
 
-Mutating methods (POST/PUT/PATCH/DELETE) require `Content-Type` starting with `application/json` (else 415). If `Origin` is present it must be same-origin (else 403).
+Mutating methods (POST/PUT/PATCH/DELETE) require `Content-Type` starting with `application/json` (else 415). If `Origin` is present it must be same-origin (else 403). These checks run before authentication.
 
 Response headers on all replies:
 
@@ -30,7 +25,7 @@ Response headers on all replies:
 - `Referrer-Policy: no-referrer`
 - `X-Frame-Options: DENY`
 
-Auth is enforced at the HTTP layer only. In-process unit tests of stores and pure helpers are unchanged.
+When `PI_WORK_TOKEN` is set, that check stays at the HTTP layer. In-process unit tests of stores and pure helpers are unchanged.
 
 ### bash sandbox (finding 2, 12)
 
@@ -86,7 +81,7 @@ Documented in README, package.json, and `docs/ARCHITECTURE.md`: the `src/` stack
 
 ### Secrets (finding 10)
 
-SQLite DB and `auth.token` are mode `0600`. `maskApiKey` shows only the last 4 characters as `••••abcd`. `isMaskedOrEmptyApiKey` treats empty/null, the current masked form, or `/^[•*]+\w{0,4}$/` as masked — not every string containing `...`. Provider error bodies in `openai.mjs` are truncated to 500 characters and `sk-[A-Za-z0-9_-]{6,}` is replaced with `sk-***`. The key remains plaintext inside SQLite (OS keychain not added).
+The SQLite DB is mode `0600`. `auth.token` is no longer created. `maskApiKey` shows only the last 4 characters as `••••abcd`. `isMaskedOrEmptyApiKey` treats empty/null, the current masked form, or `/^[•*]+\w{0,4}$/` as masked — not every string containing `...`. Provider error bodies in `openai.mjs` are truncated to 500 characters and `sk-[A-Za-z0-9_-]{6,}` is replaced with `sk-***`. The key remains plaintext inside SQLite (OS keychain not added).
 
 ### SSE auth (finding 11)
 
@@ -104,7 +99,7 @@ Same-origin `EventSource` sends the cookie. `POST /api/sse-ticket` returns `{ ti
 
 | # | Severity | Status |
 |---|---------|--------|
-| 1 | Critical | **Fixed** — mandatory token, cookie, Host, Origin, JSON Content-Type, CSP and related headers |
+| 1 | Critical | **Fixed** — bind `127.0.0.1`; optional `PI_WORK_TOKEN`; Host, Origin, JSON Content-Type, CSP and related headers always on |
 | 2 | High | **Partial** — env allow-list, pgid kill, 1 MiB cap, cwd; full OS sandbox / bwrap **deferred** |
 | 3 | High | **Fixed** — realpath + allowlisted roots; `/` and similar rejected |
 | 4 | High | **Fixed** — `baseUrl` / `provider` change without a new key clears `apiKey` |

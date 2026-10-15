@@ -44,7 +44,8 @@ import {
   GrokAuthError,
 } from './src/core/grok-auth.mjs';
 import {
-  loadOrCreateToken,
+  resolveAuthToken,
+  unauthenticatedHostsWarning,
   requestAuthorized,
   hostAllowed,
   originAllowed,
@@ -89,7 +90,7 @@ try {
   process.exit(1);
 }
 
-const { token: AUTH_TOKEN, generated: TOKEN_GENERATED } = await loadOrCreateToken(DATA_DIR);
+const { token: AUTH_TOKEN, enabled: AUTH_ENABLED } = resolveAuthToken();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -437,6 +438,15 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);
 
     if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login/')) {
+      if (!AUTH_ENABLED) {
+        res.writeHead(302, {
+          ...SECURITY_HEADERS,
+          'cache-control': 'no-store',
+          Location: '/',
+        });
+        res.end();
+        return;
+      }
       const given = url.searchParams.get('token') || '';
       if (!tokensMatch(given, AUTH_TOKEN)) {
         sendJson(res, 401, { error: 'unauthorized' });
@@ -465,8 +475,7 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname.startsWith('/api/')) {
       const p = url.pathname.replace(/\/$/, '') || '/';
-      const authed = requestAuthorized(req, AUTH_TOKEN);
-      if (!authed) {
+      if (AUTH_ENABLED && !requestAuthorized(req, AUTH_TOKEN)) {
         if (req.method === 'GET' && isSsePath(p) && consumeSseTicket(url.searchParams.get('ticket'))) {
           /* ticket consumed */
         } else {
@@ -1261,9 +1270,7 @@ async function routeApi(req, res, url) {
 server.listen(PORT, '127.0.0.1', () => {
   const addr = server.address();
   const port = typeof addr === 'object' && addr ? addr.port : PORT;
+  const hostWarning = unauthenticatedHostsWarning();
+  if (hostWarning) console.warn(hostWarning);
   console.log(`PI_WORK_READY http://127.0.0.1:${port}`);
-  if (TOKEN_GENERATED) {
-    console.log(`PI_WORK_LOGIN http://127.0.0.1:${port}/login?token=${AUTH_TOKEN}`);
-    console.log(`PI_WORK_TOKEN ${AUTH_TOKEN}`);
-  }
 });

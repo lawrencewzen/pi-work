@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import http from 'node:http';
-import { startServer, authToken, api } from './helpers/server.mjs';
+import { startServer, api } from './helpers/server.mjs';
 import { login } from './helpers/ui.mjs';
 
 let srv;
@@ -56,7 +56,7 @@ test('row test shows a busy state, then an inline pass, and no toast', async ({ 
     res.end(JSON.stringify({ data: [{ id: 'other-model' }] }));
   });
   srv = await startServer({ script: 'basic.json' });
-  const token = await authToken(srv.dataDir);
+  const token = '';
   const slowId = await addSource(token, { name: '甲', baseUrl: slow, models: [] });
   const idleId = await addSource(token, { name: '乙', baseUrl: idle, models: ['other-model'] });
   await openModels(page, token);
@@ -81,7 +81,7 @@ test('a 401 probe shows the localized failure on the row and no toast', async ({
     res.end(JSON.stringify({ error: { message: 'invalid api key' } }));
   });
   srv = await startServer({ script: 'basic.json' });
-  const token = await authToken(srv.dataDir);
+  const token = '';
   const id = await addSource(token, { name: '拒', baseUrl: denied, models: ['hidden'] });
   await openModels(page, token);
   const row = page.locator(`[data-testid=model-source][data-source-id="${id}"]`);
@@ -97,7 +97,7 @@ test('an empty model list becomes selectable after a row test and stays saved', 
     res.end(JSON.stringify({ data: [{ id: 'deepseek-chat' }] }));
   });
   srv = await startServer({ script: 'basic.json' });
-  const token = await authToken(srv.dataDir);
+  const token = '';
   const id = await addSource(token, { name: 'DeepSeek', baseUrl: upstream, models: [] });
   await openModels(page, token);
   const row = page.locator(`[data-testid=model-source][data-source-id="${id}"]`);
