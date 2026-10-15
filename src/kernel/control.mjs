@@ -271,7 +271,15 @@ export function projectTranscript(entries) {
   const base = messagesFromEntries(entries);
   const hidden = new Set();
   const corrections = new Map();
+  // Parallel tool calls in one assistant message can each be blocked with the
+  // same note. The model still has every tool result; the thread shows the first.
+  let assistantId = '';
+  const seenCorrection = new Set();
   for (const entry of entries || []) {
+    if (entry?.kind === 'pi.assistant') {
+      assistantId = String(entry.id);
+      continue;
+    }
     if (entry?.kind !== 'pi.tool-result') continue;
     const result = entry.model?.[0];
     if (!result) continue;
@@ -281,7 +289,14 @@ export function projectTranscript(entries) {
       continue;
     }
     const note = correctionText(textOf(result.content));
-    if (note) corrections.set(id, note);
+    if (!note) continue;
+    const key = `${assistantId}\0${note}`;
+    if (seenCorrection.has(key)) {
+      hidden.add(id);
+      continue;
+    }
+    seenCorrection.add(key);
+    corrections.set(id, note);
   }
   const messages = [];
   for (const message of base.messages) {

@@ -61,6 +61,11 @@ function lastUserText(context) {
   return '';
 }
 
+/** One assistant message can name a single `tool` or several `tools`. */
+function turnHasTool(turn) {
+  return Boolean(turn?.tool) || (Array.isArray(turn?.tools) && turn.tools.length > 0);
+}
+
 /**
  * Fold standalone `delayMs` onto the next model turn, and turn `cut` into one
  * retryable error. Turns tagged `when` stay in the plan for per-message routing.
@@ -73,7 +78,7 @@ export function planScriptTurns(turns) {
     const marker = turn.when != null ? String(turn.when) : '';
     const bareDelay = turn.delayMs != null
       && turn.text == null
-      && !turn.tool
+      && !turnHasTool(turn)
       && !turn.end
       && !turn.error
       && !turn.cut;
@@ -93,7 +98,7 @@ export function planScriptTurns(turns) {
     if (total > 0) next.delayMs = total;
     else delete next.delayMs;
     delay = 0;
-    if (next.tool || next.text != null || next.end || next.error) plan.push(next);
+    if (turnHasTool(next) || next.text != null || next.end || next.error) plan.push(next);
   }
   return plan;
 }
@@ -142,9 +147,9 @@ export function scriptShouldContinue(turns, context) {
   if (used <= 0 || used >= pool.length) return false;
   const previous = pool[used - 1];
   const next = pool[used];
-  if (!previous || previous.end || previous.tool || previous.error) return false;
+  if (!previous || previous.end || turnHasTool(previous) || previous.error) return false;
   if (!next || next.error) return false;
-  return Boolean(next.tool || next.end);
+  return Boolean(turnHasTool(next) || next.end);
 }
 
 export function loadScriptTurns(env = process.env) {
@@ -173,6 +178,14 @@ export function fauxTurnFromScript(turns, context) {
       stopReason: 'error',
       errorMessage: String(turn.error),
     });
+  } else if (turnHasTool(turn) && Array.isArray(turn.tools)) {
+    const calls = turn.tools.map((item) => {
+      const spec = item && typeof item === 'object' ? item : { tool: item };
+      const args = spec.args && typeof spec.args === 'object' ? spec.args : {};
+      const id = spec.id ? { id: String(spec.id) } : {};
+      return fauxToolCall(String(spec.tool || spec.name || ''), args, id);
+    });
+    message = fauxAssistantMessage(calls, { stopReason: 'toolUse' });
   } else if (turn.tool) {
     const args = turn.args && typeof turn.args === 'object' ? turn.args : {};
     const id = turn.id ? { id: String(turn.id) } : {};

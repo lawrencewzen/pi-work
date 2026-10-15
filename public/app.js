@@ -23,6 +23,13 @@ import {
   filterAgents,
   captureAgentDraft,
 } from './agent-settings.js';
+import {
+  applyStreamDelta,
+  applyMessageDone,
+  dropStreamingResidues,
+  mergeRefreshedMessages,
+  statusKeepsStreaming,
+} from './stream.js';
 
 // Application State
 const state = {
@@ -901,47 +908,6 @@ export async function selectConversation(cid) {
   }
 }
 
-function applyStreamDelta(msgs, data) {
-  const incoming = data.text || '';
-  let m = msgs.find((msg) => msg.id === data.messageId);
-  if (!m) {
-    m = {
-      id: data.messageId,
-      role: data.role || 'assistant',
-      text: incoming,
-      streaming: true,
-      agentId: data.agentId,
-      roleId: data.roleId,
-      kind: data.kind,
-      fromAgent: data.fromAgent,
-      toAgent: data.toAgent,
-    };
-    msgs.push(m);
-    return m;
-  }
-  if (data.agentId) m.agentId = data.agentId;
-  if (data.roleId) m.roleId = data.roleId;
-  if (data.kind) m.kind = data.kind;
-  if (data.fromAgent) m.fromAgent = data.fromAgent;
-  if (data.toAgent) m.toAgent = data.toAgent;
-  if (m.done || m.streaming === false || m.streaming !== true) {
-    return m;
-  }
-  const cur = m.text || '';
-  if (!incoming) return m;
-  if (!cur) {
-    m.text = incoming;
-  } else if (incoming.startsWith(cur)) {
-    m.text = incoming;
-  } else if (cur === incoming || cur.endsWith(incoming) || cur.includes(incoming)) {
-    /* already have this chunk */
-  } else {
-    m.text = cur + incoming;
-  }
-  m.streaming = true;
-  return m;
-}
-
 function scheduleConversationRefresh(cid) {
   if (!cid) return;
   if (convMetaRefreshTimer) clearTimeout(convMetaRefreshTimer);
@@ -996,22 +962,9 @@ export async function refreshConversationMeta(cid) {
     if (conv.agents) state.activeConversationData.agents = conv.agents;
     if (Array.isArray(conv.messages)) {
       const local = state.activeConversationData.messages || [];
-      const streaming = new Map(local.filter((m) => m.streaming).map((m) => [m.id, m]));
-      const merged = [];
-      const seen = new Set();
-      for (const m of conv.messages) {
-        seen.add(m.id);
-        const live = streaming.get(m.id);
-        merged.push(live || m);
-      }
-      for (const m of local) {
-        if (seen.has(m.id)) continue;
-        if (m.streaming || String(m.id).startsWith('usr-')) {
-          const dup = merged.some((x) => x.role === m.role && x.kind !== 'handoff' && x.text === m.text);
-          if (!dup) merged.push(m);
-        }
-      }
-      state.activeConversationData.messages = dedupeMessages(merged);
+      state.activeConversationData.messages = mergeRefreshedMessages(local, conv.messages, {
+        keepStreaming: statusKeepsStreaming(conv.status),
+      });
     }
     renderConversations();
     renderStatusBar();
@@ -1040,6 +993,9 @@ export function connectSSE(cid) {
       }
       if (state.activeConversationData && state.activeConversationId === cid) {
         state.activeConversationData.status = data.status;
+        if (data.status === 'done' || data.status === 'failed' || data.status === 'stopped' || data.status === 'idle') {
+          dropStreamingResidues(state.activeConversationData.messages || []);
+        }
         if (data.autoContinues != null) state.activeConversationData.autoContinues = data.autoContinues;
         if (data.title) {
           state.activeConversationData.title = data.title;
@@ -1094,19 +1050,8 @@ export function connectSSE(cid) {
     try {
       const data = ev.data ? JSON.parse(ev.data) : {};
       if (state.activeConversationData && state.activeConversationId === cid) {
-        const msgs = state.activeConversationData.messages || [];
-        if (data.messageId) {
-          const m = msgs.find((msg) => msg.id === data.messageId);
-          if (m) {
-            if (data.text != null && data.text !== '') {
-              m.text = data.text;
-            }
-            if (data.agentId) m.agentId = data.agentId;
-            if (data.roleId) m.roleId = data.roleId;
-            m.streaming = false;
-            m.done = true;
-          }
-        }
+        state.activeConversationData.messages = state.activeConversationData.messages || [];
+        applyMessageDone(state.activeConversationData.messages, data);
         renderChatThread();
         scheduleConversationRefresh(cid);
       }

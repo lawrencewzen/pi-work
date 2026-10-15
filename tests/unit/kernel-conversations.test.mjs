@@ -218,8 +218,9 @@ test('harness batches map onto the contract events', () => {
     'status',
   ]);
   assert.equal(events[0].data.status, 'running');
-  assert.deepEqual(events[1].data, { messageId: 'live', text: 'he' });
+  assert.deepEqual(events[1].data, { messageId: 'live-1', text: 'he' });
   assert.equal(events[2].data.messageId, '11');
+  assert.equal(events[2].data.liveId, 'live-1');
   assert.equal(events[2].data.text, 'hello');
   assert.equal(events[3].data.usage.total, 5);
   assert.equal(events[3].data.contextLabel.includes('/'), true);
@@ -262,6 +263,42 @@ test('a late snapshot fills only transcript rows the event log does not already 
     ],
   }, existing.concat(gap.map((ev, i) => ({ id: 3 + i, ...ev }))), createMapContext());
   assert.deepEqual(again, []);
+});
+
+test('a snapshot partial replaces the open live bubble instead of appending', () => {
+  const ctx = createMapContext();
+  const gap = snapshotGap({
+    entries: [],
+    generation: { message: { content: [{ type: 'text', text: '甲、乙、丙' }] } },
+  }, [
+    { id: 1, event: 'message.delta', data: { messageId: 'live-1', text: '甲、乙' } },
+  ], ctx);
+  assert.equal(gap.length, 1);
+  assert.equal(gap[0].event, 'message.delta');
+  assert.equal(gap[0].data.replace, true);
+  assert.equal(gap[0].data.text, '甲、乙、丙');
+  assert.equal(gap[0].data.messageId, 'live-1');
+  assert.equal(ctx.liveId, 'live-1');
+  const { events } = mapHarnessBatch([
+    { type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 0, delta: '。' }] },
+  ], ctx);
+  assert.deepEqual(events[0].data, { messageId: 'live-1', text: '。' });
+});
+
+test('a finished generation does not reopen a live bubble from the snapshot', () => {
+  const ctx = createMapContext();
+  const gap = snapshotGap({
+    entries: [
+      { id: 4, kind: 'pi.assistant', model: [{ role: 'assistant', content: [{ type: 'text', text: '甲、乙、丙' }] }] },
+    ],
+    generation: { message: { content: [{ type: 'text', text: '甲、乙、丙' }] } },
+  }, [
+    { id: 1, event: 'message.delta', data: { messageId: 'live', text: '甲、乙' } },
+    { id: 2, event: 'message.delta', data: { messageId: 'live', text: '、丙' } },
+    { id: 3, event: 'message.done', data: { messageId: '4', text: '甲、乙、丙' } },
+  ], ctx);
+  assert.deepEqual(gap, []);
+  assert.equal(ctx.liveId, null);
 });
 
 test('kernel path: faux turn, then Last-Event-ID resumes without gaps or repeats', { timeout: 30000 }, async () => {

@@ -78,8 +78,15 @@ function requestSnapshot(context) {
   };
 }
 
+function fauxProviderOptions(env) {
+  const tps = Number(env?.PI_WORK_FAUX_TPS);
+  if (!Number.isFinite(tps) || tps <= 0) return undefined;
+  return { tokensPerSecond: tps };
+}
+
 function installDemo(models, env, hooks) {
-  const faux = registerFaux(models);
+  // PI_WORK_FAUX_TPS is a test switch. Unset, faux still returns as fast as it can.
+  const faux = registerFaux(models, fauxProviderOptions(env));
   const text = String(env.PI_WORK_FAUX_TEXT || '');
   const holdAll = String(env.PI_WORK_FAUX_HOLD || '').trim() === '1';
   const ready = String(env.PI_WORK_FAUX_HOLD_READY || '').trim();

@@ -83,16 +83,20 @@ status 取值：`idle | running | waiting | paused | recovering | failed | done 
 
 ## 4. SSE：`GET /api/conversations/:cid/events`
 支持 `Last-Event-ID` 断线续传（id 为会话内单调递增整数）。事件：
-`status {status}` · `message.delta {messageId, text}` · `message.done {messageId}` · `tool.start {tool}` · `tool.end {tool}` · `checkpoint {at, step}` · `retry {attempt, delayMs, reason}` · `error {code, message}` · `usage {usage, contextWindow, contextLabel}`。`usage` 仅在模型响应带了 token 计数时发送；最新一次调用覆盖上一次，不把多轮相加。
+`status {status}` · `message.delta {messageId, text, replace?}` · `message.done {messageId, text?, role?, liveId?}` · `tool.start {tool}` · `tool.end {tool}` · `checkpoint {at, step}` · `retry {attempt, delayMs, reason}` · `error {code, message}` · `usage {usage, contextWindow, contextLabel}`。`usage` 仅在模型响应带了 token 计数时发送；最新一次调用覆盖上一次，不把多轮相加。
+
+`message.delta` 的 `text` 在没有 `replace` 时是增量片段，接收方直接拼到当前气泡后面，不能因为这段文字以前出现过就丢掉。同一次生成的增量共用一个 `messageId`（`live-1`、`live-2`……；更早的事件也可能仍是 `live`）。它不是 transcript 里的正式 id。`replace: true` 表示 `text` 是到目前为止的完整 partial，用来替换气泡正文（断线后补发），不是再拼一段。同一时刻最多一个流式气泡。
+
+`message.done` 的 `messageId` 是 transcript 条目 id。这次生成如果发过 delta，`liveId` 与那些 delta 的 `messageId` 相同；接收方用它结束流式气泡，并换成这条正式消息。done 之后不再保留临时气泡，刷新页面也不会把它留在末尾。用户消息带 `role:'user'`，不关闭助手的流式气泡。
 
 ## 5. 持久性/恢复语义
 - 每个工具调用完成后写检查点；工具调用有稳定 `toolCallId`，恢复时已完成的调用**不得重放**（写文件幂等：同 toolCallId 不重复执行）。
 - 进程重启：有 harness id、status 为 running/recovering 的会话由 Harness `resume()` 接着跑，先可表现为 `recovering`，完成后 `done`。没有 harness id 的旧对话不参与恢复，读取时状态为 `archived`。`write` / `edit` / `bash` 中断后不重放。
-- 工具结果会随下一轮请求发回模型。输出为空时用 `(no output)`，避免模型以为调用没有发生。同一工具、同一组参数连续达到 `PI_WORK_TOOL_LOOP` 后注入一条可见的「停止调用工具」说明并再请求一次；若仍立刻重复，或本步工具次数达到 `PI_WORK_MAX_TOOL_CALLS`，写入可见说明并结束该步（流水线进入下一步）。对同一路径的查看（`read` 同一文件，`ls` / `grep` 同一路径，bash 的 `ls` / `grep` / `cat` 等打到同一路径，参数可以不同）达到 `PI_WORK_EXPLORE_REPEAT` 后注入「不要再重复查看」；再重复则结束该步。本步工具已有 `PI_WORK_TOOL_NUDGE` 次且还没有助手文字时，注入一次「请根据已有结果直接回答」，模型仍可继续，直到上限或重复查看把该步结束。这些结束都让整条运行走到 `done`。
+- 工具结果会随下一轮请求发回模型。输出为空时用 `(no output)`，避免模型以为调用没有发生。同一工具、同一组参数连续达到 `PI_WORK_TOOL_LOOP` 后注入一条可见的「停止调用工具」说明并再请求一次；若仍立刻重复，或本步工具次数达到 `PI_WORK_MAX_TOOL_CALLS`，写入可见说明并结束该步（流水线进入下一步）。对同一路径的查看（`read` 同一文件，`ls` / `grep` 同一路径，bash 的 `ls` / `grep` / `cat` 等打到同一路径，参数可以不同）达到 `PI_WORK_EXPLORE_REPEAT` 后注入「不要再重复查看」；再重复则结束该步。本步工具已有 `PI_WORK_TOOL_NUDGE` 次且还没有助手文字时，注入一次「请根据已有结果直接回答」，模型仍可继续，直到上限或重复查看把该步结束。同一条助手消息里多个并行调用一起被拦住时，模型仍会收到每一次被拦的说明；界面和 `GET` messages 只显示其中第一条相同文本的纠正。记录里已经存在的重复纠正也同样只显示一条。这些结束都让整条运行走到 `done`。
 - 写文件已经成功之后，模型连接被掐断（响应体 `terminated`、`E_STREAM_CUT`、`E_EMPTY_OUTPUT`）会先重试；重试仍失败则结束该步并说明「已按完成的工具结果结束本步」，状态是 `done`，不是 `failed` / `E_LLM`。没有成功工具调用时，这类错误仍然 `failed`。`E_NO_MODEL` 不重试，也不改成完成。
 
 ## 6. faux 模型脚本
-JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"cut":true} | {"delayMs":N} ]}`，依次产出。`{"cut":true}` 第一次执行时抛 `E_STREAM_CUT`，重试时跳过。可选 `"perConversation": true` 时每个会话独立游标。回合上的 `usage` 仅在带有数字 token 字段时进入会话用量（例如 `{"text":"ok","usage":{"total_tokens":16400}}`）；没有 `usage` 时作曲栏保持 `—`。
+JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"tools":[{"tool":"read","args":{...}}]} | {"cut":true} | {"delayMs":N} ]}`，依次产出。`tools` 把多个调用放在同一条助手消息里。`{"cut":true}` 第一次执行时抛 `E_STREAM_CUT`，重试时跳过。可选 `"perConversation": true` 时每个会话独立游标。回合上的 `usage` 仅在带有数字 token 字段时进入会话用量（例如 `{"text":"ok","usage":{"total_tokens":16400}}`）；没有 `usage` 时作曲栏保持 `—`。
 
 ## 7. data-testid 约定（E2E）
 | testid | 元素 |
