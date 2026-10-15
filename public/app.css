@@ -2311,6 +2311,8 @@ button.file-tree-row:hover,
   border: 1px solid var(--diff-del-num);
   border-radius: var(--radius-md);
   padding: 8px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .modal-inline-error.is-visible {
   display: block;

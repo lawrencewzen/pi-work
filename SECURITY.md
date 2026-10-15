@@ -61,7 +61,7 @@ Before `tool.start` / execute, the tool name must be in the default registry (`r
 
 ### Git import (finding 6)
 
-Only `https:`, `ssh:`, and `git@host:path`. `file:`, `ext:`, `ftp:`, etc. are rejected. Host or path components starting with `-` are rejected. Clone uses `execFile` with `--`, `-c protocol.file.allow=never`, `-c protocol.ext.allow=never`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=echo`. Stored `gitUrl` has `user:pass@` stripped. Clients get `git clone failed`, not raw git stderr.
+Clone URLs may be `https:`, `ssh:`, `git@host:path`, and `http:` only when the hostname is listed in `PI_WORK_GIT_HTTP_HOSTS`. `file:`, `ext:`, `ftp:`, and other schemes are rejected. Host or path components starting with `-` are rejected. Clone uses `execFile` (no shell) with `--`, `-c protocol.file.allow=never`, and `-c protocol.ext.allow=never`. The child environment is the server process environment so Git for Windows can find `git.exe`, Git Credential Manager, and SSH keys. `GIT_CONFIG_NOSYSTEM` is not set. `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never` disable prompts; `GIT_ASKPASS` and `GIT_SSH_COMMAND` are not set. `PI_WORK_GIT_BIN` overrides the git executable. `PI_WORK_GIT_CA_FILE` adds `-c http.sslCAInfo`. Stored `gitUrl` has `user:pass@` stripped, and a successful clone runs `git remote set-url origin` so `.git/config` does not keep the token. Failures return `{error:'git clone failed', code}`. Only `code:'unknown'` may include a redacted stderr tail.
 
 ### write/edit recovery (finding 7)
 

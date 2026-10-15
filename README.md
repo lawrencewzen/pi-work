@@ -24,6 +24,16 @@
 - 任意 OpenAI 兼容模型接口（xAI、DeepSeek、内网）
 - Windows 内网可直接 `node server.mjs` 运行，无需 Docker
 
+## Windows 下导入 GitLab 仓库
+
+新建工作区 → Git 导入。pi-work 调用这台机器上的 git，并沿用系统级和用户级配置。只要本机 git 能拉这个仓库（Git Credential Manager 里已经有凭证，或已经配好 SSH 密钥），就可以直接导入。
+
+- 安装 Git for Windows，或把 `PI_WORK_GIT_BIN` 设为 `git.exe` 的完整路径。找不到 git 时，导入对话框会提示安装或设置该变量。
+- 导入过程不会弹出登录窗口。请先在终端用 git 克隆一次，让 Git Credential Manager 记住口令；或配置 SSH 密钥。
+- 内网 `http://` 默认拒绝。把主机名写入 `PI_WORK_GIT_HTTP_HOSTS`（逗号分隔，不含端口）后才放行，例如 `PI_WORK_GIT_HTTP_HOSTS=gitlab.corp.local`。
+- 自签证书把 CA 文件路径设到 `PI_WORK_GIT_CA_FILE`。
+- 地址里的 `user:token@` 不会写入工作区记录。克隆成功后，`.git/config` 里的 origin 也会改成去掉凭证的地址。
+
 ## 插件
 
 设置 → 插件 → 导入插件，填写运行 pi-work 的机器上的目录。相对路径先按启动时的工作目录解析，找不到再按安装目录（`server.mjs` 所在目录）解析。只填名称不会安装。

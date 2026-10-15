@@ -676,7 +676,10 @@ async function routeApi(req, res, url) {
       try {
         await cloneGitRepo({ url: body.gitUrl, branch: body.branch, dest });
       } catch (err) {
-        sendJson(res, err.status || 400, { error: err.message || 'git clone failed' });
+        const failure = { error: err.message || 'git clone failed' };
+        if (err.gitCode) failure.code = err.gitCode;
+        if (err.gitCode === 'unknown' && err.detail) failure.detail = err.detail;
+        sendJson(res, err.status || 400, failure);
         return;
       }
       const gitUrl = stripGitUrlCredentials(body.gitUrl);

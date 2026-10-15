@@ -3165,13 +3165,34 @@ export function closeModal() {
 
 function isSupportedGitUrl(url) {
   const s = String(url || '').trim();
-  if (/^https:\/\//i.test(s)) return true;
+  if (/^https?:\/\//i.test(s)) return true;
   if (/^ssh:\/\//i.test(s)) return true;
   if (/^git@[^\s:]+:\S+$/.test(s)) return true;
   return false;
 }
 
+const GIT_IMPORT_CODE_KEYS = {
+  git_not_found: 'ws_err_git_not_found',
+  auth_failed: 'ws_err_git_auth',
+  cert_failed: 'ws_err_git_cert',
+  repo_not_found: 'ws_err_git_repo',
+  branch_not_found: 'ws_err_git_branch',
+  network: 'ws_err_git_network',
+  timeout: 'ws_err_git_timeout',
+  unknown: 'ws_err_git_unknown',
+};
+
 function friendlyWorkspaceError(err) {
+  const code = err?.body?.code;
+  const key = GIT_IMPORT_CODE_KEYS[code];
+  if (key) {
+    const text = t(key);
+    if (code === 'unknown') {
+      const detail = String(err?.body?.detail || '').trim();
+      return detail ? `${text}\n${detail}` : text;
+    }
+    return text;
+  }
   const raw = String(err?.message || '');
   if (/invalid gitUrl/i.test(raw)) return t('ws_err_git_url');
   if (/invalid branch/i.test(raw)) return t('ws_err_branch');
