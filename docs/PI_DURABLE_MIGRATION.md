@@ -271,7 +271,7 @@ Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
 6. **旧对话**：只读归档，不导入。可查看消息和 Diff，不能再发消息，提供「用这段历史开新对话」（只复制可见文本）。设置、工作区、角色、流水线全部保留。
 7. **Grok**：用本文的自定义 provider，不改 `xaiProvider`，不加依赖。
 8. **Windows shell**：工具批次里把 bash 改成不依赖 `/bin/sh` 的实现，`windows-latest` 跑冒烟。
-9. **子 Agent 并发上限**：沿用原型（在创建那次 commit 里数花名册中未停止的子 Agent），默认上限 4，可配置；子 Agent 被停止后释放名额。
+9. **子 Agent 并发上限**：沿用原型（在创建那次 commit 里数花名册中未停止的子 Agent），默认不限，`PI_WORK_MAX_SUBAGENTS` 可选限制；子 Agent 被停止后释放名额。
 10. **流水线**：同一对话内按步 `configure` + `submit` 交接，不拆成子 Agent。
 11. **子 Agent 事件**：不混进父对话 SSE，父对话只看到工具结果；界面需要查看子 Agent 时单独挂 watch。
 12. **Node 版本**：切换默认内核的那一批把 `engines` 抬到 `>=22.19`。

@@ -94,12 +94,15 @@ const Reporter = defineTask({
   ),
 });
 
-/** Default 4. A positive integer in PI_WORK_MAX_SUBAGENTS overrides it. Anything else stays at 4. */
+/**
+ * No cap unless PI_WORK_MAX_SUBAGENTS is a positive integer.
+ * Missing or invalid values are unlimited (Infinity).
+ */
 export function maxSubagents(env = process.env) {
   const raw = String(env?.PI_WORK_MAX_SUBAGENTS ?? '').trim();
-  if (!raw) return 4;
+  if (!raw) return Infinity;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1) return 4;
+  if (!Number.isInteger(value) || value < 1) return Infinity;
   return value;
 }
 
@@ -162,6 +165,7 @@ function rosterLines(roles) {
  * removed, so it cannot delegate or spawn. `prepareChild` supplies the role's
  * model, tool whitelist, and prompt. `maxConcurrent` is read inside the creating
  * commit, counting roster entries that are not stopped and not finished.
+ * A non-finite value (the default) does not refuse a spawn.
  */
 export function createSubagentExtension({
   listRoles,
@@ -195,7 +199,7 @@ export function createSubagentExtension({
         if (existing) return { id: existing.id };
         const limit = maxConcurrent();
         const live = Object.values(state.agents).filter(occupies).length;
-        if (live >= limit) return { refused: limit };
+        if (Number.isFinite(limit) && live >= limit) return { refused: limit };
         const child = await tx.createConversation({ ownership: { kind: 'task', taskId: api.taskId } });
         await configure(tx, child.id, {
           ...prepared.change,
@@ -314,7 +318,7 @@ export function createSubagentExtension({
           if (Object.hasOwn(state.agents, name)) return { error: `${name} already exists; use send.` };
           const limit = maxConcurrent();
           const live = Object.values(state.agents).filter(occupies).length;
-          if (live >= limit) return { error: `limit ${limit}` };
+          if (Number.isFinite(limit) && live >= limit) return { error: `limit ${limit}` };
           const background = { ownership: { kind: 'conversation' }, background: true };
           const anchor = await tx.createTask(Anchor, null, background);
           const child = await tx.createConversation({ ownership: { kind: 'task', taskId: anchor } });

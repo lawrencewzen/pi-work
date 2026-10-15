@@ -39,11 +39,11 @@ const SCOUT = {
   skills: ['commit-message'],
 };
 
-test('max subagents defaults to 4 and accepts a positive integer', () => {
-  assert.equal(maxSubagents({}), 4);
+test('max subagents is unlimited unless PI_WORK_MAX_SUBAGENTS is a positive integer', () => {
+  assert.equal(maxSubagents({}), Infinity);
   assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: '1' }), 1);
-  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: '0' }), 4);
-  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: 'nope' }), 4);
+  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: '0' }), Infinity);
+  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: 'nope' }), Infinity);
 });
 
 function childEnv(dataDir, extra = {}) {
@@ -548,6 +548,46 @@ test('a second background spawn is refused when the cap is 1', { timeout: 60000 
     assert.equal(tools.includes('Started b.'), false, tools);
     assert.equal(subagentsOf(done).some((agent) => agent.name === 'b'), false);
     console.log(`KERNEL_SUBAGENTS_LIMIT ${JSON.stringify(toolTexts(done))}`);
+  } finally {
+    if (proc) await stopProcess(proc);
+    await fake.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('five background spawns all succeed when no cap is set', { timeout: 60000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-nocap-'));
+  const names = ['a', 'b', 'c', 'd', 'e'];
+  const script = await writeScript(dataDir, 'parent.json', [
+    ...names.map((name) => ({
+      tool: 'subagent',
+      args: { action: 'spawn', name, agent: 'scout', message: `ping-${name}` },
+    })),
+    { text: 'five-started' },
+  ]);
+  const fake = await startScoutModel({ text: 'SCOUT_PONG' });
+  let proc = null;
+  try {
+    const srv = await startServer({
+      PI_WORK_KERNEL: 'durable',
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_SCRIPT: script,
+    }, { dataDir });
+    proc = srv.proc;
+    await bindScout(srv.base, fake);
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'nocap' });
+    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'nocap' });
+    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'five spawns' })).status, 202);
+    const done = await waitFor(srv.base, conv.body.id, (body) => {
+      const tools = toolTexts(body).join('\n');
+      return names.every((name) => tools.includes(`Started ${name}.`))
+        && assistantTexts(body).includes('five-started');
+    }, 120);
+    const tools = toolTexts(done).join('\n');
+    for (const name of names) assert.match(tools, new RegExp(`Started ${name}\\.`));
+    assert.equal(tools.includes('limit'), false, tools);
+    assert.deepEqual(subagentsOf(done).map((agent) => agent.name).sort(), names);
+    console.log(`KERNEL_SUBAGENTS_NO_CAP ${JSON.stringify(toolTexts(done))}`);
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
