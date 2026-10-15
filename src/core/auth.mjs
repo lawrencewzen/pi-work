@@ -1,6 +1,4 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 
 export const COOKIE_NAME = 'pi_work_token';
 
@@ -20,23 +18,19 @@ export function tokensMatch(given, expected) {
   return a.length === b.length && b.length > 0 && timingSafeEqual(a, b);
 }
 
-export async function loadOrCreateToken(dataDir) {
-  const env = String(process.env.PI_WORK_TOKEN || '').trim();
-  if (env) return { token: env, generated: false, source: 'env' };
-  const tokenPath = path.join(dataDir, 'auth.token');
-  try {
-    const fromFile = (await fs.readFile(tokenPath, 'utf8')).trim();
-    if (fromFile) {
-      try { await fs.chmod(tokenPath, 0o600); } catch { /* ignore */ }
-      return { token: fromFile, generated: false, source: 'file' };
-    }
-  } catch (err) {
-    if (err?.code !== 'ENOENT') throw err;
-  }
-  const token = randomBytes(32).toString('hex');
-  await fs.writeFile(tokenPath, `${token}\n`, { encoding: 'utf8', mode: 0o600 });
-  try { await fs.chmod(tokenPath, 0o600); } catch { /* ignore */ }
-  return { token, generated: true, source: 'generated' };
+/** Optional local login. A non-empty PI_WORK_TOKEN enables it. Otherwise auth is off and auth.token is neither read nor written. */
+export function resolveAuthToken(env = process.env) {
+  const token = String(env.PI_WORK_TOKEN || '').trim();
+  if (!token) return { token: '', enabled: false };
+  return { token, enabled: true };
+}
+
+/** Startup warning when extra hosts are allowed and login is not required. */
+export function unauthenticatedHostsWarning(env = process.env) {
+  if (resolveAuthToken(env).enabled) return '';
+  const allowed = String(env.PI_WORK_ALLOWED_HOSTS || '').trim();
+  if (!allowed) return '';
+  return `PI_WORK_WARN 服务对这些主机开放且没有鉴权: ${allowed}`;
 }
 
 export function cookieToken(req) {

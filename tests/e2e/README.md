@@ -16,6 +16,7 @@
 
 | 文件 | 功能 |
 |---|---|
+| [open.md](open.md) | 不带登录链接直接打开工作台 |
 | [workspaces.md](workspaces.md) | 工作区、本地目录、Git 导入 |
 | [chat.md](chat.md) | 左右气泡、Markdown |
 | [context-chip.md](context-chip.md) | 上下文用量：无用量为 —，模型返回后显示已用 / 窗口 |

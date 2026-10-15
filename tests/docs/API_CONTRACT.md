@@ -17,10 +17,11 @@
 | `PI_WORK_TOOL_LOOP` | 同一工具、同一组参数连续执行多少次后注入「停止调用工具」说明，默认 3。注入后若仍立刻重复，结束该步 | 不设 |
 | `PI_WORK_TOOL_NUDGE` | 本步已执行这么多次工具、且还没有助手文字时，注入「请根据已有结果直接回答」，默认 8。只提醒一次，不立刻结束 | 不设 |
 | `PI_WORK_EXPLORE_REPEAT` | 对同一文件 `read`、或对同一路径 `ls` / `grep`（以及 bash 里列出、搜索、读同一路径），忽略其余参数，执行超过这么多次就注入「不要再重复查看」，默认 2。再重复则结束该步 | 不设 |
-| `PI_WORK_TOKEN` | 可选 Bearer 鉴权；设置后所有 /api 需 `Authorization: Bearer` | 不设 |
+| `PI_WORK_TOKEN` | 可选登录。不设时 `/api` 与 SSE 不鉴权，不读不写 `auth.token`，`GET /login` 一律 302 `/`，启动不打印 `PI_WORK_LOGIN` / `PI_WORK_TOKEN`。设置后所有 `/api` 需 `Authorization: Bearer` 或 cookie `pi_work_token`；SSE 可用一次性 `?ticket=`；`GET /login?token=` 校验后种 cookie 并 302 `/`，否则 401 | 不设 |
+| `PI_WORK_ALLOWED_HOSTS` | 逗号分隔的额外 Host。不设 `PI_WORK_TOKEN` 且本变量非空时，启动打印一行警告：服务对这些主机开放且没有鉴权 | 不设 |
 | `PI_WORK_KERNEL` | 已废弃，启动不再读取。运行时始终是 Pi Durable Harness | 不设 |
 | `PI_WORK_MAX_SUBAGENTS` | 子 Agent 并发上限。正整数时按它限制；缺省或非法值默认不限。数的是花名册里未停止、未结束的子 Agent（含已经空闲的后台子 Agent）。被停止后释放名额 | 不设 |
-启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。`GET /api/health` → `{ok:true}`。
+启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。未设置 `PI_WORK_TOKEN` 时不再打印 `PI_WORK_LOGIN` 或 `PI_WORK_TOKEN`。`GET /api/health` → `{ok:true}`。服务只监听 `127.0.0.1`。`Host` 不在白名单为 400；写请求带非同源 `Origin` 为 403；写请求的 `Content-Type` 不是 `application/json` 为 415。这三项与是否设置 `PI_WORK_TOKEN` 无关。
 
 未设置 `PI_WORK_LLM=faux`、`LLM_API=faux`、`PI_WORK_FAUX_SCRIPT` 时，没有已登录的 Grok 来源，也没有可用的 API 来源，就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。模型来源与按角色绑定见 §8。
 

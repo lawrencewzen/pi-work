@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { startServer, authToken, api } from './helpers/server.mjs';
+import { startServer, api } from './helpers/server.mjs';
 import { login } from './helpers/ui.mjs';
 
 let srv;
@@ -7,7 +7,7 @@ let token;
 
 test.beforeEach(async () => {
   srv = await startServer({ script: 'basic.json' });
-  token = await authToken(srv.dataDir);
+  token = '';
 });
 
 test.afterEach(async () => {

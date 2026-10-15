@@ -1,16 +1,15 @@
 import { expect } from '@playwright/test';
-import { authToken } from './server.mjs';
 
+/** Open the workbench. Pass token only when the server was started with PI_WORK_TOKEN. */
 export async function login(page, url, token) {
-  await page.goto(`${url}/login?token=${encodeURIComponent(token)}`);
+  const target = token ? `${url}/login?token=${encodeURIComponent(token)}` : `${url}/`;
+  await page.goto(target);
   await expect(page.getByTestId('composer-agent')).toBeVisible();
 }
 
-/** Log in with the server's auth.token (or an explicit token) and wait for the app shell. */
+/** Open the homepage directly. Does not read auth.token. */
 export async function openApp(page, srv, token) {
-  const resolved = token || await authToken(srv.dataDir);
-  await login(page, srv.url, resolved);
-  return resolved;
+  await login(page, srv.url, token);
 }
 
 /** Start a draft on the active workspace. The conversation row is created on the first send. */

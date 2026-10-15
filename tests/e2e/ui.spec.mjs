@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { startServer, prepareWorkspaces, api, authToken } from './helpers/server.mjs';
+import { startServer, prepareWorkspaces, api } from './helpers/server.mjs';
 import { createWorkspace, newConversation, send, statusText, openApp } from './helpers/ui.mjs';
 
 let srv, ws;
@@ -83,10 +83,9 @@ test('refresh keeps workspace, conversation, messages and status', async ({ page
 });
 
 test('sandbox: file API rejects escape', async () => {
-  const token = await authToken(srv.dataDir);
-  const w = await api(srv.url, 'POST', '/workspaces', { name: 'sb', path: ws }, token);
+  const w = await api(srv.url, 'POST', '/workspaces', { name: 'sb', path: ws });
   expect(w.status).toBe(201);
-  const r = await api(srv.url, 'GET', `/workspaces/${w.body.id}/files?path=${encodeURIComponent('../../etc/passwd')}`, null, token);
+  const r = await api(srv.url, 'GET', `/workspaces/${w.body.id}/files?path=${encodeURIComponent('../../etc/passwd')}`);
   expect(r.status).toBe(403);
   expect(r.body.error).toBe('E_SANDBOX');
 });
