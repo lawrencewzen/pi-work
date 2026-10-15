@@ -1,4 +1,13 @@
 import { t, tPlural, getLocale, setLocale, applyI18n, translations } from './i18n.js';
+import {
+  clipOutputText,
+  summarizeToolGroup,
+  toolDiffCounts,
+  toolFocus,
+  toolGroupKey,
+  toolKind,
+  toolStatusBucket,
+} from './tool-groups.js';
 import { composerContextText } from './usage.js';
 import { composerAgentPresentation, resolveDispatchModel } from './agent-chip.js';
 import {
@@ -66,6 +75,8 @@ const state = {
   workflowEditor: null,
   workflowQuery: '',
   expandedTools: new Set(),
+  expandedToolGroups: new Set(),
+  expandedToolOutputs: new Set(),
   expandedSubagents: new Set(),
   viewingAgentId: null,
   viewingAgent: null,
@@ -2043,12 +2054,7 @@ export function renderSubagentCardHtml(sa) {
         <div style="margin-top:6px;">
           <strong style="font-size:11px;color:var(--text-muted);">${escapeHtml(t('tool_output'))}:</strong>
           <div class="tools-feed" style="margin-top:4px;">
-            ${sa.toolCalls.map((tc) => {
-              if (typeof tc === 'object' && tc !== null) {
-                return renderToolRowHtml(tc);
-              }
-              return `<div style="font-size:11.5px;font-family:var(--font-mono);">${escapeHtml(String(tc))}</div>`;
-            }).join('')}
+            ${renderToolCallListHtml(sa.toolCalls)}
           </div>
         </div>
       `;
@@ -2133,6 +2139,12 @@ export function renderChatThread() {
 
   const rendered = [];
   const msgs = dedupeMessages(viewing ? (state.viewingAgent?.messages || []) : conv.messages);
+  const toolRun = [];
+  const flushToolRun = () => {
+    if (!toolRun.length) return;
+    rendered.push(renderToolGroupHtml(toolRun));
+    toolRun.length = 0;
+  };
   if (viewing && msgs.length === 0) {
     thread.innerHTML = `<div class="empty-placeholder" data-testid="subagent-thread"><p style="font-size:12px;color:var(--text-muted);">${escapeHtml(t('subagent_empty'))}</p></div>`;
     return;
@@ -2145,6 +2157,12 @@ export function renderChatThread() {
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
+    if (m.role === 'tool') {
+      if (m.tool) toolRun.push(m.tool);
+      else flushToolRun();
+      continue;
+    }
+    flushToolRun();
     if (m.kind === 'correction') {
       rendered.push(
         `<div class="handoff-note msg-side-agent" data-testid="message" data-role="system" data-kind="correction">` +
@@ -2179,8 +2197,6 @@ export function renderChatThread() {
           rendered.push(renderSubagentCardHtml(sa));
         }
       }
-    } else if (m.role === 'tool') {
-      rendered.push(renderToolRowHtml(m.tool));
     } else {
       const bodyHtml = renderMarkdown(m.text || '');
       const sender = assistantLabel(m);
@@ -2198,6 +2214,7 @@ export function renderChatThread() {
     }
   }
 
+  flushToolRun();
   if (!subagentsInserted && subagents.length > 0) {
     for (const sa of subagents) {
       rendered.push(renderSubagentCardHtml(sa));
@@ -2228,40 +2245,152 @@ function llmErrorHtml(conv) {
   );
 }
 
+function renderToolCallListHtml(calls) {
+  if (!Array.isArray(calls) || calls.length === 0) return '';
+  const parts = [];
+  let rows = [];
+  const flush = () => {
+    if (!rows.length) return;
+    parts.push(
+      `<div class="tool-group is-open"><div class="tool-group-list">` +
+      rows.map((tool) => renderToolRowHtml(tool)).join('') +
+      `</div></div>`
+    );
+    rows = [];
+  };
+  for (const tc of calls) {
+    if (tc && typeof tc === 'object') {
+      rows.push(tc);
+      continue;
+    }
+    flush();
+    parts.push(`<div style="font-size:11.5px;font-family:var(--font-mono);">${escapeHtml(String(tc))}</div>`);
+  }
+  flush();
+  return parts.join('');
+}
+
+export function renderToolGroupHtml(tools, idPrefix = '') {
+  const list = (tools || []).filter(Boolean);
+  if (!list.length) return '';
+  const id = `${idPrefix}${toolGroupKey(list)}`;
+  const open = state.expandedToolGroups.has(id);
+  const summary = summarizeToolGroup(list, t);
+  const fail = summary.failed > 0
+    ? `<span class="tool-group-fail" data-testid="tool-group-fail">${escapeHtml(t('tool_fail_count', { n: summary.failed }))}</span>`
+    : '';
+  const spin = summary.running
+    ? `<span class="tool-group-spin" data-testid="tool-group-spinner" aria-hidden="true"></span>`
+    : '';
+  return (
+    `<div class="tool-group${open ? ' is-open' : ''}${summary.running ? ' is-running' : ''}" data-testid="tool-group" data-group-id="${escapeHtml(id)}">` +
+    `<button type="button" class="tool-group-summary" data-testid="tool-group-summary" data-action="toggle-tool-group" data-group-id="${escapeHtml(id)}" aria-expanded="${open ? 'true' : 'false'}">` +
+    spin +
+    `<span class="tool-group-text" data-testid="tool-group-text">${escapeHtml(summary.text)}</span>` +
+    fail +
+    `<svg class="tool-group-chevron icon" data-testid="tool-group-chevron" viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>` +
+    `</button>` +
+    `<div class="tool-group-list" data-testid="tool-group-list">` +
+    list.map((tool) => renderToolRowHtml(tool)).join('') +
+    `</div>` +
+    `</div>`
+  );
+}
+
+function toolIconSvg(name) {
+  const kind = toolKind(name);
+  const open = `<svg class="tool-kind-icon icon" viewBox="0 0 24 24" aria-hidden="true">`;
+  const close = `</svg>`;
+  if (kind === 'read') {
+    return `${open}<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline>${close}`;
+  }
+  if (kind === 'write') {
+    return `${open}<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line>${close}`;
+  }
+  if (kind === 'edit') {
+    return `${open}<path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>${close}`;
+  }
+  if (kind === 'ls') {
+    return `${open}<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>${close}`;
+  }
+  if (kind === 'grep') {
+    return `${open}<circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path>${close}`;
+  }
+  if (kind === 'bash') {
+    return `${open}<polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line>${close}`;
+  }
+  return `${open}<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>${close}`;
+}
+
+function toolActionLabel(name) {
+  const kind = toolKind(name);
+  if (kind === 'other') return name || 'tool';
+  return t(`tool_act_${kind}`);
+}
+
+function toolRowDisplay(tool) {
+  const focus = toolFocus(tool);
+  if (focus.mode === 'text') return truncateCommand(focus.text);
+  const raw = tool?.path || tool?.input?.path || focus.text || '';
+  return truncatePath(raw);
+}
+
+function truncateCommand(text, max = 64) {
+  const s = String(text || '');
+  if (s.length <= max) return s;
+  return `${s.slice(0, Math.max(1, max - 1))}…`;
+}
+
+function toolOutputSource(output) {
+  if (output == null || output === '') return '';
+  if (typeof output === 'string') return output;
+  return JSON.stringify(output, null, 2);
+}
+
 export function renderToolRowHtml(tool) {
   if (!tool) return '';
   const toolName = tool.name || 'tool';
   const rawPath = tool.path || tool.input?.path || '';
-  const displayPath = truncatePath(rawPath);
-  const added = tool.added != null ? `+${tool.added}` : '';
-  const removed = tool.removed != null ? `−${tool.removed}` : '';
+  const display = toolRowDisplay(tool);
+  const diff = toolDiffCounts(tool);
+  const showDiff = (toolName === 'write' || toolName === 'edit') && (diff.added != null || diff.removed != null);
+  const added = diff.added != null ? `+${diff.added}` : '';
+  const removed = diff.removed != null ? `−${diff.removed}` : '';
   const isExpanded = state.expandedTools.has(tool.id);
-
-  let prefixIcon = '✎';
-  if (toolName === 'read') prefixIcon = '📖';
-  else if (toolName === 'bash') prefixIcon = '$';
-  else if (toolName === 'ls' || toolName === 'grep') prefixIcon = '🔍';
-
+  const bucket = toolStatusBucket(tool.status);
   const diffBadge =
-    added || removed
-      ? `<span class="tool-diff-badge"><span class="add" data-testid="tool-row-added">${escapeHtml(added)}</span> <span class="del" data-testid="tool-row-removed">${escapeHtml(removed)}</span></span>`
-      : `<span class="tool-diff-badge"><span class="add" data-testid="tool-row-added"></span> <span class="del" data-testid="tool-row-removed"></span></span>`;
+    `<span class="tool-diff-badge${showDiff ? '' : ' is-hidden'}">` +
+    `<span class="add" data-testid="tool-row-added">${escapeHtml(added)}</span>` +
+    `<span class="del" data-testid="tool-row-removed">${escapeHtml(removed)}</span>` +
+    `</span>`;
+  const statusHtml = bucket === 'failed' || bucket === 'interrupted'
+    ? `<span class="tool-row-status is-${bucket}" data-testid="tool-row-status">${escapeHtml(localizeToolStatus(tool.status))}</span>`
+    : '';
   const preview = pluginResultPreview(tool);
+  const outputText = toolOutputSource(tool.output);
+  const clipped = clipOutputText(outputText, state.expandedToolOutputs.has(tool.id));
+  const inputText = tool.input ? JSON.stringify(tool.input, null, 2) : '';
 
   return (
     `<div class="tool-row-wrapper">` +
-    `<div class="tool-row" data-testid="tool-row" data-tool="${escapeHtml(toolName)}" data-path="${escapeHtml(rawPath)}" data-action="toggle-tool" data-tool-id="${escapeHtml(tool.id)}">` +
+    `<div class="tool-row${bucket === 'interrupted' ? ' tool-interrupted' : ''}" data-testid="tool-row" data-tool="${escapeHtml(toolName)}" data-path="${escapeHtml(rawPath)}" data-action="toggle-tool" data-tool-id="${escapeHtml(tool.id)}">` +
     `<div class="tool-main">` +
-    `<span class="tool-prefix">${prefixIcon} ${escapeHtml(toolName)}</span>` +
-    `<span class="tool-path" data-testid="tool-row-path">${escapeHtml(displayPath)}</span>` +
+    toolIconSvg(toolName) +
+    `<span class="tool-action">${escapeHtml(toolActionLabel(toolName))}</span>` +
+    `<span class="tool-path" data-testid="tool-row-path">${escapeHtml(display)}</span>` +
     (preview ? `<span class="tool-result" data-testid="tool-row-output">${escapeHtml(preview)}</span>` : '') +
     diffBadge +
     `</div>` +
-    `<div class="tool-meta"><span>${escapeHtml(localizeToolStatus(tool.status))}</span></div>` +
+    `<div class="tool-meta">${statusHtml}</div>` +
     `<div class="tool-detail-card" data-testid="tool-row-detail" style="display:${isExpanded ? 'block' : 'none'}">` +
-    `<div><strong>${escapeHtml(t('tool_path_label'))}:</strong> ${escapeHtml(rawPath)}</div>` +
-    (tool.input ? `<div style="margin-top:4px;"><strong>${escapeHtml(t('tool_input'))}:</strong>\n${escapeHtml(JSON.stringify(tool.input, null, 2))}</div>` : '') +
-    (tool.output ? `<div style="margin-top:4px;"><strong>${escapeHtml(t('tool_output'))}:</strong>\n${escapeHtml(typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2))}</div>` : '') +
+    `<div class="tool-detail-block">` +
+    (rawPath ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_path_label'))}</span> ${escapeHtml(rawPath)}</div>` : '') +
+    (inputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_input'))}</span>\n${escapeHtml(inputText)}</div>` : '') +
+    (outputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_output'))}</span>\n${escapeHtml(clipped.text)}</div>` : '') +
+    `</div>` +
+    (clipped.clipped
+      ? `<button type="button" class="tool-detail-more" data-testid="tool-output-more" data-action="expand-tool-output" data-tool-id="${escapeHtml(tool.id)}">${escapeHtml(t('tool_show_all'))}</button>`
+      : '') +
     `</div>` +
     `</div>` +
     `</div>`
@@ -2390,8 +2519,22 @@ function showModalError(id, message) {
 }
 
 export function toggleToolDetail(id) {
+  if (!id) return;
   if (state.expandedTools.has(id)) state.expandedTools.delete(id);
   else state.expandedTools.add(id);
+  renderChatThread();
+}
+
+export function toggleToolGroup(id) {
+  if (!id) return;
+  if (state.expandedToolGroups.has(id)) state.expandedToolGroups.delete(id);
+  else state.expandedToolGroups.add(id);
+  renderChatThread();
+}
+
+export function expandToolOutput(id) {
+  if (!id) return;
+  state.expandedToolOutputs.add(id);
   renderChatThread();
 }
 
@@ -3607,6 +3750,12 @@ document.addEventListener('click', (e) => {
       break;
     case 'switch-ws-conv':
       switchWorkspaceAndConv(actionEl.getAttribute('data-ws-id'), actionEl.getAttribute('data-conv-id'));
+      break;
+    case 'toggle-tool-group':
+      toggleToolGroup(actionEl.getAttribute('data-group-id'));
+      break;
+    case 'expand-tool-output':
+      expandToolOutput(actionEl.getAttribute('data-tool-id'));
       break;
     case 'toggle-tool':
       if (!e.target.closest('.tool-detail-card')) {

@@ -1,0 +1,11 @@
+{ "turns": [
+  { "text": "先看这些文件。" },
+  { "tool": "read", "args": { "path": "a.txt" } },
+  { "tool": "read", "args": { "path": "b.txt" } },
+  { "tool": "read", "args": { "path": "c.txt" } },
+  { "tool": "read", "args": { "path": "d.txt" } },
+  { "tool": "read", "args": { "path": "e.txt" } },
+  { "tool": "read", "args": { "path": "long.txt" } },
+  { "tool": "ls", "args": { "path": "." } },
+  { "text": "看完了，一共这些。" }
+] }

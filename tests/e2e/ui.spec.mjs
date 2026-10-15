@@ -34,8 +34,11 @@ test('tool row collapsed with truncated path and +N -M, expands', async ({ page 
   await createWorkspace(page, 'demo', ws);
   await newConversation(page);
   await send(page, 'go');
+  const summary = page.getByTestId('tool-group-summary').first();
+  await expect(summary).toBeVisible({ timeout: 20000 });
+  await summary.click();
   const row = page.locator('[data-testid=tool-row][data-tool=write]').first();
-  await expect(row).toBeVisible({ timeout: 20000 });
+  await expect(row).toBeVisible();
   await expect(row).toHaveAttribute('data-path', FILE);
   await expect(row.getByTestId('tool-row-path')).toContainText('…');
   await expect(row.getByTestId('tool-row-added')).toHaveText(/\+3/);
