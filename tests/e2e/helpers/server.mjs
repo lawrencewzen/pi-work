@@ -6,7 +6,19 @@ import { fileURLToPath } from 'node:url';
 export const ROOT = process.env.PI_WORK_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 export const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../fixtures');
 
-export async function tmpdir(p = 'piw-e2e-') { return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), p))); }
+/**
+ * macOS keeps os.tmpdir() under /private/var, which the workspace guard treats as a
+ * system path, so workspaces there are refused. Use the git-ignored data/test-tmp instead.
+ */
+async function tmpBase() {
+  const sys = await fs.realpath(os.tmpdir());
+  if (!/^\/(private\/)?var\//.test(sys)) return sys;
+  const local = path.join(ROOT, 'data', 'test-tmp');
+  await fs.mkdir(local, { recursive: true });
+  return local;
+}
+
+export async function tmpdir(p = 'piw-e2e-') { return fs.realpath(await fs.mkdtemp(path.join(await tmpBase(), p))); }
 
 /** Child directories the server will accept. Pass `root` as PI_WORK_WORKSPACE_ROOT. */
 export async function prepareWorkspaces(names = ['repo']) {

@@ -198,6 +198,8 @@ export function createSqliteStore(dir) {
     addCol('branch', 'branch TEXT');
     addCol('root_path', 'root_path TEXT');
     addCol('worktrees_json', 'worktrees_json TEXT');
+    // Removing a workspace only hides it; its conversations stay and come back when the path is added again.
+    addCol('removed_at', 'removed_at INTEGER');
   }
 
   {
@@ -234,7 +236,10 @@ export function createSqliteStore(dir) {
 
   const q = {
     insWs: db.prepare('INSERT INTO workspaces (id, name, path, source, git_url, branch, root_path, worktrees_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
-    listWs: db.prepare('SELECT * FROM workspaces'),
+    listWs: db.prepare('SELECT * FROM workspaces WHERE removed_at IS NULL'),
+    removeWs: db.prepare('UPDATE workspaces SET removed_at = ? WHERE id = ? AND removed_at IS NULL'),
+    findRemovedWs: db.prepare("SELECT * FROM workspaces WHERE removed_at IS NOT NULL AND path = ? AND COALESCE(source, 'local') = 'local' ORDER BY removed_at DESC LIMIT 1"),
+    restoreWs: db.prepare('UPDATE workspaces SET removed_at = NULL, name = ? WHERE id = ?'),
     getWs: db.prepare('SELECT * FROM workspaces WHERE id = ?'),
     getSettings: db.prepare('SELECT json FROM settings WHERE id = ?'),
     putSettings: db.prepare('INSERT INTO settings (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json'),
@@ -374,6 +379,7 @@ export function createSqliteStore(dir) {
       rootPath: r.root_path || r.path,
       // TODO: git worktrees are not implemented yet; reserved for future `git worktree add`.
       worktrees: p(r.worktrees_json) || [],
+      ...(r.removed_at ? { removedAt: r.removed_at } : {}),
     };
   }
 
@@ -398,6 +404,16 @@ export function createSqliteStore(dir) {
     },
     async getWorkspace(id) {
       return wsFromRow(q.getWs.get(id));
+    },
+    async removeWorkspace(id) {
+      return q.removeWs.run(Date.now(), id).changes > 0;
+    },
+    /** A removed local workspace at the same path comes back with its conversations. */
+    async restoreWorkspaceByPath(wsPath, name) {
+      const row = q.findRemovedWs.get(wsPath);
+      if (!row) return undefined;
+      q.restoreWs.run(name || row.name, row.id);
+      return wsFromRow(q.getWs.get(row.id));
     },
 
     async createConversation({

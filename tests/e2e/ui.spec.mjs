@@ -112,3 +112,17 @@ test('new workspace: browse to a folder fills path and name', async ({ page }) =
   await page.getByTestId('workspace-create-submit').click();
   await expect(page.getByTestId('workspace-item').filter({ hasText: path.basename(ws) })).toBeVisible();
 });
+
+test('remove workspace from the project menu keeps the folder on disk', async ({ page }) => {
+  await openApp(page, srv);
+  await createWorkspace(page, 'gone', ws);
+  const item = page.getByTestId('workspace-item').filter({ hasText: 'gone' });
+  await item.hover();
+  await item.locator('[data-action=project-menu]').click();
+  await page.locator('#ctx-menu .ctx-menu-item.is-danger').click();
+  await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+  await expect(page.getByTestId('confirm-message')).toContainText(ws);
+  await page.getByTestId('confirm-ok').click();
+  await expect(page.getByTestId('workspace-item')).toHaveCount(0);
+  await expect.poll(() => fs.stat(ws).then((st) => st.isDirectory())).toBe(true);
+});

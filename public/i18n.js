@@ -2,6 +2,11 @@
 
 export const translations = {
   zh: {
+    ws_remove: '移除工作区',
+    ws_remove_title: '移除「{name}」？',
+    ws_remove_message: '只从列表里移除，不会删除磁盘上的文件（{path}）。对话记录会保留，用同一路径重新添加时会回来。',
+    ws_remove_busy: '这个工作区还有对话在运行或暂停，先停止再移除',
+    ws_removed: '已移除「{name}」',
     ws_browse: '浏览…',
     ws_dir_choose: '选择',
     ws_dir_choose_here: '选择这个文件夹',
@@ -769,6 +774,11 @@ export const translations = {
     handoff_note: '{from} → {to}',
   },
   en: {
+    ws_remove: 'Remove workspace',
+    ws_remove_title: 'Remove “{name}”?',
+    ws_remove_message: 'This only removes it from the list. Files on disk ({path}) are not deleted. Its chats are kept and come back if you add the same path again.',
+    ws_remove_busy: 'A chat in this workspace is still running or paused. Stop it first.',
+    ws_removed: 'Removed “{name}”',
     ws_browse: 'Browse…',
     ws_dir_choose: 'Choose',
     ws_dir_choose_here: 'Choose this folder',

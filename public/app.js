@@ -4220,7 +4220,49 @@ function projectMenuItems(wid) {
     { label: t('new_conversation'), key: IS_MAC ? '⌘N' : 'Ctrl+N', run: () => startNewConversation(wid) },
     { label: t('copy_path'), run: () => copyText(ws.path || '') },
     { label: t('show_files'), run: async () => { if (state.activeWorkspaceId !== wid) await selectWorkspace(wid); switchRightTab('file'); } },
+    { sep: true },
+    { label: t('ws_remove'), danger: true, run: () => removeWorkspace(wid) },
   ];
+}
+
+/** Hides the workspace from the list. Files on disk and its conversations are kept. */
+async function removeWorkspace(wid) {
+  const ws = state.workspaces.find((w) => w.id === wid);
+  if (!ws) return;
+  const busy = projectConversations(wid).some((c) => RUN_BAR_STATUSES.has(c.status));
+  if (busy) {
+    showToast('ws_remove_busy');
+    return;
+  }
+  const ok = await confirmDialog({
+    title: t('ws_remove_title', { name: ws.name }),
+    message: t('ws_remove_message', { path: ws.path || '' }),
+    confirmLabel: t('ws_remove'),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/workspaces/${encodeURIComponent(wid)}`, 'DELETE');
+  } catch (err) {
+    showToast(err?.status === 409 || err?.body?.code === 'E_WS_BUSY' ? 'ws_remove_busy' : (err?.message || 'err_save'));
+    return;
+  }
+  state.openProjects.delete(wid);
+  persistOpenProjects();
+  delete state.allConversations[wid];
+  if (state.activeWorkspaceId === wid) {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+    state.activeWorkspaceId = null;
+    state.activeConversationId = null;
+    state.activeConversationData = null;
+    localStorage.removeItem('piwork_active_ws');
+    localStorage.removeItem('piwork_active_conv');
+  }
+  showToast('ws_removed', { name: ws.name });
+  await loadWorkspaces();
 }
 
 function conversationMenuItems(wid, cid) {
