@@ -3,7 +3,7 @@
 ## 1. 目标
 在公司内网 Windows 上，通过浏览器使用一个基于 Pi Durable 的编码 Agent。模型中断、进程崩溃以后，它能自己从检查点恢复并接着推进。界面要简约。
 
-基础：fork xiaomoBoy/pi-durable-assistant（MIT 协议，Node 22，原生 JS + SSE，SQLite）。保留它的 Harness、持久化和恢复机制，前端整体重做。微信通道（wx-bot）保留为可选功能。
+基础：fork xiaomoBoy/pi-durable-assistant（MIT 协议，Node 22，原生 JS + SSE，SQLite）。保留它的 Harness、持久化和恢复机制，前端整体重做。微信通道已移除。
 
 ## 2. 功能需求
 **左栏**
