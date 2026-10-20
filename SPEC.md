@@ -1,6 +1,6 @@
 # Pi Durable Demo — 技术规格与版本记录
 
-> **当前版本：v3 第一阶段，已合并到 main。** 本文件保留 v1/v2 的设计记录，其中部分段落描述的是当时的目标而不是当前行为。**当前功能、运行步骤和安全约束以 [README.md](README.md) 及 [docs/V3_PLAN.md](docs/V3_PLAN.md) 为准**；v3 增量规则见文末。
+> **当前版本：v3 第一阶段，已合并到 main。** 本文件保留 v1/v2 的设计记录，其中部分段落描述的是当时的目标而不是当前行为。**当前功能、运行步骤和安全约束以 [README.md](README.md) 为准**；v3 增量规则见文末。
 
 项目最初是用于演示持久存储、断点恢复、Document、Fork 和多端同步的网页版个人 Agent。v3 在保留演示用途的同时，新增可管理的周期任务、后台子 Agent、Webhooks、Markdown 导出及回归测试。仍保持单用户、易读和最少依赖的方向。
 
@@ -10,7 +10,7 @@
 
 - Node ≥ 22.13，纯 JavaScript ESM（`.mjs`），**不要 TypeScript、不要构建步骤、不要前端框架**。
 - 依赖只有 `package.json` 里已有的三个包，加 Node 内置模块。不新增 npm 依赖。
-- 后端以 `server.mjs` 路由和 `lib/*.mjs` 能力模块组织；保留原生 JavaScript ESM。前端基础界面在 `public/index.html`，v3 管理抽屉在 `public/v3.js`，无构建步骤。
+- 后端以 `server.mjs` 路由组织能力模块；保留原生 JavaScript ESM。前端基础界面在 `public/index.html`，v3 管理抽屉在 `public/v3.js`，无构建步骤。
 - 界面文字用简体中文，中文标点用全角。
 - 代码注释用中文，少而准。
 
@@ -303,7 +303,7 @@ SSE 要发心跳注释（每 15 秒 `: ping`），连接关闭时 `unsubscribe` 
 
 # v3（2026-10-10，已合并到 main）
 
-v3 使用现有 `@earendil-works/pi-durable@1.1.0`，没有引入新的运行依赖；新增 `lib/v3.mjs` 和 `lib/v3-utils.mjs` 承担周期计划、后台子 Agent 和任务参数校验，`public/v3.js` 提供独立的可管理抽屉。
+v3 使用现有 `@earendil-works/pi-durable@1.1.0`，没有引入新的运行依赖；周期计划、后台子 Agent 和任务参数校验由服务端模块承担，`public/v3.js` 提供独立的可管理抽屉。
 
 核心新增对象与操作：
 - `app.v3.schedules` 文档 / `app.v3.schedule` Task：固定分钟间隔的单次或重复计划；带版本号和幂等请求 ID，可暂停、恢复、取消。
@@ -311,11 +311,11 @@ v3 使用现有 `@earendil-works/pi-durable@1.1.0`，没有引入新的运行依
 - `app.v3.parents` Session 文档：后台子会话返回主会话的导航。
 - 原有 `app.reminder` Task：可以在新任务中心取消，并支持可选通知。
 - `GET /api/conversations/:id/management`：读取计划、提醒和后台任务，包括异常终结状态。
-- `POST /api/conversations/:id/schedules`：创建计划；`POST /schedules/:uuid/pause|resume|cancel` 对当前会话的计划执行状态变更（完整路径以 docs/V3_PLAN.md 为准）。
+- `POST /api/conversations/:id/schedules`：创建计划；`POST /schedules/:uuid/pause|resume|cancel` 对当前会话的计划执行状态变更。
 - `POST /api/conversations/:id/background` / `.../background/:uuid/stop`：后台子 Agent。
 - `GET /api/conversations/:id/export.md`：导出用户和助手的可见文字。
 - 可选 Webhook：`NOTIFY_WEBHOOK_KIND=generic|feishu`，`NOTIFY_MODE=errors|all|off`，当前为尽力投递而非持久重试。
 - `npm run check` 和 `npm test`：合并前 8 项自动化测试通过，含无 Key `faux` 崩溃恢复/安全回归。
 
-**当前 v3 的剩余限制**：不支持精确 Cron / 具备时区语义的日历任务、通知 outbox 与保证送达、完整模型计费、多用户隔离、长会话增量 SSE 或真实生产 VPS 端到端测试。有关每个 API 的入参、部署与第二阶段计划，请阅读 [docs/V3_PLAN.md](docs/V3_PLAN.md)。
+**当前 v3 的剩余限制**：不支持精确 Cron / 具备时区语义的日历任务、通知 outbox 与保证送达、完整模型计费、多用户隔离、长会话增量 SSE 或真实生产 VPS 端到端测试。
 

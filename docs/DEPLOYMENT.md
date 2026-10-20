@@ -55,7 +55,7 @@ location / {
 
 ## 3. 可选：启动微信
 
-按照 [微信 iLink 手册](WECHAT.md) 配置两个不同的随机 token、`WECHAT_ENABLED=1`，再：
+配置两个不同的随机 token、`WECHAT_ENABLED=1`，再：
 
 ```bash
 docker compose --profile wechat build

@@ -1,21 +1,35 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { load, ROOT } from './_root.mjs';
 
 const { allocateRoleId, roleIdFromName } = await load('src/core/config.mjs');
-const { createMemoryStore } = await load('src/store/memory.mjs');
+const { createSqliteStore } = await load('src/store/sqlite.mjs');
 const { planRoleModelMigration, effectiveModelFor } = await load('src/core/model-sources.mjs');
 const { buildSkillPrompt } = await load('src/core/skills.mjs');
 
 const bundledSkills = [path.join(ROOT, 'skills')];
 
-test('role ids come from ascii names and random tokens for other names', async () => {
+async function openStore() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-role-'));
+  const store = createSqliteStore(dir);
+  const orig = store.close.bind(store);
+  store.close = () => {
+    orig();
+    return fs.rm(dir, { recursive: true, force: true });
+  };
+  return store;
+}
+
+test('role ids come from ascii names and random tokens for other names', async (t) => {
   assert.equal(roleIdFromName('Reviewer'), 'reviewer');
   assert.equal(roleIdFromName('Note Taker'), 'note-taker');
   assert.equal(roleIdFromName('复核助手', { random: () => 'abc123' }), 'agent-abc123');
   assert.equal(roleIdFromName('123', { random: () => 'abc123' }), 'agent-abc123');
-  const store = createMemoryStore();
+  const store = await openStore();
+  t.after(() => store.close());
   await store.createRole({ id: 'reviewer', name: 'Taken', systemPrompt: 'x', tools: ['read'] });
   await store.tombstoneCatalog('role', 'note-taker');
   assert.equal(await allocateRoleId(store, 'Reviewer'), 'reviewer-2');

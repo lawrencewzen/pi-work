@@ -1,6 +1,6 @@
 # 配置参考（当前 main）
 
-本页基于 `.env.example`、`lib/agent.mjs`、`lib/v3.mjs`、`lib/wechat.mjs` 和 `compose.yaml` 的**当前主分支实现**。请先按 [快速开始](GETTING_STARTED.md) 使用 `faux` 确认项目可正常启动，再填写真实凭据。
+本页基于 `.env.example` 和 `compose.yaml` 的当前主分支实现。请先按 [快速开始](GETTING_STARTED.md) 使用 `faux` 确认项目可正常启动，再填写真实凭据。
 
 ## 环境变量
 
@@ -63,7 +63,7 @@ ENABLE_CRASH_DEMO=0
 
 **通知：**不配置 `NOTIFY_WEBHOOK_URL` 时后台任务照常进行，只是不会主动向手机或飞书群发送事件。主分支的 Webhook / 飞书仍是尽力发送：**没有持久通用 Outbox**；出错可能丢失消息。Webhook 对端应按 `X-Pi-Event-ID` 去重。
 
-**微信：**默认不开启。启用前分别用 `openssl rand -hex 32` 生成 `WECHAT_WEBHOOK_KEY` 与 `WECHAT_SEND_TOKEN`，将 `WECHAT_ENABLED=1` 放入 `.env`，按 [微信接入手册](WECHAT.md) 使用 `--profile wechat` 启动。微信扫码凭据保存在专用 Docker 命名卷，不应导出到仓库。
+**微信：**默认不开启。启用前分别用 `openssl rand -hex 32` 生成 `WECHAT_WEBHOOK_KEY` 与 `WECHAT_SEND_TOKEN`，将 `WECHAT_ENABLED=1` 放入 `.env`，使用 `--profile wechat` 启动。微信扫码凭据保存在专用 Docker 命名卷，不应导出到仓库。
 
 **笔记检索：**设置 `OBSIDIAN_ROOT` 后，助手只能只读检索白名单笔记，回答带来源路径和行号，不会写回 Obsidian。默认只开放 AI学习、X灵感、VPS小白教程；财务、个人档案和服务器资产不在范围内。
 

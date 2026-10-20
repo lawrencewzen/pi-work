@@ -105,7 +105,7 @@ OpenAI 兼容来源同样用 `createProvider`，`api` 用 `openai-completions`�
 
 T4-1（`feat/agents-backend`）会给角色加 description、skills、pluginTools、自动 id、预设，并把模型收进 `settings.models`。本方案不实现那些字段。子 Agent 批次开始时以当时的角色记录为准；现在的 `roles/*.json` 只有 `id`、`name`、`systemPrompt`、`tools`。
 
-旧的 Pi Durable 组装在 `lib/agent.mjs`（Harness、sqlite、faux、`defineDoc`）、`lib/v3.mjs`（后台子 Agent、reporter、`requestId`）、`legacy/assistant-server.mjs`（HTTP + SSE）。它们服务的是另一套页面，不实现现在的契约。新门面以契约和本文为准，不把 legacy 路由搬回来。
+当前门面以契约和本文为准，对话运行时在 `src/kernel/`。
 
 ## 2b. REST 与 SSE
 

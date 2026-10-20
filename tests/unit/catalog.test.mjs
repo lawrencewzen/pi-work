@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { load, ROOT } from './_root.mjs';
 
-const { createMemoryStore } = await load('src/store/memory.mjs');
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
 const { loadRoleTemplates, loadPipelineTemplates, shouldUpgradeBuiltinPrompt, shouldUpgradeBuiltinTools } = await load('src/core/roles-load.mjs');
 
@@ -16,60 +15,59 @@ const scribe = {
   tools: ['read', 'write'],
 };
 
-async function withSqlite(fn) {
+async function openStore() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-cat-'));
   const store = createSqliteStore(dir);
+  const orig = store.close.bind(store);
+  store.close = () => {
+    orig();
+    return fs.rm(dir, { recursive: true, force: true });
+  };
+  return store;
+}
+
+async function withSqlite(fn) {
+  const store = await openStore();
   try {
     await fn(store);
   } finally {
-    store.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    await store.close();
   }
 }
 
-for (const [name, open] of [
-  ['memory', async () => createMemoryStore()],
-  ['sqlite', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-cat-'));
-    const store = createSqliteStore(dir);
-    store.close = ((orig) => () => { orig(); return fs.rm(dir, { recursive: true, force: true }); })(store.close.bind(store));
-    return store;
-  }],
-]) {
-  test(`${name} store updates and deletes roles and pipelines`, async () => {
-    const store = await open();
-    try {
-      assert.equal(await store.updateRole('missing', scribe), undefined);
-      await store.createRole(scribe);
-      const updated = await store.updateRole('scribe', { ...scribe, name: 'Notes', model: 'grok-build' });
-      assert.equal(updated.name, 'Notes');
-      assert.equal(updated.model, 'grok-build');
-      const cleared = await store.updateRole('scribe', { ...scribe, name: 'Notes' });
-      assert.equal(cleared.model, undefined);
-      assert.equal(await store.getRole('scribe').then((role) => role.name), 'Notes');
+test('sqlite store updates and deletes roles and pipelines', async () => {
+  const store = await openStore();
+  try {
+    assert.equal(await store.updateRole('missing', scribe), undefined);
+    await store.createRole(scribe);
+    const updated = await store.updateRole('scribe', { ...scribe, name: 'Notes', model: 'grok-build' });
+    assert.equal(updated.name, 'Notes');
+    assert.equal(updated.model, 'grok-build');
+    const cleared = await store.updateRole('scribe', { ...scribe, name: 'Notes' });
+    assert.equal(cleared.model, undefined);
+    assert.equal(await store.getRole('scribe').then((role) => role.name), 'Notes');
 
-      await store.createPipeline({ id: 'notes', name: 'Notes', steps: [{ role: 'scribe', input: 'user' }] });
-      const pipe = await store.updatePipeline('notes', {
-        id: 'notes',
-        name: 'Note pass',
-        steps: [{ role: 'scribe', input: 'previous' }],
-      });
-      assert.equal(pipe.name, 'Note pass');
-      assert.equal(pipe.steps[0].input, 'previous');
-      assert.equal(await store.deletePipeline('notes'), true);
-      assert.equal(await store.getPipeline('notes'), undefined);
-      assert.equal(await store.deleteRole('scribe'), true);
-      assert.equal(await store.getRole('scribe'), undefined);
+    await store.createPipeline({ id: 'notes', name: 'Notes', steps: [{ role: 'scribe', input: 'user' }] });
+    const pipe = await store.updatePipeline('notes', {
+      id: 'notes',
+      name: 'Note pass',
+      steps: [{ role: 'scribe', input: 'previous' }],
+    });
+    assert.equal(pipe.name, 'Note pass');
+    assert.equal(pipe.steps[0].input, 'previous');
+    assert.equal(await store.deletePipeline('notes'), true);
+    assert.equal(await store.getPipeline('notes'), undefined);
+    assert.equal(await store.deleteRole('scribe'), true);
+    assert.equal(await store.getRole('scribe'), undefined);
 
-      await store.tombstoneCatalog('role', 'planner');
-      assert.equal(await store.hasCatalogTombstone('role', 'planner'), true);
-      await store.clearCatalogTombstone('role', 'planner');
-      assert.equal(await store.hasCatalogTombstone('role', 'planner'), false);
-    } finally {
-      await store.close?.();
-    }
-  });
-}
+    await store.tombstoneCatalog('role', 'planner');
+    assert.equal(await store.hasCatalogTombstone('role', 'planner'), true);
+    await store.clearCatalogTombstone('role', 'planner');
+    assert.equal(await store.hasCatalogTombstone('role', 'planner'), false);
+  } finally {
+    await store.close();
+  }
+});
 
 test('sqlite counts conversations that reference a role or pipeline', async () => {
   await withSqlite(async (store) => {
@@ -83,8 +81,9 @@ test('sqlite counts conversations that reference a role or pipeline', async () =
   });
 });
 
-test('templates seed feature pipeline and honor tombstones', async () => {
-  const store = createMemoryStore();
+test('templates seed feature pipeline and honor tombstones', async (t) => {
+  const store = await openStore();
+  t.after(() => store.close());
   const rolesDir = path.join(ROOT, 'roles');
   const pipesDir = path.join(ROOT, 'pipelines');
   const examplesDir = path.join(ROOT, 'examples', 'pipelines');
@@ -113,7 +112,7 @@ test('templates seed feature pipeline and honor tombstones', async () => {
   assert.ok(await store.getPipeline('demo'));
 });
 
-test('startup upgrades unedited builtin prompts and keeps edited ones', async () => {
+test('startup upgrades unedited builtin prompts and keeps edited ones', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-roles-'));
   const shipped = '你是规划。\n\n## 交接\n- 角色：规划';
   const previous = 'You are a planning agent. Read the workspace and the user\'s request, then write a short implementation plan: goal, files to touch, risks, and how to verify. Do not edit production code or run tests. Prefer reading existing files before proposing changes.';
@@ -129,7 +128,8 @@ test('startup upgrades unedited builtin prompts and keeps edited ones', async ()
     systemPrompt: '编码出厂',
     tools: ['read', 'write'],
   }));
-  const store = createMemoryStore();
+  const store = await openStore();
+  t.after(() => store.close());
   await store.createRole({
     id: 'planner',
     name: 'Planner',
@@ -161,7 +161,7 @@ test('startup upgrades unedited builtin prompts and keeps edited ones', async ()
   assert.equal((await store.getRole('planner')).systemPrompt, shipped);
 });
 
-test('startup upgrades untouched preset tools and fills an empty description', async () => {
+test('startup upgrades untouched preset tools and fills an empty description', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-roles-'));
   const oldAuditorPrompt = 'You are a code auditor. Review workspace changes for security (path traversal, command injection, secret leakage), correctness, and recovery/idempotency issues. Report findings clearly. Write an audit note if needed; do not rewrite large amounts of code unless a fix is clearly required.';
   await fs.writeFile(path.join(dir, 'auditor.json'), JSON.stringify({
@@ -178,7 +178,8 @@ test('startup upgrades untouched preset tools and fills an empty description', a
     systemPrompt: '编码出厂',
     tools: ['read', 'write', 'edit', 'ls', 'grep', 'bash'],
   }));
-  const store = createMemoryStore();
+  const store = await openStore();
+  t.after(() => store.close());
   await store.createRole({
     id: 'auditor',
     name: 'Old auditor',

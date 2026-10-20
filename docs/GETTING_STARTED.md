@@ -80,7 +80,7 @@ Shell 导入 `.env` 的方式适用于示例中的简单 `KEY=value` 配置；�
 1. 先阅读 [部署与备份注意事项](DEPLOYMENT.md)；在公网开放前配置 HTTPS、强密码、备份。
 2. 再按 [配置说明](CONFIGURATION.md) 填写 `DEMO_PASSWORD` 与模型。
 3. 使用 `docker compose up -d --build`，访问反向代理后的 HTTPS 地址。
-4. 需要微信时再按 [微信 iLink 手册](WECHAT.md) 启用 profile、扫码绑定。
+4. 需要微信时再启用 profile、扫码绑定。
 
 ## E. 核对与常见误区
 
