@@ -158,15 +158,12 @@ export function gitUrlHost(gitUrl) {
   return '';
 }
 
-/** Prefer an exact host:port match, then the same hostname. */
+/** Only an exact host:port match: a connection's token never goes to another port or host. */
 export function matchConnectionByUrl(connections, gitUrl) {
   const host = gitUrlHost(gitUrl);
   if (!host) return null;
-  const hostname = host.split(':')[0];
   const list = Array.isArray(connections) ? connections : [];
-  return list.find((conn) => hostOf(conn.baseUrl) === host)
-    || list.find((conn) => hostOf(conn.baseUrl).split(':')[0] === hostname)
-    || null;
+  return list.find((conn) => hostOf(conn.baseUrl) === host) || null;
 }
 
 export function gitlabTokenPage(baseUrl) {

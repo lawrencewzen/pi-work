@@ -328,7 +328,7 @@ export async function cloneGitRepo({ url, branch, dest, env = process.env, conne
     env: connectionCa ? { ...env, PI_WORK_GIT_CA_FILE: connectionCa } : env,
   });
   const childEnv = token || connectionCa
-    ? buildConnectionCloneEnv(plan.env, { token, caFile: connectionCa })
+    ? buildConnectionCloneEnv(plan.env, { token, caFile: connectionCa, origin: new URL(trimmed).origin })
     : plan.env;
   if (token && plan.args.some((arg) => String(arg).includes(token))) throw cloneError('unknown');
   try {

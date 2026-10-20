@@ -7,7 +7,7 @@ import { startFakeGitlab } from '../helpers/fake-gitlab.mjs';
 
 const PAT = 'glpat-e2e-secret-9k3q';
 const BAD = 'glpat-e2e-secret-bad1';
-const SHOTS = '/opt/cursor/artifacts/screenshots';
+const SHOTS = process.env.PI_WORK_SHOTS || '/opt/cursor/artifacts/screenshots';
 
 let gitlab;
 let srv;

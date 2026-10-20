@@ -236,6 +236,7 @@ function cloneKey(code) {
     timeout: 'ws_err_conn_timeout',
     unknown: 'ws_err_conn_unknown',
     http_not_allowed: 'ws_err_conn_http',
+    host_mismatch: 'ws_err_conn_host',
     git_not_found: 'ws_err_conn_git',
     not_gitlab: 'ws_err_conn_not_gitlab',
   };

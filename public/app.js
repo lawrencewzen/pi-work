@@ -3352,7 +3352,7 @@ const GIT_IMPORT_CODE_KEYS = {
 
 function friendlyWorkspaceError(err) {
   const code = err?.body?.code;
-  if (code && (err?.body?.via === 'connection' || code === 'http_not_allowed' || code === 'not_gitlab')) {
+  if (code && (err?.body?.via === 'connection' || code === 'http_not_allowed' || code === 'host_mismatch' || code === 'not_gitlab')) {
     return gitImportCloneMessage(code, t);
   }
   const key = GIT_IMPORT_CODE_KEYS[code];

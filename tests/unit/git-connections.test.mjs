@@ -7,7 +7,8 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ROOT } from './_root.mjs';
 import { startFakeGitlab } from '../helpers/fake-gitlab.mjs';
-import { buildConnectionCloneArgs, buildConnectionCloneEnv } from '../../src/core/git-connection-clone.mjs';
+import { buildConnectionCloneArgs, buildConnectionCloneEnv, sanitizeConnectionCloneUrl } from '../../src/core/git-connection-clone.mjs';
+import { matchConnectionByUrl } from '../../src/core/git-connections.mjs';
 
 const AUTH = 'unit-git-conn-token';
 const PAT = 'glpat-unit-secret-9k3q';
@@ -134,9 +135,11 @@ test('clone arguments and environment keep the token out of argv', () => {
   const env = buildConnectionCloneEnv({ PATH: '/usr/bin', GIT_TRACE: '1', GIT_CONFIG_KEY_0: 'old' }, {
     token: PAT,
     caFile: '',
+    origin: 'https://gitlab.example',
   });
   assert.equal(env.GIT_TRACE, undefined);
-  assert.equal(env.GIT_CONFIG_KEY_0, 'http.extraHeader');
+  // Scoped to the connection origin: a redirect to another host does not get the header.
+  assert.equal(env.GIT_CONFIG_KEY_0, 'http.https://gitlab.example/.extraHeader');
   assert.equal(env.GIT_CONFIG_VALUE_0, `Authorization: Bearer ${PAT}`);
   assert.equal(env.GIT_CONFIG_KEY_1, 'credential.helper');
   assert.equal(env.GIT_CONFIG_VALUE_1, '');
@@ -470,4 +473,16 @@ test('address import uses a saved connection for the same host', async () => {
     gitlab.close();
     await fs.rm(server.dataDir, { recursive: true, force: true });
   }
+});
+
+test('a connection token only goes to the connection host', () => {
+  const conn = { kind: 'gitlab-self', baseUrl: 'https://gitlab.example', token: PAT };
+  assert.equal(sanitizeConnectionCloneUrl('https://gitlab.example/acme/widget.git', conn), 'https://gitlab.example/acme/widget.git');
+  for (const url of ['https://evil.example/acme/widget.git', 'https://gitlab.example:8443/acme/widget.git']) {
+    assert.throws(() => sanitizeConnectionCloneUrl(url, conn), (err) => err.gitCode === 'host_mismatch');
+  }
+  assert.throws(() => buildConnectionCloneEnv({}, { token: PAT }), (err) => err.gitCode === 'unknown');
+  const list = [{ id: 'c1', baseUrl: 'https://gitlab.example' }];
+  assert.equal(matchConnectionByUrl(list, 'https://gitlab.example/a/b.git')?.id, 'c1');
+  assert.equal(matchConnectionByUrl(list, 'https://gitlab.example:8443/a/b.git'), null);
 });
