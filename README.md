@@ -2,13 +2,13 @@
 
 网页版多 Agent 编码工作台：断点恢复、自动续跑、多角色并行、流水线编排。
 
-对话运行时是 **Pi Durable Harness**（`src/kernel/`，`@earendil-works/pi-durable`）。工作区、角色、流水线和变更记录在应用库 `src/store/sqlite.mjs`。`legacy/` 仍保留上游助手入口。耐久性设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，安全修复见 [SECURITY.md](SECURITY.md)。
+对话运行时是 **Pi Durable Harness**（`src/kernel/`，`@earendil-works/pi-durable`）。工作区、角色、流水线和变更记录在应用库 `src/store/sqlite.mjs`。耐久性设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，安全修复见 [SECURITY.md](SECURITY.md)。
 
 启动：`node server.mjs`（Node >= 22.19）。进程只监听 `127.0.0.1`。浏览器打开启动日志里的 `PI_WORK_READY` 地址（`http://127.0.0.1:<端口>/`）即可使用，默认不需要登录链接。需要限制本机其他程序访问时，设置 `PI_WORK_TOKEN`，再用 `/login?token=` 或 `Authorization: Bearer`。不设令牌时，`Host` 白名单、跨域 `Origin` 和写请求必须是 JSON 这几项仍然生效；若同时设置了 `PI_WORK_ALLOWED_HOSTS`，启动会警告服务对这些主机开放且没有鉴权。
 
 演示模型只在显式设置 `PI_WORK_LLM=faux`、`LLM_API=faux` 或 `PI_WORK_FAUX_SCRIPT` 时使用。没有可用模型时发消息以 `E_NO_MODEL` 失败，不会自动改走演示剧本。
 
-> 本项目 fork 自 [xiaomoBoy/pi-durable-assistant](https://github.com/xiaomoBoy/pi-durable-assistant)（MIT），感谢原作者。原 README 见 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)。
+> 本项目 fork 自 [xiaomoBoy/pi-durable-assistant](https://github.com/xiaomoBoy/pi-durable-assistant)（MIT），感谢原作者。
 
 - 方案：[docs/PLAN.md](docs/PLAN.md)
 - 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
