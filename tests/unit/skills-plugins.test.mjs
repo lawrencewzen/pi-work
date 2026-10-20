@@ -192,7 +192,6 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
       PI_WORK_FAUX_SCRIPT: scriptPath,
       PI_WORK_FAUX_RECORD: record,
       PI_WORK_RETRY_BASE_MS: '20',
-      PI_WORK_STALL_MS: '5000',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

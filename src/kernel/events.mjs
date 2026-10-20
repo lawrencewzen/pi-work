@@ -1,5 +1,5 @@
-// Map Pi Durable agent events onto the HTTP/SSE contract.
-// The host does not schedule work. It only renames events watchEvents already emitted.
+// Map Pi Durable agent events onto the HTTP/SSE names the UI already listens for.
+// Nothing here is stored. HTTP status is the last submission record.
 import { retryDelayMs } from '@earendil-works/pi-ai/utils/retry';
 import { DEFAULT_RETRY_POLICY } from '@earendil-works/pi-durable';
 import { redactAuthText } from '../core/grok-auth.mjs';
@@ -15,13 +15,6 @@ export function isLiveMessageId(id) {
   return value === LIVE_MESSAGE_ID || value.startsWith('live-');
 }
 
-function noteLiveId(ctx, id) {
-  if (!ctx || !id) return;
-  ctx.liveId = String(id);
-  const match = /^live-(\d+)$/.exec(ctx.liveId);
-  if (match) ctx.liveSeq = Math.max(Number(ctx.liveSeq) || 0, Number(match[1]));
-}
-
 /** One id per in-flight assistant generation. Cleared when that message ends. */
 function ensureLiveId(ctx) {
   if (!ctx) return LIVE_MESSAGE_ID;
@@ -31,12 +24,10 @@ function ensureLiveId(ctx) {
   return ctx.liveId;
 }
 
-export function createMapContext({ retry = DEFAULT_RETRY_POLICY, step = 0 } = {}) {
+export function createMapContext({ retry = DEFAULT_RETRY_POLICY } = {}) {
   return {
     retry,
-    step,
     toolInputs: new Map(),
-    toolDiffs: new Map(),
     liveSeq: 0,
     liveId: null,
   };
@@ -99,49 +90,78 @@ function toolOutput(entry, result) {
   return result ? textOf(result.content) : undefined;
 }
 
+function diffOf(result) {
+  const details = result?.details;
+  if (!details || typeof details !== 'object') return {};
+  return {
+    path: typeof details.path === 'string' ? details.path : undefined,
+    added: details.added,
+    removed: details.removed,
+  };
+}
+
 function toolEnd(ev, ctx) {
   const args = ctx.toolInputs.get(ev.toolCallId) || {};
-  const diff = ctx.toolDiffs.get(ev.toolCallId);
   const result = ev.entry?.model?.[0];
+  const diff = diffOf(result);
   const output = toolOutput(ev.entry, result);
   const status = result ? (result.isError ? 'error' : 'completed') : 'error';
-  ctx.step += 1;
-  return [
-    {
-      event: 'tool.end',
-      data: {
-        tool: toolBody({
-          id: ev.toolCallId,
-          name: ev.toolName || result?.toolName,
-          status,
-          input: args,
-          output,
-          path: args.path,
-          added: diff?.added,
-          removed: diff?.removed,
-        }),
-      },
+  return {
+    event: 'tool.end',
+    data: {
+      tool: toolBody({
+        id: ev.toolCallId,
+        name: ev.toolName || result?.toolName,
+        status,
+        input: args,
+        output,
+        path: diff.path || args.path,
+        added: diff.added,
+        removed: diff.removed,
+      }),
     },
-    { event: 'checkpoint', data: { at: Date.now(), step: ctx.step } },
-  ];
+  };
+}
+
+function queuedInputs(inbox) {
+  return (inbox?.items || []).some((item) => item?.mode === 'steer' || item?.mode === 'followUp');
 }
 
 /**
- * One watchEvents batch, in order, as contract events.
- * `ctx.step` advances on each tool commit. Status `running` is the host's job to
- * suppress while a restart is still marked recovering.
+ * HTTP status of one submission record.
+ * `queued` / `placed` are running. `done` is finished.
+ * `unanswered` is failed, except `reason: "aborted"`, which is stopped.
+ * The error text is that record's reason and detail.
+ */
+export function statusFromSubmission(record) {
+  if (record?.status === 'queued' || record?.status === 'placed') return { status: 'running' };
+  if (record?.status === 'done') return { status: 'done' };
+  if (record?.status === 'unanswered') {
+    if (record.reason === 'aborted') return { status: 'stopped' };
+    return { status: 'failed', llmError: errorForSubmission(record) };
+  }
+  throw new Error(`Unexpected submission status ${record?.status}`);
+}
+
+/**
+ * One watchEvents batch, in order, as the SSE names the UI already handles.
+ * A `snapshot` is not replayed; the caller pushes the current status so the
+ * client refetches the conversation.
  */
 export function mapHarnessBatch(batch, ctx) {
   const events = [];
-  const snapshots = [];
-  let failed = false;
+  let refresh = false;
   for (const ev of batch || []) {
     if (!ev || typeof ev !== 'object') continue;
     if (ev.type === 'snapshot') {
-      snapshots.push(ev);
+      refresh = true;
       continue;
     }
     if (ev.type === 'run_start') {
+      events.push({ event: 'status', data: { status: 'running' } });
+      continue;
+    }
+    if (ev.type === 'inbox_update' && queuedInputs({ items: ev.items })) {
       events.push({ event: 'status', data: { status: 'running' } });
       continue;
     }
@@ -185,7 +205,7 @@ export function mapHarnessBatch(batch, ctx) {
       continue;
     }
     if (ev.type === 'tool_execution_end') {
-      events.push(...toolEnd(ev, ctx));
+      events.push(toolEnd(ev, ctx));
       continue;
     }
     if (ev.type === 'auto_retry_start') {
@@ -204,10 +224,7 @@ export function mapHarnessBatch(batch, ctx) {
         event: 'error',
         data: { code: 'E_LLM', message: redactAuthText(ev.message || ev.kind || 'task failed') },
       });
-      if (!failed) {
-        failed = true;
-        events.push({ event: 'status', data: { status: 'failed' } });
-      }
+      events.push({ event: 'status', data: { status: 'failed' } });
       continue;
     }
     if (ev.type === 'submission' && ev.record?.type === 'input' && ev.record.status === 'done') {
@@ -215,123 +232,18 @@ export function mapHarnessBatch(batch, ctx) {
       continue;
     }
     if (ev.type === 'submission' && ev.record?.type === 'input' && ev.record.status === 'unanswered') {
+      if (ev.record.reason === 'aborted') {
+        events.push({ event: 'status', data: { status: 'stopped' } });
+        continue;
+      }
       events.push({ event: 'error', data: errorForSubmission(ev.record) });
-      if (!failed) {
-        failed = true;
-        events.push({ event: 'status', data: { status: 'failed' } });
-      }
+      events.push({ event: 'status', data: { status: 'failed' } });
     }
   }
-  return { events, snapshots };
+  return { events, refresh };
 }
 
-/** Rebuild the open live bubble from deltas already stored. Incremental text is appended; `replace` overwrites. */
-function foldLive(existing) {
-  let liveId = null;
-  let liveText = '';
-  for (const ev of existing || []) {
-    if (ev?.event === 'message.delta' && isLiveMessageId(ev.data?.messageId)) {
-      const id = String(ev.data.messageId);
-      if (liveId && liveId !== id) liveText = '';
-      liveId = id;
-      const text = String(ev.data.text || '');
-      liveText = ev.data.replace ? text : liveText + text;
-      continue;
-    }
-    if (ev?.event === 'message.done' && ev.data?.role !== 'user' && liveId) {
-      const doneLive = ev.data.liveId != null ? String(ev.data.liveId) : null;
-      // A done without liveId is the legacy protocol: it closes the open bubble
-      // only when it carries the assistant text. A tool-only done must not.
-      const closes = doneLive ? doneLive === liveId : Boolean(ev.data.text);
-      if (closes) {
-        liveId = null;
-        liveText = '';
-      }
-    }
-  }
-  return { liveId, liveText };
-}
-
-function toolFromResultEntry(entry, ctx) {
-  const result = entry.model?.[0];
-  if (!result?.toolCallId) return null;
-  const args = ctx?.toolInputs?.get(result.toolCallId) || {};
-  const diff = ctx?.toolDiffs?.get(result.toolCallId);
-  return {
-    event: 'tool.end',
-    data: {
-      tool: toolBody({
-        id: result.toolCallId,
-        name: result.toolName,
-        status: result.isError ? 'error' : 'completed',
-        input: args,
-        output: toolOutput(entry, result),
-        path: args.path,
-        added: diff?.added,
-        removed: diff?.removed,
-      }),
-    },
-  };
-}
-
-/**
- * Events a late subscriber still needs from the watch snapshot.
- * watchEvents does not replay, so anything already stored is left alone.
- */
-export function snapshotGap(snapshot, existing, ctx) {
-  const seenDone = new Set();
-  const seenTools = new Set();
-  for (const ev of existing || []) {
-    if (ev?.event === 'message.done' && ev.data?.messageId != null) seenDone.add(String(ev.data.messageId));
-    if (ev?.event === 'tool.end' && ev.data?.tool?.id != null) seenTools.add(String(ev.data.tool.id));
-  }
-  const open = foldLive(existing);
-  if (open.liveId) noteLiveId(ctx, open.liveId);
-  const liveText = open.liveText;
-  const events = [];
-  for (const entry of snapshot?.entries || []) {
-    if (entry?.kind === 'pi.user' || entry?.kind === 'pi.assistant') {
-      const id = String(entry.id);
-      if (seenDone.has(id)) continue;
-      const done = messageDone(entry);
-      if (entry.kind === 'pi.assistant' && open.liveId && done.data.text && done.data.text === liveText) {
-        done.data.liveId = open.liveId;
-        open.liveId = null;
-        if (ctx) ctx.liveId = null;
-      }
-      events.push(done);
-      seenDone.add(id);
-      const usage = usageEvent(entry);
-      if (usage) events.push(usage);
-      continue;
-    }
-    if (entry?.kind === 'pi.tool-result') {
-      const end = toolFromResultEntry(entry, ctx);
-      if (!end || seenTools.has(String(end.data.tool.id))) continue;
-      events.push(end);
-      seenTools.add(String(end.data.tool.id));
-    }
-  }
-  const partial = textOf(snapshot?.generation?.message?.content);
-  if (partial && partial !== liveText) {
-    const already = (snapshot?.entries || []).some((entry) => (
-      entry?.kind === 'pi.assistant'
-      && seenDone.has(String(entry.id))
-      && textOf(entry.model?.[0]?.content) === partial
-    ));
-    if (!already) {
-      const messageId = open.liveId || ensureLiveId(ctx);
-      noteLiveId(ctx, messageId);
-      events.push({
-        event: 'message.delta',
-        data: { messageId, text: partial, replace: true },
-      });
-    }
-  }
-  return events;
-}
-
-/** Transcript entries to the contract message list, plus the latest reported call usage. */
+/** Transcript entries to the REST message list, plus the latest reported call usage. */
 export function messagesFromEntries(entries) {
   const calls = new Map();
   const usage = latestCallUsage(entries);
@@ -340,9 +252,12 @@ export function messagesFromEntries(entries) {
     const content = entry.model?.[0]?.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {
-      if (block?.type === 'toolCall' && block.id) calls.set(block.id, block.arguments || {});
+      if (block?.type === 'toolCall' && block.id) {
+        calls.set(block.id, { name: block.name, input: block.arguments || {} });
+      }
     }
   }
+  const answered = new Set();
   const messages = [];
   for (const entry of entries || []) {
     if (entry?.kind === 'pi.user' || entry?.kind === 'pi.assistant') {
@@ -356,28 +271,57 @@ export function messagesFromEntries(entries) {
     if (entry?.kind !== 'pi.tool-result') continue;
     const result = entry.model?.[0];
     if (!result) continue;
-    const input = calls.get(result.toolCallId) || {};
+    if (result.toolCallId) answered.add(result.toolCallId);
+    const known = calls.get(result.toolCallId) || {};
+    const input = known.input || {};
+    const diff = diffOf(result);
     const tool = toolBody({
       id: result.toolCallId,
-      name: result.toolName,
+      name: result.toolName || known.name,
       status: result.isError ? 'error' : 'completed',
       input,
       output: toolOutput(entry, result),
-      path: input.path,
+      path: diff.path || input.path,
+      added: diff.added,
+      removed: diff.removed,
     });
     messages.push({ id: String(entry.id), role: 'tool', text: tool.output || '', tool });
+  }
+  // A tool call with no result yet is still running. The refresh must keep it,
+  // or a GET during the call erases the live tool.start row.
+  for (const [id, known] of calls) {
+    if (answered.has(id)) continue;
+    const input = known.input || {};
+    const tool = toolBody({
+      id,
+      name: known.name,
+      status: 'running',
+      input,
+      path: typeof input.path === 'string' ? input.path : undefined,
+    });
+    messages.push({ id: `tool-${id}`, role: 'tool', tool });
   }
   return { messages, usage };
 }
 
-export function synthesizeStatus(conv, busy) {
-  const mark = conv?.hostMark || null;
-  if (mark === 'stopped') return 'stopped';
-  if (mark === 'paused') return 'paused';
-  if (mark === 'failed') return 'failed';
-  if (busy) return mark === 'recovering' ? 'recovering' : 'running';
-  if (conv?.status === 'failed') return 'failed';
-  if (conv?.status === 'done') return 'done';
-  if (conv?.status === 'running' || conv?.status === 'recovering') return conv.status;
-  return conv?.status || 'idle';
+/** First write/edit details per path. Later edits of the same path keep that baseline. */
+export function baselinesFromEntries(entries) {
+  const byPath = new Map();
+  for (const entry of entries || []) {
+    if (entry?.kind !== 'pi.tool-result') continue;
+    const details = entry.model?.[0]?.details;
+    if (!details || typeof details.path !== 'string' || byPath.has(details.path)) continue;
+    byPath.set(details.path, {
+      path: details.path,
+      before: details.before,
+      after: details.after,
+      added: details.added,
+      removed: details.removed,
+      oversized: details.oversized === true,
+      linesBefore: details.linesBefore,
+      linesAfter: details.linesAfter,
+      toolCallId: entry.model?.[0]?.toolCallId || null,
+    });
+  }
+  return [...byPath.values()];
 }

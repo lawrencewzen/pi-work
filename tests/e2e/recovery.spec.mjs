@@ -21,7 +21,7 @@ test('kill -9 server mid-task, restart -> resumes to done without duplicate writ
     await openApp(page, srv, token);
     await page.getByTestId('workspace-item').filter({ hasText: 'crash' }).click();
     await page.getByTestId('conversation-item').first().click();
-    await expect(statusText(page)).toContainText(/recovering|恢复|running|运行/i, { timeout: 10000 });
+    await expect(statusText(page)).toContainText(/running|运行|done|完成/i, { timeout: 10000 });
     await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 30000 });
     expect(await fs.readFile(path.join(ws, 'final.txt'), 'utf8')).toBe('ok\n');
     expect(await fs.readFile(path.join(ws, 'side_effect.txt'), 'utf8')).toBe('once\n'); // bash not replayed

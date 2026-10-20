@@ -29,7 +29,6 @@ function childEnv(dataDir, authFile, extra = {}) {
     PI_WORK_GROK_AUTH: authFile,
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '5',
-    PI_WORK_STALL_MS: '5000',
     ...extra,
   };
 }

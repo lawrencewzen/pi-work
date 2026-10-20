@@ -581,7 +581,6 @@ export function createSubagentHost({
     async stopConversation(cid) {
       const conv = await store.getConversation(cid);
       if (!conv) return { status: 404, body: { error: 'conversation not found' } };
-      await store.updateConversation(cid, { status: 'stopped', hostMark: 'stopped' });
       if (conv.harnessId != null) {
         const conversation = await harness.conversation(conv.harnessId, context);
         if (conversation) await conversation.abort(context, { background: true });

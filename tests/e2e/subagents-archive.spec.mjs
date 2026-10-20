@@ -2,7 +2,6 @@ import { test, expect } from '@playwright/test';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { startServer, prepareWorkspaces, api } from './helpers/server.mjs';
 import { openApp, createWorkspace, newConversation, send } from './helpers/ui.mjs';
 
@@ -70,8 +69,6 @@ async function assertNarrowWorkbench(page) {
     return {
       center: box('.col-center').width,
       right: box('[data-testid=right-panel]').width,
-      pause: box('[data-testid=btn-pause]').height,
-      resume: box('[data-testid=btn-resume]').height,
       stop: box('[data-testid=btn-stop]').height,
       agent: box('[data-testid=composer-agent]').height,
       context: box('.chip-runtime-meta').height,
@@ -82,7 +79,7 @@ async function assertNarrowWorkbench(page) {
   // Below 1180px the right panel floats over the chat instead of squeezing it.
   const floating = await page.evaluate(() => getComputedStyle(document.querySelector('[data-testid=right-panel]')).position === 'absolute');
   if (!floating) expect(measured.right).toBeLessThanOrEqual(340);
-  for (const key of ['pause', 'resume', 'stop', 'agent', 'context']) {
+  for (const key of ['stop', 'agent', 'context']) {
     expect(measured[key], key).toBeLessThanOrEqual(32);
   }
 }
@@ -203,14 +200,8 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
 
     await page.setViewportSize({ width: 1000, height: 760 });
     await assertNarrowWorkbench(page);
-    await expect(page.getByTestId('btn-pause')).toHaveAttribute('aria-label', '暂停');
-    await expect(page.getByTestId('btn-pause')).toHaveAttribute('title', '暂停执行');
-    await expect(page.getByTestId('btn-resume')).toHaveAttribute('aria-label', '继续');
-    await expect(page.getByTestId('btn-resume')).toHaveAttribute('title', '继续执行');
     await expect(page.getByTestId('btn-stop')).toHaveAttribute('aria-label', '终止');
-    await expect(page.getByTestId('btn-stop')).toHaveAttribute('title', '终止并保存检查点');
-    await expect(page.locator('[data-testid=btn-pause] .btn-ctrl-label')).toBeHidden();
-    await expect(page.locator('[data-testid=btn-resume] .btn-ctrl-label')).toBeHidden();
+    await expect(page.getByTestId('btn-stop')).toHaveAttribute('title', '终止这次运行');
     await expect(page.locator('[data-testid=btn-stop] .btn-ctrl-label')).toBeHidden();
     await shot(page, 'sidebar-subagents-light-1000');
     await foreground.click();
@@ -223,109 +214,5 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
   } finally {
     await srv?.kill();
     await child.close();
-  }
-});
-
-function seedArchived(dataDir, row) {
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'));
-  const now = Date.now();
-  db.prepare(`INSERT INTO conversations (
-    id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
-    current_step, pipeline_step, updated_at, created_at, role_id, pipeline_id,
-    workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-    row.id,
-    row.workspaceId,
-    row.title,
-    'done',
-    0,
-    0,
-    null,
-    0,
-    0,
-    now,
-    now,
-    null,
-    null,
-    row.workspacePath,
-    now,
-    row.originalText || '',
-    null,
-    null,
-    null,
-  );
-  const ins = db.prepare('INSERT INTO messages (id, conversation_id, role, text, tool_json, seq, meta_json) VALUES (?,?,?,?,?,?,?)');
-  row.messages.forEach((msg, index) => {
-    ins.run(msg.id, row.id, msg.role, msg.text, null, index + 1, null);
-  });
-  db.close();
-}
-
-test('an old conversation is archived and can open a new chat from its history', async ({ page }) => {
-  const prepared = await prepareWorkspaces(['repo']);
-  const setup = await startServer({
-    extraEnv: { PI_WORK_WORKSPACE_ROOT: prepared.root },
-  });
-  const token = '';
-  const ws = await api(setup.url, 'POST', '/workspaces', { name: 'old-ws', path: prepared.dirs[0] }, token);
-  expect(ws.status).toBe(201);
-  await setup.kill();
-  // Pre-kernel rows have no harness id. The old run loop is gone, so the row is seeded.
-  seedArchived(setup.dataDir, {
-    id: 'old-archive-e2e',
-    workspaceId: ws.body.id,
-    workspacePath: ws.body.path || prepared.dirs[0],
-    title: '旧对话',
-    originalText: '请保留这句话',
-    messages: [{ id: 'm-user', role: 'user', text: '请保留这句话' }],
-  });
-
-  const kernel = await startServer({
-    dataDir: setup.dataDir,
-    extraEnv: {
-      PI_WORK_FAUX_TEXT: 'continued',
-      PI_WORK_WORKSPACE_ROOT: prepared.root,
-    },
-  });
-  try {
-    await openApp(page, kernel, token);
-    const item = page.locator('[data-testid=conversation-item][data-archived=true]');
-    await expect(item).toBeVisible();
-    await expect(item.getByTestId('archived-badge')).toHaveText('已归档');
-    await expect(page.getByTestId('archived-banner-text')).toHaveText('切换内核前的对话，只能查看');
-    await expect(page.getByTestId('archived-fork')).toHaveText('用这段历史开新对话');
-    await expect(page.getByTestId('chat-input')).toBeDisabled();
-    await expect(page.getByTestId('btn-pause')).toBeDisabled();
-    await expect(page.getByTestId('btn-resume')).toBeDisabled();
-    await expect(page.getByTestId('composer-agent')).toBeDisabled();
-    await expect(page.getByTestId('message').filter({ hasText: '请保留这句话' })).toBeVisible();
-    await expect(page.locator('body')).not.toContainText('sk-');
-    await shot(page, 'archived-light-1440');
-
-    await switchLanguage(page, 'en');
-    await expect(item.getByTestId('archived-badge')).toHaveText('Archived');
-    await expect(page.getByTestId('archived-banner-text')).toContainText('can only be viewed');
-    await expect(page.getByTestId('archived-fork')).toHaveText('Start a new chat from this history');
-    await switchLanguage(page, 'zh');
-    await expect(page.getByTestId('archived-fork')).toHaveText('用这段历史开新对话');
-
-    await page.setViewportSize({ width: 1000, height: 760 });
-    await expect(page.getByTestId('archived-banner')).toBeVisible();
-    await expect(page.getByTestId('chat-input')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
-    await shot(page, 'archived-1000');
-    await page.setViewportSize({ width: 1440, height: 900 });
-
-    const previousId = await item.getAttribute('data-id');
-    await page.getByTestId('archived-fork').click();
-    await expect(page.getByTestId('chat-input')).toBeEnabled({ timeout: 15000 });
-    await expect(page.getByTestId('archived-banner')).toHaveCount(0);
-    const active = page.locator('[data-testid=conversation-item].conv-active');
-    await expect(active).not.toHaveAttribute('data-archived');
-    await expect(active).not.toHaveAttribute('data-id', previousId);
-    await expect(page.locator(`[data-testid=conversation-item][data-id="${previousId}"]`)).toHaveAttribute('data-archived', 'true');
-    await expect(page.getByTestId('composer-agent')).toBeEnabled();
-  } finally {
-    await kernel.kill();
   }
 });

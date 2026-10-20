@@ -1,6 +1,5 @@
 { "turns": [
-  { "text": "先看这些文件。" },
-  { "tool": "read", "args": { "path": "a.txt" } },
+  { "text": "先看这些文件。", "tool": "read", "args": { "path": "a.txt" } },
   { "tool": "read", "args": { "path": "b.txt" } },
   { "tool": "read", "args": { "path": "c.txt" } },
   { "tool": "read", "args": { "path": "d.txt" } },

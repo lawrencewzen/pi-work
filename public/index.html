@@ -29,7 +29,6 @@
           <button type="button" class="btn-icon-xs" data-testid="workspace-new" data-action="new-workspace" data-i18n-title="new_workspace" title="新建工作区">+</button>
         </div>
         <div class="tree-root" id="ws-tree-container"></div>
-        <div id="archived-container"></div>
       </div>
 
       <div class="left-footer">
@@ -58,13 +57,8 @@
             <span id="status-text" data-testid="status-text">就绪</span>
           </span>
           <span id="demo-model-badge" class="demo-model-badge is-hidden" data-testid="demo-model-badge" data-i18n="demo_model_badge">演示模型</span>
-          <span class="resume-count-badge is-hidden" data-i18n-title="autocontinue_title" title="自动恢复计数" data-testid="autocontinue-count" id="autocontinue-count"></span>
         </div>
         <div class="top-right">
-          <span class="checkpoint-badge" id="checkpoint-badge" data-i18n-title="checkpoint_title" title="持久化检查点">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-            <span id="checkpoint-badge-text">检查点</span>
-          </span>
           <button type="button" class="icon-btn top-right-open" data-action="toggle-right" data-i18n-title="expand_panel" title="展开面板 ⌘J">
             <span class="ico-panel ico-panel-right" aria-hidden="true"></span>
             <span class="top-right-dot" id="right-open-dot"></span>
@@ -93,13 +87,7 @@
               <span class="run-step" id="run-step"></span>
               <span class="run-agents" id="run-agents"></span>
               <span class="run-elapsed" id="run-elapsed"></span>
-              <button type="button" class="btn-ctrl" data-testid="btn-pause" id="btn-pause" data-action="pause-conversation" data-i18n-aria="btn_pause" data-i18n-title="btn_pause_title" aria-label="暂停" title="暂停执行" disabled>
-                <span class="btn-ctrl-label" data-i18n="btn_pause">暂停</span>
-              </button>
-              <button type="button" class="btn-ctrl" data-testid="btn-resume" id="btn-resume" data-action="resume-conversation" data-i18n-aria="btn_resume" data-i18n-title="btn_resume_title" aria-label="继续" title="继续执行" disabled>
-                <span class="btn-ctrl-label" data-i18n="btn_resume">继续</span>
-              </button>
-              <button type="button" class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-aria="btn_stop" data-i18n-title="btn_stop_title" aria-label="终止" title="终止并保存检查点" disabled>
+              <button type="button" class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-aria="btn_stop" data-i18n-title="btn_stop_title" aria-label="终止" title="终止这次运行" disabled>
                 <span class="btn-ctrl-label" data-i18n="btn_stop">终止</span>
               </button>
             </div>

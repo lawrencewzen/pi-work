@@ -77,7 +77,7 @@ function convFromRow(row) {
     originalText: row.original_text,
     usage: usageFromSql(row.usage_json),
     harnessId: row.harness_id == null ? null : Number(row.harness_id),
-    hostMark: row.host_mark || null,
+    lastSubmissionId: row.last_submission_id == null ? null : Number(row.last_submission_id),
   };
 }
 
@@ -124,7 +124,8 @@ export function createSqliteStore(dir) {
       last_progress_at INTEGER,
       original_text TEXT,
       harness_id INTEGER,
-      host_mark TEXT
+      host_mark TEXT,
+      last_submission_id INTEGER
     );
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
@@ -218,6 +219,7 @@ export function createSqliteStore(dir) {
     if (!convCols.has('usage_json')) db.exec('ALTER TABLE conversations ADD COLUMN usage_json TEXT');
     if (!convCols.has('harness_id')) db.exec('ALTER TABLE conversations ADD COLUMN harness_id INTEGER');
     if (!convCols.has('host_mark')) db.exec('ALTER TABLE conversations ADD COLUMN host_mark TEXT');
+    if (!convCols.has('last_submission_id')) db.exec('ALTER TABLE conversations ADD COLUMN last_submission_id INTEGER');
   }
 
   {
@@ -234,6 +236,15 @@ export function createSqliteStore(dir) {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
+  // Dialogue state lives in the Harness. These tables only served the old shell
+  // and the pre-harness archive. Export legacy chats before starting this build.
+  db.exec(`
+    DROP TABLE IF EXISTS events;
+    DROP TABLE IF EXISTS messages;
+    DROP TABLE IF EXISTS tool_calls;
+    DROP TABLE IF EXISTS changes;
+  `);
+
   const q = {
     insWs: db.prepare('INSERT INTO workspaces (id, name, path, source, git_url, branch, root_path, worktrees_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
     listWs: db.prepare('SELECT * FROM workspaces WHERE removed_at IS NULL'),
@@ -246,41 +257,18 @@ export function createSqliteStore(dir) {
     insConv: db.prepare(`INSERT INTO conversations (
       id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
       current_step, pipeline_step, updated_at, created_at, role_id, pipeline_id,
-      workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+      workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark,
+      last_submission_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
     getConv: db.prepare('SELECT * FROM conversations WHERE id = ?'),
-    listConv: db.prepare('SELECT * FROM conversations WHERE workspace_id = ? ORDER BY updated_at DESC'),
     listRecoverable: db.prepare("SELECT * FROM conversations WHERE status IN ('running','recovering') AND harness_id IS NULL"),
     listKernel: db.prepare('SELECT * FROM conversations WHERE harness_id IS NOT NULL'),
     updConv: db.prepare(`UPDATE conversations SET
-      workspace_id=?, title=?, status=?, auto_continues=?, retries=?, last_checkpoint_at=?,
-      current_step=?, pipeline_step=?, updated_at=?, role_id=?, pipeline_id=?,
-      workspace_path=?, last_progress_at=?, original_text=?, usage_json=?, harness_id=?, host_mark=?
+      workspace_id=?, title=?, pipeline_step=?, updated_at=?, role_id=?, pipeline_id=?,
+      workspace_path=?, last_progress_at=?, original_text=?, usage_json=?, harness_id=?,
+      last_submission_id=?
       WHERE id=?`),
-    insMsg: db.prepare('INSERT INTO messages (id, conversation_id, role, text, tool_json, seq, meta_json) VALUES (?,?,?,?,?,?,?)'),
-    getMsg: db.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq ASC, rowid ASC'),
-    getMsgById: db.prepare('SELECT * FROM messages WHERE id = ?'),
-    maxMsgSeq: db.prepare('SELECT COALESCE(MAX(seq),0) AS m FROM messages WHERE conversation_id = ?'),
-    updMsg: db.prepare('UPDATE messages SET role=?, text=?, tool_json=?, meta_json=? WHERE id=?'),
-    getTool: db.prepare('SELECT * FROM tool_calls WHERE id = ?'),
-    insTool: db.prepare(`INSERT INTO tool_calls (id, conversation_id, name, status, input_json, output_json, path, added, removed, before_hash, after_hash)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET
-        conversation_id=excluded.conversation_id,
-        name=COALESCE(excluded.name, tool_calls.name),
-        status=COALESCE(excluded.status, tool_calls.status),
-        input_json=COALESCE(excluded.input_json, tool_calls.input_json),
-        output_json=COALESCE(excluded.output_json, tool_calls.output_json),
-        path=COALESCE(excluded.path, tool_calls.path),
-        added=COALESCE(excluded.added, tool_calls.added),
-        removed=COALESCE(excluded.removed, tool_calls.removed),
-        before_hash=COALESCE(excluded.before_hash, tool_calls.before_hash),
-        after_hash=COALESCE(excluded.after_hash, tool_calls.after_hash)`),
-    insChange: db.prepare('INSERT INTO changes (conversation_id, path, before_text, after_text, added, removed, tool_call_id) VALUES (?,?,?,?,?,?,?)'),
-    listChanges: db.prepare('SELECT * FROM changes WHERE conversation_id = ? ORDER BY id ASC'),
-    maxEvent: db.prepare('SELECT COALESCE(MAX(event_id),0) AS m FROM events WHERE conversation_id = ?'),
-    insEvent: db.prepare('INSERT INTO events (conversation_id, event_id, event, data_json) VALUES (?,?,?,?)'),
-    listEvents: db.prepare('SELECT * FROM events WHERE conversation_id = ? AND event_id > ? ORDER BY event_id ASC'),
+    listConv: db.prepare('SELECT * FROM conversations WHERE workspace_id = ? AND harness_id IS NOT NULL ORDER BY updated_at DESC'),
     insRole: db.prepare(`INSERT OR REPLACE INTO roles (
       id, name, system_prompt, tools_json, model, description, skills_json, plugin_tools
     ) VALUES (?,?,?,?,?,?,?,?)`),
@@ -417,18 +405,13 @@ export function createSqliteStore(dir) {
     },
 
     async createConversation({
-      id, workspaceId, title, roleId, pipelineId, workspacePath, status = 'idle',
+      id, workspaceId, title, roleId, pipelineId, workspacePath,
     } = {}) {
       const now = Date.now();
       const conv = {
         id: id || randomUUID(),
         workspaceId: workspaceId ?? null,
         title: title || 'New conversation',
-        status,
-        autoContinues: 0,
-        retries: 0,
-        lastCheckpointAt: null,
-        currentStep: 0,
         pipelineStep: 0,
         updatedAt: now,
         createdAt: now,
@@ -439,13 +422,12 @@ export function createSqliteStore(dir) {
         originalText: null,
         usage: null,
         harnessId: null,
-        hostMark: null,
       };
       q.insConv.run(
-        conv.id, conv.workspaceId, conv.title, conv.status, conv.autoContinues, conv.retries,
-        conv.lastCheckpointAt, conv.currentStep, conv.pipelineStep, conv.updatedAt, conv.createdAt,
+        conv.id, conv.workspaceId, conv.title, null, null, null,
+        null, null, conv.pipelineStep, conv.updatedAt, conv.createdAt,
         conv.roleId, conv.pipelineId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
-        usageToSql(conv.usage), conv.harnessId, conv.hostMark,
+        usageToSql(conv.usage), conv.harnessId, null, null,
       );
       return conv;
     },
@@ -474,11 +456,6 @@ export function createSqliteStore(dir) {
           id,
           workspaceId: null,
           title: 'New conversation',
-          status: 'idle',
-          autoContinues: 0,
-          retries: 0,
-          lastCheckpointAt: null,
-          currentStep: 0,
           pipelineStep: 0,
           updatedAt: now,
           createdAt: now,
@@ -489,139 +466,21 @@ export function createSqliteStore(dir) {
           originalText: null,
           usage: null,
           harnessId: null,
-          hostMark: null,
         };
         q.insConv.run(
-          conv.id, conv.workspaceId, conv.title, conv.status, conv.autoContinues, conv.retries,
-          conv.lastCheckpointAt, conv.currentStep, conv.pipelineStep, conv.updatedAt, conv.createdAt,
+          conv.id, conv.workspaceId, conv.title, null, null, null,
+          null, null, conv.pipelineStep, conv.updatedAt, conv.createdAt,
           conv.roleId, conv.pipelineId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
-          usageToSql(conv.usage), conv.harnessId, conv.hostMark,
+          usageToSql(conv.usage), null, null, patch.lastSubmissionId ?? null,
         );
       }
       const next = { ...conv, ...patch, updatedAt: Date.now() };
       q.updConv.run(
-        next.workspaceId, next.title, next.status, next.autoContinues, next.retries, next.lastCheckpointAt,
-        next.currentStep, next.pipelineStep, next.updatedAt, next.roleId, next.pipelineId,
+        next.workspaceId, next.title, next.pipelineStep, next.updatedAt, next.roleId, next.pipelineId,
         next.workspacePath, next.lastProgressAt, next.originalText, usageToSql(next.usage),
-        next.harnessId ?? null, next.hostMark ?? null, id,
+        next.harnessId ?? null, next.lastSubmissionId ?? null, id,
       );
       return next;
-    },
-
-    async addMessage(cid, msg) {
-      const existing = msg.id ? q.getMsgById.get(msg.id) : undefined;
-      if (existing) return msgFromRow(existing);
-      const seq = (q.maxMsgSeq.get(cid)?.m || 0) + 1;
-      const row = { id: msg.id || randomUUID(), role: msg.role, text: msg.text ?? null, tool: msg.tool ?? null };
-      const meta = metaFromMsg(msg);
-      q.insMsg.run(row.id, cid, row.role, row.text, row.tool ? j(row.tool) : null, seq, meta ? j(meta) : null);
-      return msgFromRow({
-        id: row.id,
-        role: row.role,
-        text: row.text,
-        tool_json: row.tool ? j(row.tool) : null,
-        meta_json: meta ? j(meta) : null,
-      });
-    },
-    async getMessages(cid) {
-      return q.getMsg.all(cid).map(msgFromRow);
-    },
-    async updateMessage(cid, mid, patch = {}) {
-      const row = q.getMsgById.get(mid);
-      if (!row) return undefined;
-      const cur = msgFromRow(row);
-      const tool = patch.tool ? { ...(cur.tool || {}), ...patch.tool } : cur.tool;
-      const role = patch.role ?? cur.role;
-      const text = patch.text !== undefined ? patch.text : cur.text;
-      const meta = metaFromMsg(patch, p(row.meta_json));
-      q.updMsg.run(role, text ?? null, tool ? j(tool) : null, meta ? j(meta) : null, mid);
-      const out = { id: mid, role, text, ...(tool ? { tool } : {}) };
-      applyMeta(out, meta);
-      return out;
-    },
-
-    async getToolCall(toolCallId) {
-      return toolFromRow(q.getTool.get(toolCallId));
-    },
-    async upsertToolCall(row) {
-      const prev = toolFromRow(q.getTool.get(row.id)) || {};
-      const next = { ...prev, ...row };
-      q.insTool.run(
-        next.id,
-        next.conversationId ?? prev.conversationId ?? null,
-        next.name ?? null,
-        next.status ?? null,
-        next.input !== undefined ? j(next.input) : (prev.input !== undefined ? j(prev.input) : null),
-        next.output !== undefined ? j(next.output) : (prev.output !== undefined ? j(prev.output) : null),
-        next.path ?? prev.path ?? null,
-        next.added ?? prev.added ?? null,
-        next.removed ?? prev.removed ?? null,
-        next.beforeHash ?? prev.beforeHash ?? null,
-        next.afterHash ?? prev.afterHash ?? null,
-      );
-      return toolFromRow(q.getTool.get(row.id));
-    },
-
-    async addChange({ conversationId, path: filePath, before, after, added, removed, toolCallId }) {
-      q.insChange.run(conversationId, filePath, before ?? null, after ?? null, added ?? 0, removed ?? 0, toolCallId ?? null);
-      return { path: filePath, before, after, added, removed, toolCallId };
-    },
-    async getChanges(cid) {
-      const list = q.listChanges.all(cid);
-      const byPath = new Map();
-      for (const r of list) {
-        const ch = {
-          path: r.path,
-          before: r.before_text,
-          after: r.after_text,
-          added: r.added,
-          removed: r.removed,
-          toolCallId: r.tool_call_id,
-        };
-        const prev = byPath.get(ch.path);
-        if (!prev) byPath.set(ch.path, ch);
-        else {
-          prev.after = ch.after;
-          prev.added = ch.added;
-          prev.removed = ch.removed;
-          prev.toolCallId = ch.toolCallId;
-        }
-      }
-      return [...byPath.values()].map(({ path: pth, added, removed, toolCallId }) => ({ path: pth, added, removed, toolCallId }));
-    },
-    async getChangeForPath(cid, filePath) {
-      const list = q.listChanges.all(cid).filter((r) => r.path === filePath);
-      if (!list.length) return undefined;
-      const first = list[0];
-      const last = list[list.length - 1];
-      return {
-        path: filePath,
-        before: first.before_text,
-        after: last.after_text,
-        added: last.added,
-        removed: last.removed,
-        toolCallId: last.tool_call_id,
-      };
-    },
-
-    async appendEvent(cid, { event, data } = {}) {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const next = (q.maxEvent.get(cid)?.m || 0) + 1;
-        q.insEvent.run(cid, next, event, j(data));
-        db.exec('COMMIT');
-        return { id: next, event, data };
-      } catch (err) {
-        try { db.exec('ROLLBACK'); } catch { /* ignore */ }
-        throw err;
-      }
-    },
-    async getEvents(cid, { afterId = 0 } = {}) {
-      return q.listEvents.all(cid, afterId).map((r) => ({
-        id: r.event_id,
-        event: r.event,
-        data: p(r.data_json),
-      }));
     },
 
     async createRole(role) {

@@ -1,45 +1,59 @@
 // HTTP facade over one Pi Durable Harness.
-// Scheduling and recovery belong to the Harness (`resume`, `submit`). This module
-// records the UUID row, maps watchEvents into the existing events table, and
-// answers the current REST shape.
+// Dialogue state lives in the Harness. This module records the conversation
+// index, maps watchEvents onto the connected SSE clients, and reads diffs
+// back out of tool-result entries.
 import { randomUUID } from 'node:crypto';
-import { appendFile, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, stat, writeFile } from 'node:fs/promises';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import { getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
-import { ConversationBusy, createRegistry, watchEvents } from '@earendil-works/pi-durable';
+import { createRegistry, watchEvents } from '@earendil-works/pi-durable';
+import { liveDiff } from '../core/diff.mjs';
 import { redactAuthText } from '../core/grok-auth.mjs';
+import { resolveInWorkspace } from '../core/paths.mjs';
 import { formatSSE } from '../core/sse.mjs';
 import { presentContext } from '../core/usage.mjs';
 import {
-  createControlExtension,
-  createControlHost,
-  kernelRetryPolicy,
-  projectTranscript,
-} from './control.mjs';
-import {
+  baselinesFromEntries,
   createMapContext,
   mapHarnessBatch,
-  snapshotGap,
-  synthesizeStatus,
+  messagesFromEntries,
+  statusFromSubmission,
 } from './events.mjs';
+import { createScriptFloorExtension, scriptedDemoStep } from './faux-script.mjs';
 import { FAUX_MODEL, openKernel, registerFaux } from './index.mjs';
 import { createKernelModels, explicitDemo } from './models.mjs';
-import {
-  archivedMutation,
-  installArchiveExtension,
-  isArchivedConversation,
-  openFromHistory,
-  presentArchived,
-} from './archive.mjs';
 import { installPluginReload } from './plugins.mjs';
 import { createRoleHost, installRoleExtensions } from './roles.mjs';
 import { createSubagentExtension, createSubagentHost, maxSubagents } from './subagents.mjs';
-import { scriptedDemoStep } from './faux-script.mjs';
 import { createWorkspaceExtension, toolsForRole } from './tools.mjs';
 import { installUsageExtension } from './usage.mjs';
 
 const DEMO_RESPONSE_COUNT = 100;
+const DETAIL_CAP = 1024 * 1024;
+
+function positiveInt(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Harness settings. `PI_WORK_RETRY_MAX` is the number of attempts including the
+ * first; Pi Durable's `maxRetries` counts the attempts after that.
+ */
+export function kernelSettings(env = process.env) {
+  const maxAttempts = positiveInt(env.PI_WORK_RETRY_MAX, 5);
+  return {
+    retry: {
+      enabled: true,
+      maxRetries: Math.max(0, maxAttempts - 1),
+      baseDelayMs: positiveInt(env.PI_WORK_RETRY_BASE_MS, 200),
+    },
+    stream: {
+      timeoutMs: positiveInt(env.PI_WORK_STREAM_TIMEOUT_MS, 120_000),
+    },
+  };
+}
 
 function parseFauxPlan(raw) {
   const text = String(raw || '').trim();
@@ -84,8 +98,35 @@ function fauxProviderOptions(env) {
   return { tokensPerSecond: tps };
 }
 
-function installDemo(models, env, hooks) {
-  // PI_WORK_FAUX_TPS is a test switch. Unset, faux still returns as fast as it can.
+/**
+ * The faux provider does not apply `stream.timeoutMs`. A hold waits on the
+ * timeout Pi Durable already passed, then fails with a retryable timeout error.
+ * Abort still wins. With no timeout the call stays open, matching a hung model.
+ */
+function holdForStream(streamOptions) {
+  const timeoutMs = Number(streamOptions?.timeoutMs);
+  const signal = streamOptions?.signal;
+  return new Promise((resolve, reject) => {
+    let timer;
+    const finish = (err) => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      if (err) reject(err);
+      else resolve();
+    };
+    const onAbort = () => finish(new Error('Request was aborted'));
+    if (signal?.aborted) {
+      finish(new Error('Request was aborted'));
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timer = setTimeout(() => finish(new Error(`Request timed out after ${timeoutMs}ms`)), timeoutMs);
+    }
+  });
+}
+
+function installDemo(models, env) {
   const faux = registerFaux(models, fauxProviderOptions(env));
   const text = String(env.PI_WORK_FAUX_TEXT || '');
   const holdAll = String(env.PI_WORK_FAUX_HOLD || '').trim() === '1';
@@ -93,14 +134,13 @@ function installDemo(models, env, hooks) {
   const scriptPath = String(env.PI_WORK_FAUX_SCRIPT || '').trim();
   const recordPath = String(env.PI_WORK_FAUX_RECORD || '').trim();
   const plan = holdAll ? null : parseFauxPlan(env.PI_WORK_FAUX_PLAN);
-  // Hold still wins: a script or plan must not replace the in-flight model call used by recovery tests.
-  const scripted = !holdAll && !plan && scriptPath ? scriptedDemoStep(scriptPath, env, hooks) : null;
+  const scripted = !holdAll && !plan && scriptPath ? scriptedDemoStep(scriptPath, env) : null;
   let cursor = 0;
   const step = async (context, streamOptions) => {
     if (recordPath) await appendFile(recordPath, `${JSON.stringify(requestSnapshot(context))}\n`);
     if (holdAll) {
       if (ready) await writeFile(ready, 'seen');
-      await new Promise(() => {});
+      await holdForStream(streamOptions);
       return fauxAssistantMessage(text);
     }
     if (plan) {
@@ -108,7 +148,7 @@ function installDemo(models, env, hooks) {
       cursor += 1;
       if (item === 'hold') {
         if (ready) await writeFile(ready, 'seen');
-        await new Promise(() => {});
+        await holdForStream(streamOptions);
       }
       return fauxAssistantMessage(item);
     }
@@ -121,8 +161,8 @@ function installDemo(models, env, hooks) {
 
 /**
  * Open the Harness for the conversation HTTP routes.
- * Call `harness.resume()` only after unfinished rows are marked recovering,
- * so a restarted run keeps that status until it settles.
+ * `harness.resume()` continues unfinished work. Status is the last submission
+ * reacquired with `harness.submission(id)`, not a host-side scan.
  */
 export async function openConversationKernel({
   dataDir,
@@ -138,8 +178,7 @@ export async function openConversationKernel({
   if (!store) throw new Error('store is required');
   const faux = demo === true || explicitDemo(env);
   const models = createModels();
-  const demoHooks = { tick() {} };
-  if (faux) installDemo(models, env, demoHooks);
+  if (faux) installDemo(models, env);
   const modelRoutes = createKernelModels({ models, getSettings, grokAuth, env });
   const routes = faux ? null : modelRoutes;
   const registry = createRegistry();
@@ -148,9 +187,8 @@ export async function openConversationKernel({
   const watches = new Map();
   const tails = new Map();
   const listeners = new Map();
+  const settings = kernelSettings(env);
   let roles;
-  let control = null;
-  const controlBridge = { conversationIdFor };
 
   async function conversationIdFor(harnessId) {
     const wanted = Number(harnessId);
@@ -161,27 +199,8 @@ export async function openConversationKernel({
     return rows.find((row) => Number(row.harnessId) === wanted)?.id ?? null;
   }
 
-  registry.install(createWorkspaceExtension({
-    onWrote: async (info) => {
-      const cid = await conversationIdFor(info.harnessId);
-      if (!cid) throw new Error(`no conversation for harness ${info.harnessId}`);
-      watches.get(cid)?.mapCtx.toolDiffs.set(info.toolCallId, {
-        added: info.added,
-        removed: info.removed,
-      });
-      await store.addChange({
-        conversationId: cid,
-        path: info.path,
-        before: info.before,
-        after: info.after,
-        added: info.added,
-        removed: info.removed,
-        toolCallId: info.toolCallId,
-      });
-    },
-  }));
+  registry.install(createWorkspaceExtension());
   installRoleExtensions(registry, roleBridge);
-  installArchiveExtension(registry);
   installUsageExtension(registry);
   installPluginReload(registry, roleBridge);
   const subagentExtension = createSubagentExtension({
@@ -192,13 +211,8 @@ export async function openConversationKernel({
   });
   roleBridge.extraTools = () => subagentExtension.tools || [];
   registry.install(subagentExtension);
-  registry.install(createControlExtension(controlBridge));
-  const kernel = await openKernel({
-    dataDir,
-    models,
-    registry,
-    settings: { retry: kernelRetryPolicy(env) },
-  });
+  if (String(env.PI_WORK_FAUX_SCRIPT || '').trim()) registry.install(createScriptFloorExtension());
+  const kernel = await openKernel({ dataDir, models, registry, settings });
   const { harness, context } = kernel;
 
   function enqueue(cid, fn) {
@@ -208,16 +222,10 @@ export async function openConversationKernel({
     return run;
   }
 
-  function notify(cid, row) {
+  function push(cid, ev) {
     for (const fn of listeners.get(cid) || []) {
-      try { fn(row); } catch { /* a detached response must not stop the watch */ }
+      try { fn(ev); } catch { /* a detached response must not stop the watch */ }
     }
-  }
-
-  async function emit(cid, event, data) {
-    const row = await store.appendEvent(cid, { event, data });
-    notify(cid, row);
-    return row;
   }
 
   async function emitAgent(cid, status, messages) {
@@ -229,106 +237,61 @@ export async function openConversationKernel({
     }
   }
 
-  async function deliver(cid, ev) {
-    const next = control ? await control.absorb(cid, ev) : ev;
-    if (!next) return;
-    if (next.event === 'status' && next.data?.status === 'done') {
-      const conv = await store.getConversation(cid);
-      if (conv?.hostMark === 'stopped') return;
-      if (roles) {
-        const action = await roles.onRunFinished(cid);
-        if (action !== 'continue') return;
-      }
-    }
-    if (next.event === 'status') await emitStatus(cid, next.data.status, omitStatus(next.data));
-    else await emit(cid, next.event, next.data);
-  }
-
-  async function emitStatus(cid, status, extra = {}) {
-    const conv = await store.getConversation(cid);
-    if (conv?.hostMark === 'stopped' && status !== 'stopped') return;
-    if (conv?.hostMark === 'paused' && status !== 'paused') return;
-    if (conv?.hostMark === 'failed' && status !== 'failed') return;
-    if (status === 'running' && conv?.hostMark === 'recovering') return;
-    const patch = { status };
-    const sticky = conv?.hostMark === 'paused' || conv?.hostMark === 'stopped' || conv?.hostMark === 'failed';
-    if ((status === 'done' || status === 'failed') && !sticky) patch.hostMark = null;
-    if (status === 'recovering') patch.hostMark = 'recovering';
-    if (conv) await store.updateConversation(cid, patch);
-    await emit(cid, 'status', { status, ...extra });
-    const messages = conv?.harnessId ? (await readTranscript(conv.harnessId)).messages : [];
-    await emitAgent(cid, status, messages);
-  }
-
   async function readView(harnessId) {
     const conversation = await harness.conversation(harnessId, context);
     if (!conversation) return null;
     const view = await conversation.viewState(context);
     try {
-      const value = view.value;
-      return {
-        entries: value?.entries || [],
-        live: value?.docs?.['pi.live'] || {},
-      };
+      return view.value;
     } finally {
       view.dispose();
     }
   }
 
+  async function submissionView(conv) {
+    // One pointer in the app index. Status is that submission's record.
+    // A conversation with no pointer has not been sent a message yet.
+    if (!conv?.lastSubmissionId) return { status: 'idle' };
+    const handle = await harness.submission(conv.lastSubmissionId, context);
+    if (!handle) throw new Error(`Submission ${conv.lastSubmissionId} is not on the harness`);
+    return statusFromSubmission(await handle.status(context));
+  }
+
   async function readTranscript(harnessId) {
     const view = await readView(harnessId);
-    if (!view) return { messages: [], usage: null, busy: false };
-    const mapped = projectTranscript(view.entries);
-    return { ...mapped, busy: Boolean(view.live?.run) };
+    if (!view) return { messages: [], usage: null, entries: [] };
+    const mapped = messagesFromEntries(view.entries);
+    return { ...mapped, entries: view.entries || [] };
   }
 
-  async function submissionBlocked(harnessId) {
-    const view = await readView(harnessId);
-    if (view?.live?.run) return true;
-    const inspection = await harness.inspect(context);
-    return inspection.submissions.some((record) => (
-      record.conversationId === harnessId && (record.status === 'queued' || record.status === 'placed')
-    ));
-  }
-
-  async function unfinished(harnessId) {
-    const inspection = await harness.inspect(context);
-    const submission = inspection.submissions.some((record) => (
-      record.conversationId === harnessId && (record.status === 'queued' || record.status === 'placed')
-    ));
-    const task = inspection.tasks.some((item) => item.record.conversationId === harnessId);
-    return submission || task;
+  async function deliver(cid, ev) {
+    if (ev.event === 'status' && ev.data?.status === 'done' && roles) {
+      const action = await roles.onRunFinished(cid);
+      if (action !== 'continue') return;
+    }
+    push(cid, ev);
+    if (ev.event === 'status') {
+      const conv = await store.getConversation(cid);
+      const messages = conv?.harnessId ? (await readTranscript(conv.harnessId)).messages : [];
+      await emitAgent(cid, ev.data.status, messages);
+    }
   }
 
   async function applyBatch(cid, batch, mapCtx) {
     const mapped = mapHarnessBatch(batch, mapCtx);
     for (const ev of mapped.events) await deliver(cid, ev);
-    for (const snapshot of mapped.snapshots) await fillSnapshot(cid, snapshot, mapCtx);
-    if (mapped.events.some((ev) => ev.event === 'checkpoint')) {
-      const last = [...mapped.events].reverse().find((ev) => ev.event === 'checkpoint');
-      if (last) {
-        await store.updateConversation(cid, {
-          lastCheckpointAt: last.data.at,
-          currentStep: last.data.step,
-        });
-      }
+    if (mapped.refresh) {
+      const conv = await store.getConversation(cid);
+      const status = (await submissionView(conv)).status;
+      await deliver(cid, { event: 'status', data: { status } });
     }
-    const usage = [...mapped.events].reverse().find((ev) => ev.event === 'usage');
-    if (usage?.data?.usage) await store.updateConversation(cid, { usage: usage.data.usage });
-  }
-
-  async function fillSnapshot(cid, snapshot, mapCtx) {
-    const existing = await store.getEvents(cid);
-    const gap = snapshotGap(snapshot, existing, mapCtx);
-    for (const ev of gap) await deliver(cid, ev);
   }
 
   async function attach(row) {
     if (!row?.harnessId || watches.has(row.id)) return;
     const stream = await watchEvents(harness, row.harnessId, context);
-    const mapCtx = createMapContext({ step: row.currentStep || 0, retry: kernelRetryPolicy(env) });
+    const mapCtx = createMapContext({ retry: settings.retry });
     watches.set(row.id, { stream, mapCtx, harnessId: row.harnessId });
-    await enqueue(row.id, () => fillSnapshot(row.id, stream.snapshot, mapCtx));
     stream.start((batch) => enqueue(row.id, async () => {
       try {
         await applyBatch(row.id, batch, mapCtx);
@@ -336,21 +299,6 @@ export async function openConversationKernel({
         console.error(`PI_WORK_KERNEL_EVENT ${redactAuthText(err instanceof Error ? (err.stack || err.message) : err)}`);
       }
     }));
-  }
-
-  async function settleStored(row) {
-    if (row.hostMark === 'stopped' || row.status === 'stopped') return;
-    if (await unfinished(row.harnessId)) {
-      await store.updateConversation(row.id, { status: 'recovering', hostMark: 'recovering' });
-      await emitStatus(row.id, 'recovering', { autoContinues: row.autoContinues || 0 });
-      return;
-    }
-    if (roles && await roles.pipelinePending(row)) return;
-    if (row.status !== 'running' && row.status !== 'recovering' && row.hostMark !== 'recovering') return;
-    const view = await readView(row.harnessId);
-    const lastAssistant = [...(view?.entries || [])].reverse().find((entry) => entry.kind === 'pi.assistant');
-    const failed = lastAssistant?.model?.[0]?.stopReason === 'error';
-    await store.updateConversation(row.id, { status: failed ? 'failed' : 'done', hostMark: null });
   }
 
   async function resolveModel(conv, role) {
@@ -362,23 +310,9 @@ export async function openConversationKernel({
     await conversation.configure({ model: model ?? null }, context);
   }
 
-  control = createControlHost({
-    harness,
-    context,
-    store,
-    bridge: controlBridge,
-    emit,
-    readTranscript: async (cid) => {
-      const row = await store.getConversation(cid);
-      if (!row?.harnessId) return { messages: [] };
-      return readTranscript(row.harnessId);
-    },
-    isBusy: submissionBlocked,
-    env,
-  });
-  demoHooks.tick = () => {
-    for (const cid of watches.keys()) control.touch(cid);
-  };
+  async function statusOf(conv) {
+    return (await submissionView(conv)).status;
+  }
 
   roles = createRoleHost({
     store,
@@ -388,9 +322,10 @@ export async function openConversationKernel({
     extensions,
     bridge: roleBridge,
     readTranscript,
-    emit,
+    emit: (cid, event, data) => deliver(cid, { event, data }),
     describeAgents,
     resolveModel,
+    statusOf,
   });
 
   function cidFor(harnessId) {
@@ -413,7 +348,7 @@ export async function openConversationKernel({
     harness,
     context,
     readTranscript,
-    emit,
+    emit: (cid, event, data) => deliver(cid, { event, data }),
     watchEvents,
     resolveModel: resolveChildModel,
     collectTools: (role, options) => roles.collectTools(role, options),
@@ -430,7 +365,6 @@ export async function openConversationKernel({
   await roles.seed(stored);
   await subagents.seed(stored);
   for (const row of stored) await attach(row);
-  for (const row of stored) await settleStored(row);
   await modelRoutes.warm();
   harness.resume();
   for (const row of stored) await roles.reconcile(row);
@@ -440,8 +374,36 @@ export async function openConversationKernel({
     return harness.conversation(conv.harnessId, context);
   }
 
+  async function workspacePathFor(cid) {
+    const conv = await store.getConversation(cid);
+    return conv?.workspacePath || '';
+  }
+
+  async function diskText(workspacePath, filePath) {
+    const abs = await resolveInWorkspace(workspacePath, filePath);
+    try {
+      const info = await stat(abs);
+      if (info.size > DETAIL_CAP) {
+        const err = new Error('文件过大');
+        err.code = 'E_TOO_LARGE';
+        throw err;
+      }
+      return await readFile(abs, 'utf8');
+    } catch (err) {
+      if (err.code === 'ENOENT') return '';
+      throw err;
+    }
+  }
+
+  async function baselinesFor(cid) {
+    const conv = await store.getConversation(cid);
+    if (!conv?.harnessId) return [];
+    const transcript = await readTranscript(conv.harnessId);
+    return baselinesFromEntries(transcript.entries);
+  }
+
   async function createConversation(fields) {
-    const conv = await store.createConversation({ ...fields, status: 'idle' });
+    const conv = await store.createConversation({ ...fields });
     const role = (fields.roleId && await store.getRole(fields.roleId)) || await store.getRole('default');
     const created = await harness.createConversation({
       ownership: { kind: 'ownerless' },
@@ -451,7 +413,7 @@ export async function openConversationKernel({
         tools: toolsForRole(role),
       },
     }, context);
-    const next = await store.updateConversation(conv.id, { harnessId: created.id, status: 'idle' });
+    const next = await store.updateConversation(conv.id, { harnessId: created.id });
     if (roles) await roles.afterCreate(next);
     await attach(next);
     return next;
@@ -465,7 +427,6 @@ export async function openConversationKernel({
         try { await watch.stream.stop(); } catch { /* already stopped */ }
       }
       watches.clear();
-      await control?.close();
       await subagents.close();
       await kernel.close();
     },
@@ -485,73 +446,110 @@ export async function openConversationKernel({
     childMessages(cid, agentId) {
       return subagents.childMessages(cid, agentId);
     },
-    async stopConversation(cid) {
-      const conv = await store.getConversation(cid);
-      if (!conv) return { status: 404, body: { error: 'conversation not found' } };
-      if (isArchivedConversation(conv)) return archivedMutation();
-      if (control) await control.markStopped(cid);
+    stopConversation(cid) {
       return subagents.stopConversation(cid);
     },
-    pause(cid) {
-      return control.pause(cid);
+    async changes(cid) {
+      const workspacePath = await workspacePathFor(cid);
+      const rows = [];
+      for (const baseline of await baselinesFor(cid)) {
+        if (baseline.oversized) {
+          rows.push({
+            path: baseline.path,
+            added: baseline.added ?? 0,
+            removed: baseline.removed ?? 0,
+            toolCallId: baseline.toolCallId,
+            error: '文件过大',
+          });
+          continue;
+        }
+        let disk;
+        try {
+          disk = await diskText(workspacePath, baseline.path);
+        } catch (err) {
+          if (err.code === 'E_TOO_LARGE') {
+            rows.push({
+              path: baseline.path,
+              added: baseline.added ?? 0,
+              removed: baseline.removed ?? 0,
+              toolCallId: baseline.toolCallId,
+              error: '文件过大',
+            });
+            continue;
+          }
+          throw err;
+        }
+        const diff = liveDiff({
+          path: baseline.path,
+          before: baseline.before ?? '',
+          storedAfter: baseline.after ?? '',
+          diskText: disk,
+        });
+        rows.push({
+          path: baseline.path,
+          added: diff.added,
+          removed: diff.removed,
+          toolCallId: baseline.toolCallId,
+        });
+      }
+      return rows;
     },
-    resume(cid) {
-      return control.resume(cid);
+    async diff(cid, filePath) {
+      const baseline = (await baselinesFor(cid)).find((row) => row.path === filePath);
+      if (!baseline) return { status: 404, body: { error: 'no diff' } };
+      if (baseline.oversized) return { status: 200, body: { path: filePath, error: '文件过大' } };
+      const workspacePath = await workspacePathFor(cid);
+      try {
+        const disk = await diskText(workspacePath, filePath);
+        return {
+          status: 200,
+          body: liveDiff({
+            path: filePath,
+            before: baseline.before ?? '',
+            storedAfter: baseline.after ?? '',
+            diskText: disk,
+          }),
+        };
+      } catch (err) {
+        if (err.code === 'E_TOO_LARGE') return { status: 200, body: { path: filePath, error: '文件过大' } };
+        throw err;
+      }
     },
     async present(conv, { includeMessages = false } = {}) {
-      if (isArchivedConversation(conv)) {
-        const messages = includeMessages ? await store.getMessages(conv.id) : undefined;
-        return presentArchived(conv, { includeMessages, messages });
-      }
+      if (!conv?.harnessId) return { ...conv, status: 'idle', messages: includeMessages ? [] : undefined };
       const transcript = await readTranscript(conv.harnessId);
-      const status = synthesizeStatus(conv, transcript.busy);
-      const usage = presentContext(transcript.usage || conv.usage).usage;
+      const view = await submissionView(conv);
+      const status = view.status;
+      const usage = presentContext(transcript.usage).usage;
       const out = { ...conv, status, usage };
+      if (view.llmError) out.llmError = view.llmError;
       if (includeMessages) {
         out.messages = roles ? await roles.annotate(conv, transcript.messages) : transcript.messages;
       }
       return out;
     },
     async postMessage(conv, text) {
-      if (isArchivedConversation(conv)) return archivedMutation();
       const conversation = await conversationFor(conv);
-      if (!conversation) {
-        return { status: 409, body: { error: 'err_send_blocked', status: conv?.status || 'stopped' } };
+      if (!conversation) return { status: 404, body: { error: 'conversation not found' } };
+      const prepared = roles ? await roles.prepareSend(conv, text) : null;
+      const current = prepared?.conversation || conv;
+      if (routes) {
+        const model = await routes.modelFor(current);
+        await conversation.configure({ model: model ?? null }, context);
       }
-      try {
-        if (await submissionBlocked(conv.harnessId)) {
-          return { status: 409, body: { error: 'err_send_blocked', status: 'running' } };
-        }
-        if (control) await control.beginUserTurn(conv);
-        const prepared = roles ? await roles.prepareSend(conv, text) : null;
-        const current = prepared?.conversation || conv;
-        if (routes) {
-          const model = await routes.modelFor(current);
-          await conversation.configure({ model: model ?? null }, context);
-        }
-        const submission = await conversation.submit({
-          type: 'input',
-          content: text,
-          requestId: prepared?.requestId || randomUUID(),
-          whenBusy: 'reject',
-        }, context);
-        return { status: 202, body: { runId: String(submission.id), status: 'running' } };
-      } catch (err) {
-        if (err instanceof ConversationBusy) {
-          return { status: 409, body: { error: 'err_send_blocked', status: 'running' } };
-        }
-        if (err instanceof Error && err.message) err.message = redactAuthText(err.message);
-        throw err;
-      }
+      const submission = await conversation.submit({
+        type: 'input',
+        content: text,
+        requestId: prepared?.requestId || randomUUID(),
+        whenBusy: 'steer',
+      }, context);
+      await store.updateConversation(current.id, { lastSubmissionId: submission.id });
+      return { status: 202, body: { runId: String(submission.id), status: 'running' } };
     },
     async patchConversation(cid, body) {
       const conv = await store.getConversation(cid);
       if (!conv) return { status: 404, body: { error: 'conversation not found' } };
-      if (isArchivedConversation(conv)) return archivedMutation();
       return roles.patchConversation(cid, body);
-    },
-    continueFromHistory(conv, { title } = {}) {
-      return openFromHistory({ conv, title, store, harness, context, createConversation });
     },
     subscribe(cid, fn) {
       let set = listeners.get(cid);
@@ -567,18 +565,6 @@ export async function openConversationKernel({
     },
     async streamEvents(req, res, cid, { headers }) {
       const conv = await store.getConversation(cid);
-      const watch = watches.get(cid);
-      if (watch) {
-        const view = await readView(watch.harnessId);
-        const snapshot = {
-          entries: view?.entries || [],
-          generation: view?.live?.generation,
-          tools: view?.live?.tools || [],
-        };
-        await enqueue(cid, () => fillSnapshot(cid, snapshot, watch.mapCtx));
-      }
-      const last = req.headers['last-event-id'];
-      const afterId = last != null && last !== '' ? Number(last) : 0;
       res.writeHead(200, {
         ...headers,
         'content-type': 'text/event-stream; charset=utf-8',
@@ -587,24 +573,11 @@ export async function openConversationKernel({
         'x-accel-buffering': 'no',
       });
       res.write(':\n\n');
-      const pending = [];
-      let replaying = true;
+      const status = (await submissionView(conv)).status;
+      res.write(formatSSE({ event: 'status', data: { status } }));
       const unsub = this.subscribe(cid, (ev) => {
-        if (replaying) pending.push(ev);
-        else res.write(formatSSE({ id: ev.id, event: ev.event, data: ev.data }));
+        res.write(formatSSE({ event: ev.event, data: ev.data }));
       });
-      const past = await store.getEvents(cid, { afterId: Number.isFinite(afterId) ? afterId : 0 });
-      const seen = new Set();
-      for (const ev of past) {
-        seen.add(ev.id);
-        res.write(formatSSE({ id: ev.id, event: ev.event, data: ev.data }));
-      }
-      replaying = false;
-      for (const ev of pending) {
-        if (seen.has(ev.id)) continue;
-        seen.add(ev.id);
-        res.write(formatSSE({ id: ev.id, event: ev.event, data: ev.data }));
-      }
       const ping = setInterval(() => {
         try { res.write(':\n\n'); } catch { /* ignore */ }
       }, 15000);
@@ -616,10 +589,4 @@ export async function openConversationKernel({
       return conv;
     },
   };
-}
-
-function omitStatus(data) {
-  const extra = { ...data };
-  delete extra.status;
-  return extra;
 }

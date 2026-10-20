@@ -152,6 +152,11 @@ export function mergeRefreshedMessages(local, serverMessages, { keepStreaming = 
   const pending = [];
   for (const m of list) {
     if (!m || seen.has(m.id)) continue;
+    if (m.role === 'tool' && m.tool?.id) {
+      const have = merged.some((row) => row?.role === 'tool' && row.tool?.id === m.tool.id);
+      if (!have && keepStreaming) merged.push(m);
+      continue;
+    }
     if (m.streaming && m.role !== 'user' && m.role !== 'tool') {
       pending.push(m);
       continue;

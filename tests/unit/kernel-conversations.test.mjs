@@ -2,14 +2,17 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_RETRY_POLICY } from '@earendil-works/pi-durable';
 import { parseSSE } from '../../src/core/sse.mjs';
 import {
+  baselinesFromEntries,
   createMapContext,
   mapHarnessBatch,
-  snapshotGap,
+  messagesFromEntries,
+  statusFromSubmission,
 } from '../../src/kernel/events.mjs';
 import { ROOT } from './_root.mjs';
 
@@ -40,7 +43,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '5',
-    PI_WORK_STALL_MS: '5000',
     ...extra,
   };
 }
@@ -170,7 +172,6 @@ async function openConversation(base, title = 'kernel') {
 
 test('harness batches map onto the contract events', () => {
   const ctx = createMapContext();
-  ctx.toolDiffs.set('call-1', { added: 2, removed: 1 });
   const { events } = mapHarnessBatch([
     { type: 'run_start', inputs: [9] },
     { type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 0, delta: 'he' }] },
@@ -193,7 +194,14 @@ test('harness batches map onto the contract events', () => {
       toolName: 'read',
       entry: {
         kind: 'pi.tool-result',
-        model: [{ role: 'toolResult', toolCallId: 'call-1', toolName: 'read', content: [{ type: 'text', text: 'file' }], isError: false }],
+        model: [{
+          role: 'toolResult',
+          toolCallId: 'call-1',
+          toolName: 'read',
+          content: [{ type: 'text', text: 'file' }],
+          isError: false,
+          details: { path: 'a.txt', added: 2, removed: 1 },
+        }],
       },
     },
     { type: 'auto_retry_start', attempt: 1, at: 10, errorMessage: '429' },
@@ -210,11 +218,11 @@ test('harness batches map onto the contract events', () => {
     'usage',
     'tool.start',
     'tool.end',
-    'checkpoint',
     'retry',
     'error',
     'status',
     'error',
+    'status',
     'status',
   ]);
   assert.equal(events[0].data.status, 'running');
@@ -229,79 +237,76 @@ test('harness batches map onto the contract events', () => {
   assert.equal(events[5].data.tool.output, 'file');
   assert.equal(events[5].data.tool.added, 2);
   assert.equal(events[5].data.tool.removed, 1);
-  assert.equal(typeof events[6].data.at, 'number');
-  assert.equal(events[6].data.step, 1);
-  assert.equal(events[7].data.attempt, 1);
-  assert.equal(events[7].data.reason, '429');
-  assert.equal(events[7].data.delayMs, DEFAULT_RETRY_POLICY.baseDelayMs);
-  assert.deepEqual(events[8].data, { code: 'E_LLM', message: 'boom' });
-  assert.equal(events[9].data.status, 'failed');
-  assert.deepEqual(events[10].data, { code: 'E_NO_MODEL', message: 'err_no_model' });
+  assert.equal(events[6].data.attempt, 1);
+  assert.equal(events[6].data.reason, '429');
+  assert.equal(events[6].data.delayMs, DEFAULT_RETRY_POLICY.baseDelayMs);
+  assert.deepEqual(events[7].data, { code: 'E_LLM', message: 'boom' });
+  assert.equal(events[8].data.status, 'failed');
+  assert.deepEqual(events[9].data, { code: 'E_NO_MODEL', message: 'err_no_model' });
+  assert.equal(events[10].data.status, 'failed');
   assert.equal(events[11].data.status, 'done');
   assert.equal(names.includes('usage_changed'), false);
 });
 
-test('a late snapshot fills only transcript rows the event log does not already have', () => {
-  const existing = [
-    { id: 1, event: 'message.done', data: { messageId: '8', text: 'ping' } },
-    { id: 2, event: 'message.delta', data: { messageId: 'live', text: 'hel' } },
-  ];
-  const gap = snapshotGap({
-    entries: [
-      { id: 8, kind: 'pi.user', model: [{ role: 'user', content: 'ping' }] },
-      { id: 11, kind: 'pi.assistant', model: [{ role: 'assistant', content: [{ type: 'text', text: 'hello' }], usage: { input: 1, output: 1, totalTokens: 2 } }] },
-    ],
-    generation: { message: { content: [{ type: 'text', text: 'hello' }] } },
-  }, existing, createMapContext());
-  assert.deepEqual(gap.map((ev) => ev.event), ['message.done', 'usage']);
-  assert.equal(gap[0].data.messageId, '11');
-  assert.equal(gap[0].data.text, 'hello');
-  const again = snapshotGap({
-    entries: [
-      { id: 8, kind: 'pi.user', model: [{ role: 'user', content: 'ping' }] },
-      { id: 11, kind: 'pi.assistant', model: [{ role: 'assistant', content: [{ type: 'text', text: 'hello' }] }] },
-    ],
-  }, existing.concat(gap.map((ev, i) => ({ id: 3 + i, ...ev }))), createMapContext());
-  assert.deepEqual(again, []);
+test('status is the last submission record', () => {
+  assert.deepEqual(statusFromSubmission({ status: 'queued' }), { status: 'running' });
+  assert.deepEqual(statusFromSubmission({ status: 'placed' }), { status: 'running' });
+  assert.deepEqual(statusFromSubmission({ status: 'done' }), { status: 'done' });
+  assert.deepEqual(statusFromSubmission({ status: 'unanswered', reason: 'aborted' }), { status: 'stopped' });
+  const failed = statusFromSubmission({ status: 'unanswered', reason: 'model_error', detail: 'provider exploded' });
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.llmError.code, 'E_LLM');
+  assert.equal(failed.llmError.message, 'provider exploded');
+  assert.equal(statusFromSubmission({ status: 'unanswered', reason: 'no_model' }).llmError.code, 'E_NO_MODEL');
+  assert.throws(() => statusFromSubmission(undefined), /Unexpected submission status/);
 });
 
-test('a snapshot partial replaces the open live bubble instead of appending', () => {
+test('a snapshot asks the client to refetch instead of replaying rows', () => {
   const ctx = createMapContext();
-  const gap = snapshotGap({
-    entries: [],
-    generation: { message: { content: [{ type: 'text', text: '甲、乙、丙' }] } },
-  }, [
-    { id: 1, event: 'message.delta', data: { messageId: 'live-1', text: '甲、乙' } },
-  ], ctx);
-  assert.equal(gap.length, 1);
-  assert.equal(gap[0].event, 'message.delta');
-  assert.equal(gap[0].data.replace, true);
-  assert.equal(gap[0].data.text, '甲、乙、丙');
-  assert.equal(gap[0].data.messageId, 'live-1');
-  assert.equal(ctx.liveId, 'live-1');
-  const { events } = mapHarnessBatch([
-    { type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 0, delta: '。' }] },
-  ], ctx);
-  assert.deepEqual(events[0].data, { messageId: 'live-1', text: '。' });
-});
-
-test('a finished generation does not reopen a live bubble from the snapshot', () => {
-  const ctx = createMapContext();
-  const gap = snapshotGap({
-    entries: [
-      { id: 4, kind: 'pi.assistant', model: [{ role: 'assistant', content: [{ type: 'text', text: '甲、乙、丙' }] }] },
-    ],
-    generation: { message: { content: [{ type: 'text', text: '甲、乙、丙' }] } },
-  }, [
-    { id: 1, event: 'message.delta', data: { messageId: 'live', text: '甲、乙' } },
-    { id: 2, event: 'message.delta', data: { messageId: 'live', text: '、丙' } },
-    { id: 3, event: 'message.done', data: { messageId: '4', text: '甲、乙、丙' } },
-  ], ctx);
-  assert.deepEqual(gap, []);
+  const mapped = mapHarnessBatch([{ type: 'snapshot' }], ctx);
+  assert.equal(mapped.refresh, true);
+  assert.deepEqual(mapped.events, []);
   assert.equal(ctx.liveId, null);
 });
 
-test('kernel path: faux turn, then Last-Event-ID resumes without gaps or repeats', { timeout: 30000 }, async () => {
+test('a tool call without a result is still a running tool message', () => {
+  const { messages } = messagesFromEntries([
+    {
+      id: 2,
+      kind: 'pi.assistant',
+      model: [{
+        role: 'assistant',
+        content: [
+          { type: 'text', text: '跑一下。' },
+          { type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'sleep 3' } },
+        ],
+      }],
+    },
+  ]);
+  const tool = messages.find((message) => message.role === 'tool');
+  assert.equal(tool.tool.id, 'call-1');
+  assert.equal(tool.tool.name, 'bash');
+  assert.equal(tool.tool.status, 'running');
+  assert.equal(tool.tool.input.command, 'sleep 3');
+});
+
+test('the first write of a path is the diff baseline', () => {
+  const rows = baselinesFromEntries([
+    {
+      kind: 'pi.tool-result',
+      model: [{ toolCallId: 'a', details: { path: 'a.txt', before: '', after: 'one', added: 1, removed: 0 } }],
+    },
+    {
+      kind: 'pi.tool-result',
+      model: [{ toolCallId: 'b', details: { path: 'a.txt', before: 'one', after: 'two', added: 1, removed: 1 } }],
+    },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].before, '');
+  assert.equal(rows[0].toolCallId, 'a');
+});
+
+test('kernel path: faux turn pushes live events, and a new connection starts at the current status', { timeout: 30000 }, async () => {
   const srv = await startServer({ PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'kernel-ok' });
   try {
     const { ws, conv } = await openConversation(srv.base);
@@ -325,19 +330,15 @@ test('kernel path: faux turn, then Last-Event-ID resumes without gaps or repeats
     assert.equal(statuses.includes('done'), true);
     assert.equal(events.some((ev) => ev.event === 'message.done'), true);
     assert.equal(statuses.indexOf('running') < statuses.indexOf('done'), true);
-    const ids = events.map((ev) => ev.id);
-    assert.equal(ids[0], 1);
-    for (let i = 1; i < ids.length; i += 1) assert.equal(ids[i], ids[i - 1] + 1);
+    assert.equal(events.every((ev) => ev.id == null), true);
 
-    const cursor = ids[Math.floor(ids.length / 2)];
-    const expected = events.filter((ev) => ev.id > cursor);
-    const tail = await collectSse(srv.base, conv.id, {
-      lastEventId: cursor,
-      ready: (list) => list.length >= expected.length,
+    const again = await collectSse(srv.base, conv.id, {
+      ready: (list) => list.some((ev) => ev.event === 'status'),
+      quietMs: 200,
     });
-    assert.deepEqual(tail.map((ev) => ev.id), expected.map((ev) => ev.id));
-    assert.deepEqual(tail.map((ev) => ev.event), expected.map((ev) => ev.event));
-    assert.deepEqual(tail.map((ev) => ev.data), expected.map((ev) => ev.data));
+    assert.equal(again[0].event, 'status');
+    assert.equal(again[0].data.status, 'done');
+    assert.equal(again.some((ev) => ev.event === 'message.delta'), false);
 
     const got = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
     assert.equal(got.status, 200);
@@ -351,7 +352,7 @@ test('kernel path: faux turn, then Last-Event-ID resumes without gaps or repeats
   }
 });
 
-test('kernel path: a busy conversation is 409, and a killed run resumes to done', { timeout: 60000 }, async () => {
+test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-khold-'));
   const ready = path.join(dataDir, 'hold-ready');
   const first = await startServer({
@@ -376,9 +377,8 @@ test('kernel path: a busy conversation is 409, and a killed run resumes to done'
       }
     }
     await readFile(ready, 'utf8');
-    const blocked = await request(first.base, 'POST', `/api/conversations/${convId}/messages`, { text: 'again' });
-    assert.equal(blocked.status, 409);
-    assert.equal(blocked.body.error, 'err_send_blocked');
+    const live = await request(first.base, 'GET', `/api/conversations/${convId}`);
+    assert.equal(live.body.status, 'running');
   } finally {
     killChild(first.proc);
     await new Promise((resolve) => first.proc.once('exit', resolve));
@@ -405,8 +405,8 @@ test('kernel path: a busy conversation is 409, and a killed run resumes to done'
       ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
     });
     const statuses = events.filter((ev) => ev.event === 'status').map((ev) => ev.data.status);
-    assert.equal(statuses.includes('recovering'), true);
-    assert.equal(statuses.indexOf('recovering') < statuses.indexOf('done'), true);
+    assert.equal(statuses.includes('recovering'), false);
+    assert.equal(statuses.includes('done'), true);
   } finally {
     await stopProcess(second.proc);
     await rm(dataDir, { recursive: true, force: true });
@@ -446,6 +446,234 @@ test('a harness that cannot open does not print PI_WORK_READY', async () => {
     assert.match(srv.logs(), /PI_WORK_KERNEL_OPEN_FAILED/);
   } finally {
     await stopProcess(srv.proc);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('kernel path: a message sent while busy is steered into the run', { timeout: 30000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksteer-'));
+  const script = path.join(dataDir, 'steer.json');
+  const record = path.join(dataDir, 'record.jsonl');
+  await writeFile(script, JSON.stringify({
+    turns: [
+      { text: 'working', delayMs: 400, tool: 'write', args: { path: 'note.txt', content: 'n\n' } },
+      { text: 'saw-steer' },
+    ],
+  }));
+  const srv = await startServer({
+    PI_WORK_KERNEL: 'durable',
+    PI_WORK_LLM: 'faux',
+    PI_WORK_FAUX_SCRIPT: script,
+    PI_WORK_FAUX_RECORD: record,
+  }, { dataDir });
+  try {
+    const { conv } = await openConversation(srv.base, 'steer');
+    const events = collectSse(srv.base, conv.id, {
+      ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
+      timeout: 20000,
+    });
+    const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'first' });
+    assert.equal(sent.status, 202);
+    const started = Date.now();
+    let running = null;
+    while (Date.now() - started < 8000) {
+      running = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
+      if (running.body.status === 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    assert.equal(running.body.status, 'running');
+    const steered = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'please-steer' });
+    assert.equal(steered.status, 202);
+    assert.notEqual(steered.body.error, 'err_send_blocked');
+    await events;
+    const got = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
+    assert.equal(got.body.status, 'done', srv.logs());
+    assert.equal(got.body.messages.some((message) => message.role === 'user' && message.text === 'please-steer'), true);
+    assert.equal(got.body.messages.some((message) => message.text === 'saw-steer'), true);
+    const lines = (await readFile(record, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(lines.some((row) => (row.users || []).includes('please-steer')), true, JSON.stringify(lines));
+  } finally {
+    await stopProcess(srv.proc);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('kernel path: stream timeout retries a held faux call', { timeout: 20000 }, async () => {
+  const srv = await startServer({
+    PI_WORK_KERNEL: 'durable',
+    PI_WORK_LLM: 'faux',
+    PI_WORK_FAUX_HOLD: '1',
+    PI_WORK_STREAM_TIMEOUT_MS: '150',
+    PI_WORK_RETRY_BASE_MS: '20',
+    PI_WORK_RETRY_MAX: '3',
+  });
+  try {
+    const { conv } = await openConversation(srv.base, 'timeout');
+    const pending = collectSse(srv.base, conv.id, {
+      ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'failed')
+        && list.some((ev) => ev.event === 'retry'),
+      timeout: 15000,
+    });
+    const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'hold' });
+    assert.equal(sent.status, 202);
+    const events = await pending;
+    const retry = events.find((ev) => ev.event === 'retry');
+    assert.equal(retry.data.attempt >= 1, true);
+    assert.match(retry.data.reason, /timed out/i);
+    const got = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
+    assert.equal(got.body.status, 'failed', srv.logs());
+    console.log(`KERNEL_STREAM_TIMEOUT ${JSON.stringify(retry.data)}`);
+  } finally {
+    await stopProcess(srv.proc);
+    await rm(srv.dataDir, { recursive: true, force: true });
+  }
+});
+
+function appPointer(dataDir, convId) {
+  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'), { readOnly: true });
+  try {
+    const row = db.prepare('SELECT last_submission_id FROM conversations WHERE id = ?').get(convId);
+    return row?.last_submission_id == null ? null : Number(row.last_submission_id);
+  } finally {
+    db.close();
+  }
+}
+
+async function waitForStatus(base, id, accept) {
+  let body = null;
+  for (let i = 0; i < 50; i += 1) {
+    const got = await request(base, 'GET', `/api/conversations/${id}`);
+    body = got.body;
+    if (accept(body)) return body;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return body;
+}
+
+test('last submission: done stays done after restart', { timeout: 40000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kdone-'));
+  const env = { PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'done-ok' };
+  const first = await startServer(env, { dataDir });
+  let convId;
+  let pointer;
+  try {
+    const opened = await openConversation(first.base, 'done');
+    convId = opened.conv.id;
+    const idle = await request(first.base, 'GET', `/api/conversations/${convId}`);
+    assert.equal(idle.body.status, 'idle');
+    assert.equal(appPointer(dataDir, convId), null);
+    const sent = await request(first.base, 'POST', `/api/conversations/${convId}/messages`, { text: 'ping' });
+    assert.equal(sent.status, 202);
+    const body = await waitForStatus(first.base, convId, (row) => row.status === 'done');
+    assert.equal(body.status, 'done', first.logs());
+    assert.equal(body.messages.some((message) => message.role === 'assistant' && message.text === 'done-ok'), true);
+    pointer = appPointer(dataDir, convId);
+    assert.equal(pointer, Number(sent.body.runId));
+  } finally {
+    killChild(first.proc);
+    await new Promise((resolve) => first.proc.once('exit', resolve));
+  }
+
+  const second = await startServer(env, { dataDir });
+  try {
+    const got = await request(second.base, 'GET', `/api/conversations/${convId}`);
+    assert.equal(got.body.status, 'done', second.logs());
+    assert.equal(got.body.messages.some((message) => message.role === 'assistant' && message.text === 'done-ok'), true);
+    assert.equal(appPointer(dataDir, convId), pointer);
+  } finally {
+    await stopProcess(second.proc);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('last submission: a faux error stays failed after restart', { timeout: 40000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kfail-sub-'));
+  const script = path.join(dataDir, 'fail.json');
+  await writeFile(script, JSON.stringify({ turns: [{ error: 'provider exploded' }] }));
+  const env = { PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script };
+  const first = await startServer(env, { dataDir });
+  let convId;
+  let pointer;
+  try {
+    const opened = await openConversation(first.base, 'fail');
+    convId = opened.conv.id;
+    const sent = await request(first.base, 'POST', `/api/conversations/${convId}/messages`, { text: 'break' });
+    assert.equal(sent.status, 202);
+    const body = await waitForStatus(first.base, convId, (row) => row.status === 'failed' || row.status === 'done');
+    assert.equal(body.status, 'failed', first.logs());
+    assert.equal(body.llmError?.code, 'E_LLM');
+    assert.match(body.llmError?.message || '', /provider exploded/);
+    pointer = appPointer(dataDir, convId);
+    assert.equal(pointer, Number(sent.body.runId));
+  } finally {
+    killChild(first.proc);
+    await new Promise((resolve) => first.proc.once('exit', resolve));
+  }
+
+  const second = await startServer(env, { dataDir });
+  try {
+    const got = await request(second.base, 'GET', `/api/conversations/${convId}`);
+    assert.equal(got.body.status, 'failed', second.logs());
+    assert.equal(got.body.llmError?.code, 'E_LLM');
+    assert.match(got.body.llmError?.message || '', /provider exploded/);
+    assert.equal(appPointer(dataDir, convId), pointer);
+  } finally {
+    await stopProcess(second.proc);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('last submission: stop stays stopped after restart', { timeout: 40000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kstop-'));
+  const ready = path.join(dataDir, 'hold-ready');
+  const first = await startServer({
+    PI_WORK_KERNEL: 'durable',
+    PI_WORK_LLM: 'faux',
+    PI_WORK_FAUX_HOLD: '1',
+    PI_WORK_FAUX_HOLD_READY: ready,
+  }, { dataDir });
+  let convId;
+  let pointer;
+  try {
+    const opened = await openConversation(first.base, 'stop');
+    convId = opened.conv.id;
+    const sent = await request(first.base, 'POST', `/api/conversations/${convId}/messages`, { text: 'hold-stop' });
+    assert.equal(sent.status, 202);
+    const started = Date.now();
+    while (Date.now() - started < 15000) {
+      try {
+        await readFile(ready, 'utf8');
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+    }
+    await readFile(ready, 'utf8');
+    const live = await request(first.base, 'GET', `/api/conversations/${convId}`);
+    assert.equal(live.body.status, 'running', first.logs());
+    pointer = appPointer(dataDir, convId);
+    assert.equal(pointer, Number(sent.body.runId));
+    const stopped = await request(first.base, 'POST', `/api/conversations/${convId}/stop`);
+    assert.equal(stopped.status, 200);
+    const body = await waitForStatus(first.base, convId, (row) => row.status === 'stopped' || row.status === 'done');
+    assert.equal(body.status, 'stopped', first.logs());
+  } finally {
+    killChild(first.proc);
+    await new Promise((resolve) => first.proc.once('exit', resolve));
+  }
+
+  const second = await startServer({
+    PI_WORK_KERNEL: 'durable',
+    PI_WORK_LLM: 'faux',
+    PI_WORK_FAUX_TEXT: 'should-not-resume',
+  }, { dataDir });
+  try {
+    const got = await request(second.base, 'GET', `/api/conversations/${convId}`);
+    assert.equal(got.body.status, 'stopped', second.logs());
+    assert.equal(got.body.messages.some((message) => message.text === 'should-not-resume'), false);
+    assert.equal(appPointer(dataDir, convId), pointer);
+  } finally {
+    await stopProcess(second.proc);
     await rm(dataDir, { recursive: true, force: true });
   }
 });

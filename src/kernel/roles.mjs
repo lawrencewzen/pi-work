@@ -9,7 +9,6 @@ import { Type } from '@earendil-works/pi-ai';
 import { ConversationBusy, defineExtension, defineTool, section } from '@earendil-works/pi-durable';
 import { agentEventData, mapConvStatusToAgent } from '../core/agents.mjs';
 import { TOOLS } from '../core/config.mjs';
-import { synthesizeStatus } from './events.mjs';
 import { createPluginHost } from './plugins.mjs';
 import { toolsForRole } from './tools.mjs';
 
@@ -107,6 +106,7 @@ export function createRoleHost({
   emit,
   describeAgents,
   resolveModel,
+  statusOf,
 } = {}) {
   if (!store) throw new Error('store is required');
   if (!harness) throw new Error('harness is required');
@@ -214,16 +214,13 @@ export function createRoleHost({
   }
 
   async function liveStatus(conv) {
-    if (!conv?.harnessId) return conv?.status || 'idle';
-    const transcript = await readTranscript(conv.harnessId);
-    const status = synthesizeStatus(conv, transcript.busy);
-    if (status === 'running' || status === 'recovering' || status === 'paused') return status;
+    if (typeof statusOf === 'function') return statusOf(conv);
+    if (!conv?.harnessId) return 'idle';
     const inspection = await harness.inspect(context);
     const pending = inspection.submissions.some((record) => (
       record.conversationId === conv.harnessId && (record.status === 'queued' || record.status === 'placed')
     )) || inspection.tasks.some((item) => item.record.conversationId === conv.harnessId);
-    if (pending) return conv.hostMark === 'recovering' ? 'recovering' : 'running';
-    return status;
+    return pending ? 'running' : 'idle';
   }
 
   function lastAssistantText(messages) {
@@ -242,7 +239,12 @@ export function createRoleHost({
   async function submitHandoff(conv, pipe, step) {
     const requestId = pipelineRequestId(conv.id, step);
     const existing = await submissionFor(conv, step);
-    if (existing) return conv;
+    if (existing) {
+      if (Number(conv.lastSubmissionId) !== Number(existing.id)) {
+        return store.updateConversation(conv.id, { lastSubmissionId: existing.id });
+      }
+      return conv;
+    }
     const spec = pipe.steps[step] || {};
     const transcript = await readTranscript(conv.harnessId);
     const text = handoffInput(spec, {
@@ -250,11 +252,10 @@ export function createRoleHost({
       previousText: lastAssistantText(transcript.messages),
     });
     let next = conv;
-    if ((Number(conv.pipelineStep) || 0) !== step || conv.roleId !== spec.role || conv.status !== 'running') {
+    if ((Number(conv.pipelineStep) || 0) !== step || conv.roleId !== spec.role) {
       next = await store.updateConversation(conv.id, {
         pipelineStep: step,
         roleId: spec.role,
-        status: 'running',
       });
     }
     remember(next);
@@ -263,14 +264,15 @@ export function createRoleHost({
     const conversation = await harness.conversation(next.harnessId, context);
     if (!conversation) throw new Error('missing harness conversation');
     const draft = { type: 'input', content: text, requestId, whenBusy: 'reject' };
+    let submission;
     try {
-      await conversation.submit(draft, context);
+      submission = await conversation.submit(draft, context);
     } catch (err) {
       if (!(err instanceof ConversationBusy)) throw err;
       await conversation.waitForIdle(context);
-      await conversation.submit(draft, context);
+      submission = await conversation.submit(draft, context);
     }
-    return next;
+    return store.updateConversation(next.id, { lastSubmissionId: submission.id });
   }
 
   async function stepHasAnswer(conv) {
@@ -281,7 +283,7 @@ export function createRoleHost({
   async function settle(cid) {
     const conv = await store.getConversation(cid);
     if (!conv?.pipelineId || !conv.harnessId) return 'continue';
-    if (conv.status === 'failed' || conv.hostMark === 'failed') return 'continue';
+    if ((await liveStatus(conv)) === 'failed' || (await liveStatus(conv)) === 'stopped') return 'continue';
     const pipe = await store.getPipeline(conv.pipelineId);
     if (!pipe?.steps?.length) return 'continue';
     const step = Number(conv.pipelineStep) || 0;
@@ -371,7 +373,7 @@ export function createRoleHost({
     const conv = await store.getConversation(cid);
     if (!conv) return { status: 404, body: { error: 'conversation not found' } };
     const status = await liveStatus(conv);
-    if (status === 'running' || status === 'recovering' || status === 'paused') {
+    if (status === 'running') {
       return { status: 409, body: { error: 'err_role_busy', status } };
     }
     const patch = {};

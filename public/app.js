@@ -105,7 +105,6 @@ const state = {
   leftW: clampNum(Number(localStorage.getItem('piwork_left_w')) || 264, 200, 420),
   rightW: clampNum(Number(localStorage.getItem('piwork_right_w')) || 440, 320, 900),
   openProjects: new Set(readJson('piwork_open_projects', [])),
-  archivedOpen: readPref('piwork_archived_open', false),
   diffs: {},
   closedChangeFiles: new Set(),
 };
@@ -947,7 +946,6 @@ export async function selectConversation(cid) {
       const item = state.conversations.find((c) => c.id === cid);
       if (item) {
         item.status = state.activeConversationData.status || item.status;
-        item.archived = isArchivedConversation(state.activeConversationData);
       }
     }
   } catch {
@@ -1004,10 +1002,7 @@ export async function refreshConversationMeta(cid) {
       if (item) {
         if (state.activeConversationData && state.activeConversationData.id === cid) {
           if (item.title) state.activeConversationData.title = item.title;
-          if (item.autoContinues != null) state.activeConversationData.autoContinues = item.autoContinues;
           if (item.status) state.activeConversationData.status = item.status;
-          state.activeConversationData.archived = isArchivedConversation(item);
-          if (item.lastCheckpointAt) state.activeConversationData.lastCheckpointAt = item.lastCheckpointAt;
         }
       }
       renderConversations();
@@ -1021,15 +1016,12 @@ export async function refreshConversationMeta(cid) {
       const item = state.conversations.find((c) => c.id === cid);
       if (item) item.title = conv.title;
     }
-    if (conv.autoContinues != null) state.activeConversationData.autoContinues = conv.autoContinues;
     if (conv.status) state.activeConversationData.status = conv.status;
-    state.activeConversationData.archived = isArchivedConversation(conv);
     if (conv.status === 'failed') {
       if (conv.llmError) state.activeConversationData.llmError = conv.llmError;
-    } else if (conv.status && conv.status !== 'recovering') {
+    } else if (conv.status) {
       state.activeConversationData.llmError = null;
     }
-    if (conv.lastCheckpointAt) state.activeConversationData.lastCheckpointAt = conv.lastCheckpointAt;
     if (conv.usage) state.activeConversationData.usage = conv.usage;
     if (conv.contextWindow != null) state.activeConversationData.contextWindow = conv.contextWindow;
     if ('roleId' in conv) state.activeConversationData.roleId = conv.roleId || null;
@@ -1060,6 +1052,9 @@ export function connectSSE(cid) {
 
   const sse = new EventSource(`/api/conversations/${encodeURIComponent(cid)}/events`);
   state.eventSource = sse;
+  sse.onopen = () => {
+    refreshConversationMeta(cid);
+  };
 
   sse.addEventListener('status', (ev) => {
     try {
@@ -1072,7 +1067,6 @@ export function connectSSE(cid) {
         if (data.status === 'done' || data.status === 'failed' || data.status === 'stopped' || data.status === 'idle') {
           dropStreamingResidues(state.activeConversationData.messages || []);
         }
-        if (data.autoContinues != null) state.activeConversationData.autoContinues = data.autoContinues;
         if (data.title) {
           state.activeConversationData.title = data.title;
           const item = state.conversations.find((c) => c.id === cid);
@@ -1205,32 +1199,6 @@ export function connectSSE(cid) {
     } catch { /* ignore */ }
   });
 
-  sse.addEventListener('checkpoint', (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
-      if (state.activeConversationId === cid) scheduleWorkspaceTreeRefresh();
-      if (state.activeConversationData && state.activeConversationId === cid) {
-        state.activeConversationData.lastCheckpointAt = data.at;
-        state.activeConversationData.currentStep = data.step;
-        renderStatusBar();
-      }
-    } catch { /* ignore */ }
-  });
-
-  sse.addEventListener('retry', (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
-      if (state.activeConversationData && state.activeConversationId === cid) {
-        if (data.autoContinues != null) {
-          state.activeConversationData.autoContinues = data.autoContinues;
-        } else {
-          state.activeConversationData.autoContinues = data.attempt || ((state.activeConversationData.autoContinues || 0) + 1);
-        }
-        renderStatusBar();
-      }
-    } catch { /* ignore */ }
-  });
-
   sse.addEventListener('error', (ev) => {
     // Connection drops also fire "error" with no payload. Named SSE error
     // events (E_LLM and friends) arrive as MessageEvents with JSON data.
@@ -1258,7 +1226,7 @@ export function updateConversationStatus(cid, status) {
     if (item) item.status = status;
   }
 
-  const activeStatuses = new Set(['running', 'recovering', 'paused']);
+  const activeStatuses = new Set(['running']);
   if (!activeStatuses.has(status)) {
     state.allRunningList = state.allRunningList.filter((item) => item.id !== cid);
   } else {
@@ -1284,7 +1252,7 @@ export function updateConversationStatus(cid, status) {
 // Background polling for all workspaces' running status
 export async function refreshRunningOverview() {
   if (state.unauthorized) return;
-  const activeStatuses = new Set(['running', 'recovering', 'paused']);
+  const activeStatuses = new Set(['running']);
   const running = [];
   try {
     for (const ws of state.workspaces) {
@@ -1322,7 +1290,6 @@ runningPollInterval = setInterval(() => {
 // ============================================================================
 export async function sendMessage(text) {
   if (!text || !text.trim()) return;
-  if (isArchivedConversation(state.activeConversationData)) return;
   if (!state.activeConversationId) {
     // 没有选中的对话时，直接发送即新建一个对话；失败则把内容放回输入框
     const { roleId, pipelineId } = state.draft;
@@ -1352,18 +1319,11 @@ export async function sendMessage(text) {
   updateConversationStatus(cid, 'running');
 
   try {
-    const res = await api(`/api/conversations/${encodeURIComponent(cid)}/messages`, 'POST', { text });
-    if (res && res.status && res.status !== 'running' && res.status !== 'recovering') {
-      const err = new Error('err_send_blocked');
-      err.status = 409;
-      err.body = res;
-      throw err;
-    }
+    await api(`/api/conversations/${encodeURIComponent(cid)}/messages`, 'POST', { text });
     scheduleConversationRefresh(cid);
   } catch (err) {
-    const blocked = err.status === 409;
-    showToast(blocked ? (isToastKey(err.message) ? err.message : 'err_send_blocked') : (err.message || 'err_send'));
-    const next = blocked ? (err.body?.status || 'stopped') : 'failed';
+    showToast(err.message || 'err_send');
+    const next = 'failed';
     if (state.activeConversationData && state.activeConversationId === cid) {
       state.activeConversationData.status = next;
       renderStatusBar();
@@ -1372,36 +1332,8 @@ export async function sendMessage(text) {
   }
 }
 
-export async function pauseConversation() {
-  if (!state.activeConversationId || isArchivedConversation(state.activeConversationData)) return;
-  try {
-    const res = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/pause`, 'POST');
-    updateConversationStatus(state.activeConversationId, res.status || 'paused');
-    if (state.activeConversationData) {
-      state.activeConversationData.status = res.status || 'paused';
-      renderStatusBar();
-    }
-  } catch (err) {
-    showToast(err.message || 'err_pause');
-  }
-}
-
-export async function resumeConversation() {
-  if (!state.activeConversationId || isArchivedConversation(state.activeConversationData)) return;
-  try {
-    const res = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/resume`, 'POST');
-    updateConversationStatus(state.activeConversationId, res.status || 'running');
-    if (state.activeConversationData) {
-      state.activeConversationData.status = res.status || 'running';
-      renderStatusBar();
-    }
-  } catch (err) {
-    showToast(err.message || 'err_resume');
-  }
-}
-
 export async function stopConversation() {
-  if (!state.activeConversationId || isArchivedConversation(state.activeConversationData)) return;
+  if (!state.activeConversationId) return;
   try {
     const res = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/stop`, 'POST');
     updateConversationStatus(state.activeConversationId, res.status || 'stopped');
@@ -1513,7 +1445,7 @@ export async function saveEditorFile() {
 // UI Rendering Functions
 // ============================================================================
 const CHEV_SVG = '<svg class="ws-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3l3 3-3 3"></path></svg>';
-const ACTIVE_RUN = new Set(['running', 'recovering']);
+const ACTIVE_RUN = new Set(['running']);
 
 function projectConversations(wid) {
   if (wid === state.activeWorkspaceId && Array.isArray(state.conversations)) return state.conversations;
@@ -1524,9 +1456,8 @@ function sortedByRecent(list) {
   return [...list].sort((x, y) => (Number(y.updatedAt) || 0) - (Number(x.updatedAt) || 0));
 }
 
-function conversationMeta(conv, { archived = false, wsName = '' } = {}) {
+function conversationMeta(conv) {
   const st = conv.status || 'idle';
-  if (archived) return { text: wsName, cls: '' };
   if (ACTIVE_RUN.has(st)) {
     const n = (conv.id === state.activeConversationId ? (state.activeConversationData?.agents || []) : [])
       .filter((ag) => isRealSubagent(ag) && ACTIVE_RUN.has(ag.status)).length;
@@ -1537,17 +1468,16 @@ function conversationMeta(conv, { archived = false, wsName = '' } = {}) {
   return { text: conv.updatedAt ? formatRelativeTime(conv.updatedAt) : '', cls: '', ts: conv.updatedAt };
 }
 
-function conversationRowHtml(conv, { archived = false, wsId = '', wsName = '' } = {}) {
+function conversationRowHtml(conv, { wsId = '' } = {}) {
   const isActive = conv.id === state.activeConversationId;
-  const status = archived ? 'archived' : (conv.status || 'idle');
-  const meta = conversationMeta(conv, { archived, wsName });
+  const status = conv.status || 'idle';
+  const meta = conversationMeta(conv);
   const relAttrs = meta.ts ? ` data-rel-time data-ts="${escapeHtml(String(meta.ts))}"` : '';
   return (
-    `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${escapeHtml(conv.id)}" data-status="${escapeHtml(conv.status || 'idle')}"${archived ? ' data-archived="true"' : ''}>` +
+    `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${escapeHtml(conv.id)}" data-status="${escapeHtml(status)}">` +
     `<div class="conv-node-header" data-action="switch-ws-conv" data-ws-id="${escapeHtml(wsId)}" data-conv-id="${escapeHtml(conv.id)}" data-ctx="conversation" title="${escapeHtml(conv.title || '')}">` +
     `<span class="status-dot dot-${escapeHtml(status)}"></span>` +
     `<span class="conv-node-title">${escapeHtml(conv.title || t('default_conversation_title'))}</span>` +
-    (archived ? `<span class="conv-archived-badge is-hidden" data-testid="archived-badge">${escapeHtml(t('archived_badge'))}</span>` : '') +
     `<span class="conv-node-meta ${meta.cls}"${relAttrs}>${escapeHtml(meta.text || '')}</span>` +
     `</div>` +
     `</div>`
@@ -1562,13 +1492,10 @@ export function renderSidebarWorkspaces() {
   const container = document.getElementById('ws-tree-container');
   if (!container) return;
 
-  const archivedRows = [];
   container.innerHTML = state.workspaces
     .map((ws) => {
       const isActive = ws.id === state.activeWorkspaceId;
-      const all = projectConversations(ws.id);
-      const live = sortedByRecent(all.filter((c) => !isArchivedConversation(c)));
-      for (const c of all) if (isArchivedConversation(c)) archivedRows.push({ conv: c, ws });
+      const live = sortedByRecent(projectConversations(ws.id));
       const open = state.openProjects.has(ws.id) || (isActive && state.openProjects.size === 0);
       const runN = live.filter((c) => ACTIVE_RUN.has(c.status)).length;
       const count = open ? '' : (runN ? t('running_count', { n: runN }) : (live.length ? String(live.length) : ''));
@@ -1595,37 +1522,12 @@ export function renderSidebarWorkspaces() {
     })
     .join('');
 
-  renderArchivedSection(archivedRows);
   renderRightOpenDot();
-}
-
-function renderArchivedSection(rows) {
-  const host = document.getElementById('archived-container');
-  if (!host) return;
-  if (!rows.length) {
-    host.innerHTML = '';
-    return;
-  }
-  // Opening an archived chat unfolds the group so the selected row stays in view.
-  if (rows.some(({ conv }) => conv.id === state.activeConversationId)) state.archivedOpen = true;
-  const open = state.archivedOpen;
-  host.innerHTML =
-    `<button type="button" class="archived-toggle${open ? ' is-open' : ''}" data-action="toggle-archived" data-testid="archived-toggle">` +
-    CHEV_SVG +
-    `<span class="label">${escapeHtml(t('archived_section'))}</span><span class="count">${rows.length}</span>` +
-    `</button>` +
-    (open
-      ? `<div class="archived-list">${rows.map(({ conv, ws }) => conversationRowHtml(conv, { archived: true, wsId: ws.id, wsName: ws.name })).join('')}</div>`
-      : '');
 }
 
 function renderRightOpenDot() {
   const dot = document.getElementById('right-open-dot');
   if (dot) dot.classList.toggle('is-on', changesWithDiff(state.changes).length > 0);
-}
-
-export function isArchivedConversation(conv) {
-  return Boolean(conv && (conv.archived === true || conv.status === 'archived'));
 }
 
 export function isRealSubagent(agent) {
@@ -1752,23 +1654,6 @@ export function closeSubagentView() {
   renderRightPanel();
 }
 
-export async function forkFromHistory() {
-  const cid = state.activeConversationId;
-  if (!cid || !isArchivedConversation(state.activeConversationData)) return;
-  const btn = document.querySelector('[data-testid="archived-fork"]');
-  if (btn) btn.disabled = true;
-  try {
-    const created = await api(`/api/conversations/${encodeURIComponent(cid)}/from-history`, 'POST', {});
-    clearSubagentView();
-    if (created?.id) localStorage.setItem('piwork_active_conv', created.id);
-    if (state.activeWorkspaceId) await loadConversations(state.activeWorkspaceId);
-    if (created?.id && state.activeConversationId !== created.id) await selectConversation(created.id);
-  } catch (err) {
-    showToast(isToastKey(err.message) ? err.message : 'err_archived');
-    renderCenterNotice();
-  }
-}
-
 export function renderConversations() {
   renderSidebarWorkspaces();
 }
@@ -1783,7 +1668,7 @@ function renderComposerContext() {
   el.textContent = composerContextText(state.activeConversationData);
 }
 
-const DISPATCH_BUSY = new Set(['running', 'recovering', 'paused']);
+const DISPATCH_BUSY = new Set(['running']);
 
 function dispatchContext() {
   return {
@@ -1889,10 +1774,6 @@ function toggleAgentMenu() {
     return;
   }
   const status = state.activeConversationId ? (state.activeConversationData?.status || 'idle') : 'idle';
-  if (isArchivedConversation(state.activeConversationData)) {
-    showToast('err_archived');
-    return;
-  }
   if (DISPATCH_BUSY.has(status)) {
     showToast('err_role_busy');
     return;
@@ -1962,7 +1843,7 @@ function renderDemoModelBadge() {
   }
 }
 
-const RUN_BAR_STATUSES = new Set(['running', 'recovering', 'paused']);
+const RUN_BAR_STATUSES = new Set(['running']);
 
 export function renderStatusBar() {
   renderComposerContext();
@@ -1974,8 +1855,6 @@ export function renderStatusBar() {
   const conv = state.activeConversationData;
   const draft = isDraftActive();
   const status = conv?.status || 'idle';
-  const autoContinues = conv?.autoContinues || 0;
-  const archived = isArchivedConversation(conv);
   const statusTextStr = t(`status_${status}`) || status;
   const ws = (state.workspaces || []).find((w) => w.id === state.activeWorkspaceId);
 
@@ -2001,12 +1880,12 @@ export function renderStatusBar() {
   if (pill) pill.classList.toggle('is-hidden', !state.activeConversationId);
   const dot = document.getElementById('status-dot');
   if (dot) {
-    dot.className = `status-dot dot-${archived ? 'archived' : status}`;
+    dot.className = `status-dot dot-${status}`;
     dot.setAttribute('data-status', status);
   }
   const statusTextEl = document.getElementById('status-text');
   if (statusTextEl) {
-    statusTextEl.textContent = archived ? t('archived_badge') : statusTextStr;
+    statusTextEl.textContent = statusTextStr;
     const failedText = status === 'failed'
       ? localizedErrorText(conv?.llmError?.message, conv?.llmError?.code)
       : '';
@@ -2014,30 +1893,7 @@ export function renderStatusBar() {
     else statusTextEl.removeAttribute('title');
   }
 
-  const acBadge = document.getElementById('autocontinue-count');
-  const showAc = autoContinues > 0;
-  if (acBadge) {
-    acBadge.classList.toggle('is-hidden', !showAc);
-    acBadge.textContent = showAc ? `↻ ${autoContinues}` : '';
-  }
-
-  const cpWrap = document.getElementById('checkpoint-badge');
-  const cpBadge = document.getElementById('checkpoint-badge-text');
-  if (cpWrap) cpWrap.classList.toggle('is-hidden', !state.activeConversationId);
-  if (cpBadge) {
-    if (conv?.lastCheckpointAt) {
-      cpBadge.setAttribute('data-rel-time', '');
-      cpBadge.setAttribute('data-ts', String(conv.lastCheckpointAt));
-      cpBadge.textContent = formatRelativeTime(conv.lastCheckpointAt);
-      cpWrap?.setAttribute('title', `${t('checkpoint_title')} · ${formatRelativeTime(conv.lastCheckpointAt)}`);
-    } else {
-      cpBadge.removeAttribute('data-rel-time');
-      cpBadge.removeAttribute('data-ts');
-      cpBadge.textContent = t('checkpoint_badge');
-    }
-  }
-
-  renderRunBar(conv, status, archived);
+  renderRunBar(conv, status);
 
   const projName = document.getElementById('composer-project-name');
   if (projName) projName.textContent = ws?.name || '';
@@ -2072,21 +1928,14 @@ let runStartedAt = null;
 let runStartedFor = null;
 let runTicker = null;
 
-function renderRunBar(conv, status, archived) {
+function renderRunBar(conv, status) {
   const runBar = document.getElementById('run-bar');
   if (!runBar) return;
-  const show = Boolean(state.activeConversationId) && !archived && RUN_BAR_STATUSES.has(status);
+  const show = Boolean(state.activeConversationId) && RUN_BAR_STATUSES.has(status);
   runBar.hidden = !show;
-  runBar.classList.toggle('is-paused', status === 'paused');
 
-  const btnPause = document.getElementById('btn-pause');
-  const btnResume = document.getElementById('btn-resume');
   const btnStop = document.getElementById('btn-stop');
-  const canPause = !archived && status === 'running';
-  const canResume = !archived && status === 'paused';
-  const canStop = !archived && RUN_BAR_STATUSES.has(status);
-  if (btnPause) { btnPause.disabled = !canPause; btnPause.hidden = !canPause; }
-  if (btnResume) { btnResume.disabled = !canResume; btnResume.hidden = !canResume; }
+  const canStop = RUN_BAR_STATUSES.has(status);
   if (btnStop) { btnStop.disabled = !canStop; btnStop.hidden = !canStop; }
 
   if (!show) {
@@ -2112,7 +1961,7 @@ function renderRunBar(conv, status, archived) {
     agentsEl.textContent = live ? t('run_subagents', { n: live }) : '';
   }
   const progress = document.querySelector('#run-bar .run-progress');
-  if (progress) progress.classList.toggle('is-indeterminate', status !== 'paused');
+  if (progress) progress.classList.toggle('is-indeterminate', true);
   const tick = () => {
     const el = document.getElementById('run-elapsed');
     if (el && runStartedAt) el.textContent = formatElapsed(Date.now() - runStartedAt);
@@ -2130,38 +1979,26 @@ function syncSendReady() {
 export function renderCenterNotice() {
   const host = document.getElementById('center-notice');
   if (!host) return;
-  const parts = [];
-  const conv = state.activeConversationData;
-  if (isArchivedConversation(conv)) {
-    parts.push(
-      `<div class="center-notice-row" data-testid="archived-banner">` +
-      `<span class="center-notice-text" data-testid="archived-banner-text">${escapeHtml(t('archived_banner'))}</span>` +
-      `<button type="button" class="btn btn-sm" data-testid="archived-fork" data-action="fork-history">${escapeHtml(t('archived_fork'))}</button>` +
-      `</div>`
-    );
-  }
-  host.innerHTML = parts.join('');
+  host.innerHTML = '';
 }
 
 export function syncComposerLock() {
   const conv = state.activeConversationData;
-  const archived = isArchivedConversation(conv);
   const noWorkspace = !state.activeWorkspaceId;
-  const locked = archived || noWorkspace;
   const input = document.querySelector('[data-testid="chat-input"]');
   const send = document.querySelector('[data-testid="chat-send"]');
   const status = conv?.status || 'idle';
   if (input) {
-    input.disabled = locked;
-    input.placeholder = archived
-      ? t('archived_input')
-      : (isDraftActive() ? t('draft_placeholder') : (RUN_BAR_STATUSES.has(status) ? t('composer_placeholder_running') : t('composer_placeholder')));
+    input.disabled = noWorkspace;
+    input.placeholder = isDraftActive()
+      ? t('draft_placeholder')
+      : (RUN_BAR_STATUSES.has(status) ? t('composer_placeholder_running') : t('composer_placeholder'));
   }
-  if (send) send.disabled = locked;
+  if (send) send.disabled = noWorkspace;
   const chip = document.getElementById('composer-agent-chip-btn');
   if (chip) {
-    chip.disabled = archived;
-    chip.setAttribute('aria-disabled', archived ? 'true' : 'false');
+    chip.disabled = false;
+    chip.setAttribute('aria-disabled', 'false');
   }
 }
 
@@ -4274,9 +4111,6 @@ function conversationMenuItems(wid, cid) {
     items.push({ sep: true });
   }
   items.push({ label: t('open_conversation'), run: () => switchWorkspaceAndConv(wid, cid) });
-  if (isArchivedConversation(conv)) {
-    items.push({ label: t('archived_fork'), run: async () => { await switchWorkspaceAndConv(wid, cid); forkFromHistory(); } });
-  }
   items.push({ label: t('copy_conversation_id'), run: () => copyText(cid) });
   return items;
 }
@@ -4377,8 +4211,6 @@ window.__app = {
   selectConversation,
   switchWorkspaceAndConv,
   sendMessage,
-  pauseConversation,
-  resumeConversation,
   stopConversation,
   createNewWorkspace,
   createNewConversation,
@@ -4462,12 +4294,6 @@ document.addEventListener('click', (e) => {
     case 'set-settings-tab':
       setSettingsTab(actionEl.getAttribute('data-tab'));
       break;
-    case 'pause-conversation':
-      pauseConversation();
-      break;
-    case 'resume-conversation':
-      resumeConversation();
-      break;
     case 'stop-conversation':
       stopConversation();
       break;
@@ -4531,11 +4357,6 @@ document.addEventListener('click', (e) => {
       openCtxMenu(e, projectMenuItems(wid), ws?.name || '');
       break;
     }
-    case 'toggle-archived':
-      state.archivedOpen = !state.archivedOpen;
-      localStorage.setItem('piwork_archived_open', String(state.archivedOpen));
-      renderSidebarWorkspaces();
-      break;
     case 'toggle-mode':
       toggleMode();
       break;
@@ -4650,9 +4471,6 @@ document.addEventListener('click', (e) => {
       break;
     case 'close-subagent':
       closeSubagentView();
-      break;
-    case 'fork-history':
-      forkFromHistory();
       break;
     case 'toggle-agent-picker':
       toggleAgentMenu();

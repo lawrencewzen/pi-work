@@ -225,7 +225,7 @@ T5-11 之后这只开关已经去掉：启动始终打开 Harness，不再读取
 
 Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
 
-演示模型仍只在 `PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`。显式剧本（`PI_WORK_FAUX_SCRIPT`）按已提交的助手条数取下一拍；`PI_WORK_FAUX_DRAIN=1` 时，一段说明文字后面如果还有工具或 `{end:true}`，会再提交一次「继续」，用来播放原来一口气跑完的夹具。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。未设置 `PI_WORK_FAUX_TEXT` 时演示回复是空字符串，不会冒出一行 `ok`。`PI_WORK_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `PI_WORK_FAUX_HOLD_READY` 写出一个就绪文件。
+演示模型仍只在 `PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`。显式剧本（`PI_WORK_FAUX_SCRIPT`）按已提交的助手条数取下一拍。一段文字紧跟工具调用时合成一条助手消息，由 Harness 跑完工具回合；一段文字后面没有工具调用时这一轮结束。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。未设置 `PI_WORK_FAUX_TEXT` 时演示回复是空字符串，不会冒出一行 `ok`。`PI_WORK_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `PI_WORK_FAUX_HOLD_READY` 写出一个就绪文件。
 
 ## 2f. 风险和要拍板的决定
 

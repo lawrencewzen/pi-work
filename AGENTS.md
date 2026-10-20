@@ -5,7 +5,7 @@ pi-work 是基于 Pi Durable（`@earendil-works/pi-durable`，作为库嵌入）
 ## 内核（硬性规定）
 - 运行时内核必须是 Pi Durable（`@earendil-works/pi-durable` 的 Harness）：对话、任务、检查点、断点续跑、子 Agent、中止、压缩都用它提供的机制，模型调用走 `@earendil-works/pi-ai`。
 - 禁止自写编排器、任务调度或检查点机制来替代 Pi Durable 已有的能力。Pi Durable 做不到、需要绕开或改换内核的，必须先停下来报告，经用户同意后才能动。
-- 现状（2026-10-14，T5-11）：默认运行时已经是 Pi Durable Harness（`src/kernel/`）。自写编排器的运行循环已删除。没有 harness id 的旧对话只读归档。
+- 现状（2026-10-20，T12-2）：默认运行时已经是 Pi Durable Harness（`src/kernel/`）。对话状态只在 Harness 里，应用库只留最近一次提交的 id。卡住和重试只用它的 `stream.timeoutMs` 和 `retry`。没有 harness id 的旧对话不出现在列表里。
 - 改动架构（内核、存储、模型调用层）属于需用户确认的决定；`docs/ARCHITECTURE.md` 必须如实反映现状，不能为了贴合代码就悄悄改掉原定架构。
 
 ## 核心模型

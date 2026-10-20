@@ -35,7 +35,7 @@ test('tool row collapsed with truncated path and +N -M, expands', async ({ page 
   await newConversation(page);
   await send(page, 'go');
   const summary = page.getByTestId('tool-group-summary').first();
-  await expect(summary).toBeVisible({ timeout: 20000 });
+  await expect(summary).toContainText(/写入了/, { timeout: 20000 });
   await summary.click();
   const row = page.locator('[data-testid=tool-row][data-tool=write]').first();
   await expect(row).toBeVisible();

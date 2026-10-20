@@ -114,10 +114,9 @@ test('sqlite keeps the latest usage across later conversation updates', async ()
     const conv = await store.createConversation({ workspaceId: 'w', title: 't' });
     assert.equal(conv.usage, null);
     const usage = { input: 1200, output: 40, total: 1240 };
-    await store.updateConversation(conv.id, { usage, status: 'running' });
-    await store.updateConversation(conv.id, { status: 'done' });
+    await store.updateConversation(conv.id, { usage, title: 't2' });
     const loaded = await store.getConversation(conv.id);
-    assert.equal(loaded.status, 'done');
+    assert.equal(loaded.title, 't2');
     assert.deepEqual(loaded.usage, usage);
   } finally {
     store.close();

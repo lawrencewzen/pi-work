@@ -12,7 +12,6 @@ const TOKEN = 'unit-optional-auth-token';
 const STRIP = [
   'PI_WORK_LLM',
   'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_DRAIN',
   'PI_WORK_FAUX_TEXT',
   'LLM_API',
   'LLM_API_KEY',
@@ -34,7 +33,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_GROK_AUTH: path.join(dataDir, 'grok-auth.json'),
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '5',
-    PI_WORK_STALL_MS: '5000',
     ...extra,
   };
 }

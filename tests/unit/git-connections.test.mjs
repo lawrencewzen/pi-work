@@ -37,7 +37,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_TOKEN: AUTH,
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '2',
-    PI_WORK_STALL_MS: '5000',
     ...extra,
   };
 }

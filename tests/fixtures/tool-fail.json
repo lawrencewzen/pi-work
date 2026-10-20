@@ -1,5 +1,4 @@
 { "turns": [
-  { "text": "试一下。" },
-  { "tool": "read", "args": { "path": "missing.txt" } },
+  { "text": "试一下。", "tool": "read", "args": { "path": "missing.txt" } },
   { "text": "没找到。" }
 ] }

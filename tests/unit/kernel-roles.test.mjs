@@ -38,7 +38,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '5',
-    PI_WORK_STALL_MS: '5000',
     ...extra,
   };
 }
@@ -355,6 +354,11 @@ test('kernel path: a two-step pipeline matches the legacy handoff', { timeout: 4
       pipelineId: 'handoff',
     });
     assert.equal(previous.status, 201);
+    const previousPending = collectSse(srv.base, previous.body.id, {
+      ready: (list) => list.filter((ev) => ev.event === 'agent').length >= 2
+        && list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
+      timeout: 30000,
+    });
     assert.equal((await request(srv.base, 'POST', `/api/conversations/${previous.body.id}/messages`, { text: 'ship it' })).status, 202);
     const previousBody = await waitFor(srv.base, previous.body.id, (body) => (
       body.status === 'done' && body.messages?.some((msg) => msg.text === 'tests-pass')
@@ -362,14 +366,17 @@ test('kernel path: a two-step pipeline matches the legacy handoff', { timeout: 4
     assert.equal(previousBody.status, 'done', srv.logs());
     assert.deepEqual(projected(previousBody), previousExpected);
     assert.match(previousBody.messages.find((msg) => msg.kind === 'handoff').id, /:u:p1$/);
-    const previousEvents = await collectSse(srv.base, previous.body.id, {
-      ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
-    });
+    const previousEvents = await previousPending;
     assert.deepEqual(agentTrace(previousEvents), trace);
 
     const original = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, {
       title: 'original',
       pipelineId: 'original',
+    });
+    const originalPending = collectSse(srv.base, original.body.id, {
+      ready: (list) => list.filter((ev) => ev.event === 'agent').length >= 2
+        && list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
+      timeout: 30000,
     });
     assert.equal((await request(srv.base, 'POST', `/api/conversations/${original.body.id}/messages`, { text: 'ship it' })).status, 202);
     const originalBody = await waitFor(srv.base, original.body.id, (body) => (
@@ -377,9 +384,7 @@ test('kernel path: a two-step pipeline matches the legacy handoff', { timeout: 4
     ));
     assert.equal(originalBody.status, 'done', srv.logs());
     assert.deepEqual(projected(originalBody), originalExpected);
-    const originalEvents = await collectSse(srv.base, original.body.id, {
-      ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
-    });
+    const originalEvents = await originalPending;
     assert.deepEqual(agentTrace(originalEvents), trace);
   } finally {
     await stopProcess(srv.proc);
@@ -486,7 +491,8 @@ test('kernel path: killing during a pipeline handoff resumes the next step once'
       ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
     });
     const statuses = events.filter((ev) => ev.event === 'status').map((ev) => ev.data.status);
-    assert.equal(statuses.includes('recovering'), true);
+    assert.equal(statuses.includes('done'), true);
+    assert.equal(statuses.includes('recovering'), false);
   } finally {
     await stopProcess(second.proc);
   }

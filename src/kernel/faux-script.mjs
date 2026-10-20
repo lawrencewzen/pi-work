@@ -1,7 +1,8 @@
 // Explicit faux script playback. The Harness still calls the model and runs tools.
 // This module only picks the next scripted reply from the transcript already stored.
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
+import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
+import { defineExtension, GenerationTask, hook, ProviderDoc } from '@earendil-works/pi-durable';
 import { stampScriptTurn } from './usage.mjs';
 
 /** Tool names offered to the model, from the system entries already in the transcript. */
@@ -64,6 +65,23 @@ function lastUserText(context) {
 /** One assistant message can name a single `tool` or several `tools`. */
 function turnHasTool(turn) {
   return Boolean(turn?.tool) || (Array.isArray(turn?.tools) && turn.tools.length > 0);
+}
+
+function toolCallsOf(turn) {
+  if (Array.isArray(turn?.tools) && turn.tools.length) {
+    return turn.tools.map((item) => {
+      const spec = item && typeof item === 'object' ? item : { tool: item };
+      const args = spec.args && typeof spec.args === 'object' ? spec.args : {};
+      const id = spec.id ? { id: String(spec.id) } : {};
+      return fauxToolCall(String(spec.tool || spec.name || ''), args, id);
+    });
+  }
+  if (turn?.tool) {
+    const args = turn.args && typeof turn.args === 'object' ? turn.args : {};
+    const id = turn.id ? { id: String(turn.id) } : {};
+    return [fauxToolCall(String(turn.tool), args, id)];
+  }
+  return [];
 }
 
 /**
@@ -173,32 +191,50 @@ export function fauxTurnFromScript(turns, context) {
   const turn = pending[used];
   if (!turn) return fauxAssistantMessage('ok');
   let message;
+  const calls = toolCallsOf(turn);
+  const text = turn.text != null ? String(turn.text) : '';
   if (turn.error) {
     message = fauxAssistantMessage('', {
       stopReason: 'error',
       errorMessage: String(turn.error),
     });
-  } else if (turnHasTool(turn) && Array.isArray(turn.tools)) {
-    const calls = turn.tools.map((item) => {
-      const spec = item && typeof item === 'object' ? item : { tool: item };
-      const args = spec.args && typeof spec.args === 'object' ? spec.args : {};
-      const id = spec.id ? { id: String(spec.id) } : {};
-      return fauxToolCall(String(spec.tool || spec.name || ''), args, id);
-    });
-    message = fauxAssistantMessage(calls, { stopReason: 'toolUse' });
-  } else if (turn.tool) {
-    const args = turn.args && typeof turn.args === 'object' ? turn.args : {};
-    const id = turn.id ? { id: String(turn.id) } : {};
-    message = fauxAssistantMessage(
-      [fauxToolCall(String(turn.tool), args, id)],
-      { stopReason: 'toolUse' },
-    );
+  } else if (calls.length) {
+    // Text followed by tool calls is one assistant message. The Harness runs the tools.
+    const blocks = [];
+    if (text) blocks.push(fauxText(text));
+    blocks.push(...calls);
+    message = fauxAssistantMessage(blocks, { stopReason: 'toolUse' });
   } else if (turn.end) {
     message = fauxAssistantMessage('');
   } else {
-    message = fauxAssistantMessage(String(turn.text));
+    // Text with no tool call ends this run. Later script turns wait for the next user message.
+    message = fauxAssistantMessage(text);
   }
   return stampScriptTurn(message, turn);
+}
+
+/**
+ * Retries keep the request cutoff, so a failed assistant is in the transcript
+ * but not in the messages this call sees. Remember that count before the request.
+ */
+export function createScriptFloorExtension() {
+  return defineExtension({
+    name: 'pi-work-faux-script',
+    hooks: [
+      hook(GenerationTask, {
+        async beforeRequest(_request, api, context) {
+          try {
+            const provider = await api.snapshot(ProviderDoc, api.conversationId, context);
+            const sessionId = provider?.sessionId;
+            if (!sessionId || typeof api.context !== 'function') return;
+            const full = await api.context(api.conversationId, context);
+            const count = (full?.entries || []).filter((entry) => entry?.kind === 'pi.assistant').length;
+            noteScriptAssistants(sessionId, count);
+          } catch { /* the script still follows the messages on the request */ }
+        },
+      }),
+    ],
+  });
 }
 
 /** Explicit demo script only. PI_WORK_FAUX_TOOL_LOG records the offered tool names for tests. */
@@ -222,8 +258,9 @@ export function scriptedDemoStep(scriptPath, env = process.env, hooks = {}) {
     if (Number.isFinite(delay) && delay > 0) {
       if (ready) writeFileSync(ready, 'seen');
       const tick = String(env.PI_WORK_FAUX_DELAY_TICK ?? '1') !== '0';
+      const signal = streamOptions?.signal;
       const end = Date.now() + delay;
-      while (Date.now() < end) {
+      while (Date.now() < end && !signal?.aborted) {
         if (tick) hooks.tick?.();
         const slice = Math.min(50, end - Date.now());
         if (slice > 0) await new Promise((resolve) => setTimeout(resolve, slice));

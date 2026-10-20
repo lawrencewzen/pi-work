@@ -40,7 +40,6 @@ test('two turns each leave one agent reply, including after refresh', async ({ p
   const srv = await startServer({
     extraEnv: {
       PI_WORK_FAUX_SCRIPT: scriptPath,
-      PI_WORK_FAUX_DRAIN: '0',
       PI_WORK_FAUX_TPS: '4',
       PI_WORK_WORKSPACE_ROOT: prepared.root,
     },
