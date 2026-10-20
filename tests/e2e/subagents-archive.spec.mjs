@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { startServer, prepareWorkspaces, api } from './helpers/server.mjs';
 import { openApp, createWorkspace, newConversation, send } from './helpers/ui.mjs';
 
-const SHOTS = '/opt/cursor/artifacts/screenshots';
+const SHOTS = process.env.PI_WORK_SHOTS || '/opt/cursor/artifacts/screenshots';
 const CHILD_TEXT = '子代理回复：已看过。';
 const FOREGROUND_TASK = '请确认前台子代理已收到任务。';
 const BACKGROUND_NAME = '巡查';
@@ -79,7 +79,9 @@ async function assertNarrowWorkbench(page) {
   });
   console.log(`NARROW_1000 ${JSON.stringify(measured)}`);
   expect(measured.center).toBeGreaterThanOrEqual(420);
-  expect(measured.right).toBeLessThanOrEqual(340);
+  // Below 1180px the right panel floats over the chat instead of squeezing it.
+  const floating = await page.evaluate(() => getComputedStyle(document.querySelector('[data-testid=right-panel]')).position === 'absolute');
+  if (!floating) expect(measured.right).toBeLessThanOrEqual(340);
   for (const key of ['pause', 'resume', 'stop', 'agent', 'context']) {
     expect(measured[key], key).toBeLessThanOrEqual(32);
   }
@@ -163,28 +165,31 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(background.getByTestId('subagent-background')).toHaveText('后台');
     await expect(foreground.locator('.status-dot')).toBeVisible();
     await expect(page.getByTestId('message').filter({ hasText: '主对话已汇总。' })).toBeVisible({ timeout: 20000 });
-    await expect(page.locator('.conv-active .sub-agent-row:not(.is-real) .sub-agent-name').first()).toHaveText('主 Agent');
+    const mainSender = page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-sender]').first();
+    await expect(mainSender).toHaveText('主 Agent');
     await expect(page.locator('body')).not.toContainText('sk-scout-test');
     await shot(page, 'sidebar-subagents-light-1440');
 
+    // A sub-agent opens in a closable tab of the right panel; the main chat stays usable.
     await foreground.click();
-    await expect(page.getByTestId('subagent-banner-text')).toContainText('子 Agent · 侦察');
-    await expect(page.getByTestId('subagent-back')).toHaveText('返回主对话');
-    const transcript = page.getByTestId('subagent-thread');
+    await expect(page.getByTestId('subagent-banner-text')).toHaveText('侦察');
+    await expect(page.locator('.agent-pane-tag')).toHaveText('子 Agent');
+    await expect(page.getByTestId('subagent-back')).toHaveAttribute('aria-label', '返回主对话');
+    const transcript = page.getByTestId('subagent-pane');
     await expect(transcript.locator('[data-testid=message][data-role=user]')).toContainText(FOREGROUND_TASK);
     await expect(transcript.locator('[data-testid=message][data-role=assistant]')).toContainText(CHILD_TEXT);
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
-    await expect(page.getByTestId('chat-input')).toBeDisabled();
+    await expect(page.getByTestId('chat-input')).toBeEnabled();
     await shot(page, 'subagent-messages-light-1440');
 
     await switchLanguage(page, 'en');
-    await expect(page.getByTestId('subagent-banner-text')).toContainText('Sub-agent ·');
-    await expect(page.getByTestId('subagent-back')).toHaveText('Back to main chat');
-    await expect(page.locator('.conv-active .sub-agent-row:not(.is-real) .sub-agent-name').first()).toHaveText('Main agent');
+    await expect(page.locator('.agent-pane-tag')).toHaveText('Sub-agent');
+    await expect(page.getByTestId('subagent-back')).toHaveAttribute('aria-label', 'Back to main chat');
+    await expect(mainSender).toHaveText('Main agent');
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await expect(background.getByTestId('subagent-background')).toHaveText('Background');
     await switchLanguage(page, 'zh');
-    await expect(page.getByTestId('subagent-back')).toHaveText('返回主对话');
+    await expect(page.getByTestId('subagent-back')).toHaveAttribute('aria-label', '返回主对话');
 
     await page.getByTestId('subagent-back').click();
     await expect(page.getByTestId('subagent-banner')).toHaveCount(0);

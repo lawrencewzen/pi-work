@@ -66,7 +66,7 @@ import {
   consumeSseTicket,
   tokensMatch,
 } from './src/core/auth.mjs';
-import { resolveAllowedWorkspacePath, defaultWorkspaceRoot } from './src/core/workspace-guard.mjs';
+import { resolveAllowedWorkspacePath, defaultWorkspaceRoot, listBrowsableDirs } from './src/core/workspace-guard.mjs';
 import { acquireDataDirLock } from './src/core/lock.mjs';
 import { presentContext } from './src/core/usage.mjs';
 import { openConversationKernel } from './src/kernel/conversations.mjs';
@@ -890,6 +890,15 @@ async function routeApi(req, res, url) {
     return;
   }
 
+  if (m === 'GET' && p === '/api/workspace-root/dirs') {
+    try {
+      sendJson(res, 200, await listBrowsableDirs(url.searchParams.get('path')));
+    } catch (err) {
+      sendJson(res, err.status || 400, { error: err.message || 'path is not allowed', code: err.code || 'E_PATH' });
+    }
+    return;
+  }
+
   if (m === 'POST' && p === '/api/sse-ticket') {
     sendJson(res, 200, issueSseTicket(60_000));
     return;
@@ -958,7 +967,8 @@ async function routeApi(req, res, url) {
       });
       return;
     }
-    const ws = await store.createWorkspace({ name: body.name, path: resolved, source: 'local', rootPath: resolved, worktrees: [] });
+    const ws = (await store.restoreWorkspaceByPath(resolved, body.name))
+      || await store.createWorkspace({ name: body.name, path: resolved, source: 'local', rootPath: resolved, worktrees: [] });
     sendJson(res, 201, { id: ws.id, name: ws.name, path: ws.path, source: ws.source, gitUrl: ws.gitUrl, branch: ws.branch, rootPath: ws.rootPath, worktrees: ws.worktrees });
     return;
   }
@@ -966,6 +976,28 @@ async function routeApi(req, res, url) {
   if (m === 'GET' && p === '/api/workspaces') {
     sendJson(res, 200, await store.listWorkspaces());
     return;
+  }
+
+  {
+    const removeMatch = m === 'DELETE' && p.match(/^\/api\/workspaces\/([^/]+)$/);
+    if (removeMatch) {
+      const wid = decodeURIComponent(removeMatch[1]);
+      const ws = await store.getWorkspace(wid);
+      if (!ws || ws.removedAt) { sendJson(res, 404, { error: 'workspace not found' }); return; }
+      const busy = [];
+      for (const item of await store.listConversations(wid)) {
+        const live = await kernelApi.present(item);
+        if (['running', 'recovering', 'paused'].includes(live.status)) busy.push(live.id);
+      }
+      if (busy.length) {
+        sendJson(res, 409, { error: 'workspace has active conversations', code: 'E_WS_BUSY', conversations: busy });
+        return;
+      }
+      // Only hides the workspace. Files on disk and conversation records are kept.
+      await store.removeWorkspace(wid);
+      sendJson(res, 200, { id: wid, removed: true });
+      return;
+    }
   }
 
   let match;

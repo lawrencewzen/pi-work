@@ -98,7 +98,37 @@ const state = {
   treeLoadingFor: null,
   treeGen: 0,
   allowedWorkspaceRoot: '',
+  // Layout (prototype): side panels, widths, which projects are expanded
+  // Below the overlay widths a side panel floats over the chat, so it starts closed there.
+  leftOpen: window.innerWidth >= 860 ? readPref('piwork_left_open', true) : false,
+  rightOpen: window.innerWidth >= 1180 ? readPref('piwork_right_open', true) : false,
+  leftW: clampNum(Number(localStorage.getItem('piwork_left_w')) || 264, 200, 420),
+  rightW: clampNum(Number(localStorage.getItem('piwork_right_w')) || 440, 320, 900),
+  openProjects: new Set(readJson('piwork_open_projects', [])),
+  archivedOpen: readPref('piwork_archived_open', false),
+  diffs: {},
+  closedChangeFiles: new Set(),
 };
+
+function readPref(key, fallback) {
+  const v = localStorage.getItem(key);
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  return fallback;
+}
+
+function readJson(key, fallback) {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || 'null');
+    return v ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function clampNum(n, lo, hi) {
+  return Math.max(lo, Math.min(hi, n));
+}
 
 let runningPollInterval = null;
 let convMetaRefreshTimer = null;
@@ -161,7 +191,16 @@ export function formatRelativeTime(ts) {
   if (!Number.isFinite(n) || n <= 0) return '';
   const diffSec = Math.max(1, Math.round((Date.now() - n) / 1000));
   if (diffSec < 60) return t('sec_ago', { n: diffSec });
-  return t('min_ago', { n: Math.max(1, Math.round(diffSec / 60)) });
+  if (diffSec < 3600) return t('min_ago', { n: Math.max(1, Math.round(diffSec / 60)) });
+  if (diffSec < 86400) return t('hour_ago', { n: Math.floor(diffSec / 3600) });
+  const then = new Date(n);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.ceil((today.getTime() - then.getTime()) / 86400000);
+  if (days <= 1) return t('yesterday');
+  if (days < 7) return t(`weekday_${then.getDay()}`);
+  if (days < 30) return t('day_ago', { n: days });
+  return t('date_md', { m: then.getMonth() + 1, d: then.getDate() });
 }
 
 /** Refresh every element stamped with data-rel-time / data-ts. */
@@ -613,7 +652,11 @@ export async function api(endpoint, method = 'GET', body = null) {
 // ============================================================================
 // Theme & Appearance
 // ============================================================================
+// Two families from the design prototype: white = 石墨, claude = 陶土. Older ids fall back to 石墨.
+const THEME_FAMILIES = new Set(['white', 'claude']);
+
 export function applyTheme(family = state.theme, mode = state.appearance) {
+  if (!THEME_FAMILIES.has(family)) family = 'white';
   state.theme = family;
   state.appearance = mode;
   localStorage.setItem('piwork_theme', family);
@@ -626,6 +669,7 @@ export function applyTheme(family = state.theme, mode = state.appearance) {
   const themeAttr = `${family}-${effectiveMode}`;
   document.documentElement.setAttribute('data-theme', themeAttr);
   document.documentElement.setAttribute('data-font-size', state.fontSize);
+  renderModeToggle();
 }
 
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -681,6 +725,7 @@ export async function loadWorkspaces() {
   } else {
     state.activeWorkspaceId = null;
   }
+  openProject(state.activeWorkspaceId);
 
   renderSidebarWorkspaces();
   await refreshRunningOverview();
@@ -759,6 +804,7 @@ export async function selectWorkspace(wid, { draft = false } = {}) {
   state.activeConversationId = null;
   state.activeConversationData = null;
   state.activeWorkspaceId = wid;
+  openProject(wid);
   state.workspaceTree = [];
   state.workspaceTreeFor = null;
   state.treeLoadingFor = null;
@@ -814,17 +860,19 @@ function workspaceTreeRowsHtml() {
   if (!ready) {
     return `<div class="file-tree-empty">${escapeHtml(t('file_tree_loading'))}</div>`;
   }
+  const changed = new Set(changesWithDiff(state.changes).map((c) => c.path));
+  const dirChev = '<svg class="ws-chev is-open" viewBox="0 0 12 12" aria-hidden="true" style="transform:rotate(90deg)"><path d="M4.5 3l3 3-3 3"></path></svg>';
   return state.workspaceTree.map((ent) => {
     const depth = String(ent.path || '').split('/').length - 1;
     const name = String(ent.path || '').split('/').pop();
-    const pad = 8 + depth * 12;
-    const label = ent.type === 'dir' ? `${name}/` : name;
-    const title = escapeHtml(name);
+    const pad = 8 + depth * 14;
+    const title = escapeHtml(ent.path || name);
     if (ent.type === 'dir') {
-      return `<div class="file-tree-row is-dir" style="padding-left:${pad}px" title="${title}"><span class="file-tree-name">${escapeHtml(label)}</span></div>`;
+      return `<div class="file-tree-row is-dir" style="padding-left:${pad}px" title="${title}"><span class="file-tree-icon">${dirChev}</span><span class="file-tree-name">${escapeHtml(name)}</span></div>`;
     }
     const active = ent.path === state.activeFilePath ? ' active' : '';
-    return `<button type="button" class="file-tree-row${active}" style="padding-left:${pad}px" title="${title}" data-testid="workspace-file" data-action="load-workspace-file" data-path="${escapeHtml(ent.path)}"><span class="file-tree-name">${escapeHtml(label)}</span></button>`;
+    const mod = changed.has(ent.path) ? '<span class="file-tree-mod">M</span>' : '';
+    return `<button type="button" class="file-tree-row${active}" style="padding-left:${pad}px" title="${title}" data-testid="workspace-file" data-action="load-workspace-file" data-path="${escapeHtml(ent.path)}"><span class="file-tree-icon"></span><span class="file-tree-name">${escapeHtml(name)}</span>${mod}</button>`;
   }).join('');
 }
 
@@ -879,6 +927,9 @@ export async function selectConversation(cid) {
   state.activeConversationId = cid;
   localStorage.setItem('piwork_active_conv', cid);
   state.activeConversationData = null;
+  state.diffs = {};
+  state.closedChangeFiles = new Set();
+  state.forceThreadBottom = true;
   resetRightPanelAndStatus();
   renderChatThread();
   renderConversations();
@@ -910,7 +961,7 @@ export async function selectConversation(cid) {
   }
 
   const savedTab = localStorage.getItem('piwork_active_right_tab') || 'diff';
-  state.activeRightTab = savedTab;
+  state.activeRightTab = savedTab === 'agent' || savedTab === 'markdown' ? 'diff' : savedTab;
   state.userPickedFile = false;
 
   const visibleChanges = changesWithDiff(state.changes);
@@ -927,6 +978,7 @@ export async function selectConversation(cid) {
 
   connectSSE(cid);
 
+  refreshChangeDiffs();
   if (state.activeFilePath) {
     await loadFileOrDiff(state.activeFilePath);
   }
@@ -1121,28 +1173,23 @@ export function connectSSE(cid) {
 
       api(`/api/conversations/${encodeURIComponent(cid)}/changes`)
         .then((changes) => {
+          if (state.activeConversationId !== cid) return;
           state.changes = Array.isArray(changes) ? changes : [];
           const visible = changesWithDiff(state.changes);
-          const newest = visible.length ? visible[visible.length - 1].path : null;
           const toolPath = tool?.path || tool?.input?.path || null;
-          const stillExists = state.activeFilePath && state.changes.some((c) => c.path === state.activeFilePath);
-          if (!state.userPickedFile) {
-            const pick = (toolPath && visible.some((c) => c.path === toolPath)) ? toolPath : newest;
-            if (pick) {
-              loadFileOrDiff(pick);
-              return;
-            }
-          } else if (!stillExists) {
+          if (toolPath) delete state.diffs[toolPath];
+          for (const key of Object.keys(state.diffs)) {
+            if (!visible.some((c) => c.path === key)) delete state.diffs[key];
+          }
+          const newest = visible.length ? visible[visible.length - 1].path : null;
+          const stillExists = state.activeFilePath && visible.some((c) => c.path === state.activeFilePath);
+          if (!state.userPickedFile || !stillExists) {
             state.userPickedFile = false;
-            if (newest) {
-              loadFileOrDiff(newest);
-              return;
-            }
-            state.activeFilePath = null;
-            state.activeDiff = null;
+            state.activeFilePath = (toolPath && visible.some((c) => c.path === toolPath)) ? toolPath : newest;
           }
           renderRightPanel();
-          if (state.activeFilePath) loadFileOrDiff(state.activeFilePath);
+          refreshChangeDiffs();
+          if (state.activeFilePath && state.activeRightTab !== 'diff' && state.activeRightTab !== 'agent') loadFileOrDiff(state.activeFilePath);
         })
         .catch(() => {});
     } catch { /* ignore */ }
@@ -1275,7 +1322,7 @@ runningPollInterval = setInterval(() => {
 // ============================================================================
 export async function sendMessage(text) {
   if (!text || !text.trim()) return;
-  if (isArchivedConversation(state.activeConversationData) || state.viewingAgentId) return;
+  if (isArchivedConversation(state.activeConversationData)) return;
   if (!state.activeConversationId) {
     // 没有选中的对话时，直接发送即新建一个对话；失败则把内容放回输入框
     const { roleId, pipelineId } = state.draft;
@@ -1297,6 +1344,7 @@ export async function sendMessage(text) {
     });
     state.activeConversationData.llmError = null;
     state.activeConversationData.status = 'running';
+    state.forceThreadBottom = true;
     renderChatThread();
     renderStatusBar();
   }
@@ -1400,6 +1448,7 @@ export async function loadFileOrDiff(filePath) {
   state.activeFilePath = filePath;
   localStorage.setItem('piwork_active_file', filePath);
   const tab = state.activeRightTab;
+  const cid = state.activeConversationId;
 
   if (tab === 'editor' || tab === 'markdown' || tab === 'file') {
     try {
@@ -1409,14 +1458,31 @@ export async function loadFileOrDiff(filePath) {
       state.activeFileContent = '';
     }
   }
-  if (tab === 'diff' || !tab) {
+  if ((tab === 'diff' || !tab) && cid) {
+    state.closedChangeFiles.delete(filePath);
     try {
-      state.activeDiff = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/diff?path=${encodeURIComponent(filePath)}`);
+      const d = await api(`/api/conversations/${encodeURIComponent(cid)}/diff?path=${encodeURIComponent(filePath)}`);
+      if (state.activeConversationId !== cid) return;
+      state.activeDiff = d;
+      state.diffs[filePath] = d;
     } catch {
       state.activeDiff = null;
     }
   }
   renderRightPanel();
+}
+
+/** Click on a changed file: select it; clicking the selected one folds or unfolds its diff. */
+function toggleChangeFile(filePath) {
+  if (!filePath) return;
+  state.userPickedFile = true;
+  if (state.activeRightTab !== 'diff') state.activeRightTab = 'diff';
+  if (state.activeFilePath === filePath && !state.closedChangeFiles.has(filePath)) {
+    state.closedChangeFiles.add(filePath);
+    renderRightPanel();
+    return;
+  }
+  loadFileOrDiff(filePath);
 }
 
 export async function saveEditorFile() {
@@ -1430,6 +1496,7 @@ export async function saveEditorFile() {
     });
     showToast('btn_saved');
     state.activeFileContent = content;
+    delete state.diffs[state.activeFilePath];
     if (state.activeConversationId) {
       try {
         const changes = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/changes`);
@@ -1445,29 +1512,116 @@ export async function saveEditorFile() {
 // ============================================================================
 // UI Rendering Functions
 // ============================================================================
+const CHEV_SVG = '<svg class="ws-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3l3 3-3 3"></path></svg>';
+const ACTIVE_RUN = new Set(['running', 'recovering']);
+
+function projectConversations(wid) {
+  if (wid === state.activeWorkspaceId && Array.isArray(state.conversations)) return state.conversations;
+  return state.allConversations[wid] || [];
+}
+
+function sortedByRecent(list) {
+  return [...list].sort((x, y) => (Number(y.updatedAt) || 0) - (Number(x.updatedAt) || 0));
+}
+
+function conversationMeta(conv, { archived = false, wsName = '' } = {}) {
+  const st = conv.status || 'idle';
+  if (archived) return { text: wsName, cls: '' };
+  if (ACTIVE_RUN.has(st)) {
+    const n = (conv.id === state.activeConversationId ? (state.activeConversationData?.agents || []) : [])
+      .filter((ag) => isRealSubagent(ag) && ACTIVE_RUN.has(ag.status)).length;
+    return { text: n > 0 ? t('agents_running_count', { n: n + 1 }) : t('status_running'), cls: 'is-running' };
+  }
+  if (st === 'paused' || st === 'waiting') return { text: t(`status_${st}`), cls: 'is-waiting' };
+  if (st === 'failed') return { text: t('status_failed'), cls: 'is-failed' };
+  return { text: conv.updatedAt ? formatRelativeTime(conv.updatedAt) : '', cls: '', ts: conv.updatedAt };
+}
+
+function conversationRowHtml(conv, { archived = false, wsId = '', wsName = '' } = {}) {
+  const isActive = conv.id === state.activeConversationId;
+  const status = archived ? 'archived' : (conv.status || 'idle');
+  const meta = conversationMeta(conv, { archived, wsName });
+  const relAttrs = meta.ts ? ` data-rel-time data-ts="${escapeHtml(String(meta.ts))}"` : '';
+  return (
+    `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${escapeHtml(conv.id)}" data-status="${escapeHtml(conv.status || 'idle')}"${archived ? ' data-archived="true"' : ''}>` +
+    `<div class="conv-node-header" data-action="switch-ws-conv" data-ws-id="${escapeHtml(wsId)}" data-conv-id="${escapeHtml(conv.id)}" data-ctx="conversation" title="${escapeHtml(conv.title || '')}">` +
+    `<span class="status-dot dot-${escapeHtml(status)}"></span>` +
+    `<span class="conv-node-title">${escapeHtml(conv.title || t('default_conversation_title'))}</span>` +
+    (archived ? `<span class="conv-archived-badge is-hidden" data-testid="archived-badge">${escapeHtml(t('archived_badge'))}</span>` : '') +
+    `<span class="conv-node-meta ${meta.cls}"${relAttrs}>${escapeHtml(meta.text || '')}</span>` +
+    `</div>` +
+    `</div>`
+  );
+}
+
+function isDraftActive() {
+  return Boolean(state.activeWorkspaceId && !state.activeConversationId);
+}
+
 export function renderSidebarWorkspaces() {
   const container = document.getElementById('ws-tree-container');
   if (!container) return;
 
-  const countLabel = document.getElementById('ws-count-label');
-  if (countLabel) countLabel.textContent = tPlural('workspace_count', state.workspaces.length);
-
+  const archivedRows = [];
   container.innerHTML = state.workspaces
     .map((ws) => {
       const isActive = ws.id === state.activeWorkspaceId;
+      const all = projectConversations(ws.id);
+      const live = sortedByRecent(all.filter((c) => !isArchivedConversation(c)));
+      for (const c of all) if (isArchivedConversation(c)) archivedRows.push({ conv: c, ws });
+      const open = state.openProjects.has(ws.id) || (isActive && state.openProjects.size === 0);
+      const runN = live.filter((c) => ACTIVE_RUN.has(c.status)).length;
+      const count = open ? '' : (runN ? t('running_count', { n: runN }) : (live.length ? String(live.length) : ''));
+      const draft = isActive && isDraftActive();
+      const rows = live.map((c) => conversationRowHtml(c, { wsId: ws.id })).join('');
       return (
-        `<div class="ws-tree-node ${isActive ? 'ws-active' : ''}" data-testid="workspace-item" data-id="${escapeHtml(ws.id)}">` +
-        `<div class="ws-node-header" data-action="select-workspace" data-ws-id="${escapeHtml(ws.id)}" title="${escapeHtml(ws.path)}">` +
-        `<svg class="ws-node-icon icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>` +
+        `<div class="ws-tree-node ${isActive ? 'ws-active' : ''}${open ? ' is-open' : ''}" data-testid="workspace-item" data-id="${escapeHtml(ws.id)}">` +
+        `<div class="ws-node-header" data-action="toggle-project" data-ws-id="${escapeHtml(ws.id)}" data-ctx="project" title="${escapeHtml(ws.path)}">` +
+        CHEV_SVG +
         `<span class="ws-node-title">${escapeHtml(ws.name)}</span>` +
-        (isActive ? `<span class="ws-node-badge">${escapeHtml(t('current'))}</span>` : '') +
-        `<button class="btn-icon-xs ws-node-add" data-testid="conversation-new" data-action="new-conversation" data-ws-id="${escapeHtml(ws.id)}" title="${escapeHtml(t('new_conversation'))}">+</button>` +
+        `<span class="ws-node-count${runN ? ' is-running' : ''}">${escapeHtml(count)}</span>` +
+        `<button type="button" class="btn-icon-xs ws-node-more" data-action="project-menu" data-ws-id="${escapeHtml(ws.id)}" title="${escapeHtml(t('more_actions'))}">⋯</button>` +
+        `<button type="button" class="btn-icon-xs ws-node-add" data-testid="conversation-new" data-action="new-conversation" data-ws-id="${escapeHtml(ws.id)}" title="${escapeHtml(t('new_conversation_in', { name: ws.name }))}">+</button>` +
         `</div>` +
-        (isActive ? `<div class="ws-node-children" id="conv-list-container"></div>` : '') +
+        `<div class="ws-node-children"${isActive ? ' id="conv-list-container"' : ''}>` +
+        (draft
+          ? `<div class="draft-row is-active" data-testid="draft-row"><span class="draft-dot"></span><span class="conv-node-title">${escapeHtml(t('new_conversation'))}</span><span class="conv-node-meta">${escapeHtml(t('draft_label'))}</span></div>`
+          : '') +
+        rows +
+        (!rows && !draft ? `<div class="ws-empty-note">${escapeHtml(t('ws_no_conversations'))}</div>` : '') +
+        `</div>` +
         `</div>`
       );
     })
     .join('');
+
+  renderArchivedSection(archivedRows);
+  renderRightOpenDot();
+}
+
+function renderArchivedSection(rows) {
+  const host = document.getElementById('archived-container');
+  if (!host) return;
+  if (!rows.length) {
+    host.innerHTML = '';
+    return;
+  }
+  // Opening an archived chat unfolds the group so the selected row stays in view.
+  if (rows.some(({ conv }) => conv.id === state.activeConversationId)) state.archivedOpen = true;
+  const open = state.archivedOpen;
+  host.innerHTML =
+    `<button type="button" class="archived-toggle${open ? ' is-open' : ''}" data-action="toggle-archived" data-testid="archived-toggle">` +
+    CHEV_SVG +
+    `<span class="label">${escapeHtml(t('archived_section'))}</span><span class="count">${rows.length}</span>` +
+    `</button>` +
+    (open
+      ? `<div class="archived-list">${rows.map(({ conv, ws }) => conversationRowHtml(conv, { archived: true, wsId: ws.id, wsName: ws.name })).join('')}</div>`
+      : '');
+}
+
+function renderRightOpenDot() {
+  const dot = document.getElementById('right-open-dot');
+  if (dot) dot.classList.toggle('is-on', changesWithDiff(state.changes).length > 0);
 }
 
 export function isArchivedConversation(conv) {
@@ -1560,15 +1714,13 @@ export async function refreshViewingAgent(cid, aid) {
         };
       }
     }
-    renderConversations();
-    renderCenterNotice();
     renderChatThread();
-    syncComposerLock();
+    renderRightPanel();
     scheduleSubagentPoll();
   } catch {
     if (state.activeConversationId === cid && state.viewingAgentId === aid && state.viewingAgent) {
       state.viewingAgent.loading = false;
-      renderChatThread();
+      renderRightPanel();
     }
   }
 }
@@ -1577,26 +1729,27 @@ export async function openSubagent(agentId) {
   if (!isRealSubagent({ id: agentId }) || !state.activeConversationId) return;
   const cid = state.activeConversationId;
   const known = (state.activeConversationData?.agents || []).find((agent) => agent.id === agentId);
+  const same = state.viewingAgentId === agentId;
   state.viewingAgentId = agentId;
   state.viewingAgent = {
     ...(known || { id: agentId }),
-    messages: state.viewingAgent?.id === agentId ? (state.viewingAgent.messages || []) : [],
+    messages: same ? (state.viewingAgent?.messages || []) : [],
     loading: true,
   };
-  renderConversations();
-  renderCenterNotice();
+  state.activeRightTab = 'agent';
+  setRightOpen(true);
   renderChatThread();
-  syncComposerLock();
+  renderRightPanel();
   await refreshViewingAgent(cid, agentId);
 }
 
 export function closeSubagentView() {
   if (!state.viewingAgentId) return;
   clearSubagentView();
-  renderConversations();
-  renderCenterNotice();
+  if (state.activeRightTab === 'agent') state.activeRightTab = 'diff';
   renderChatThread();
-  syncComposerLock();
+  refreshChangeDiffs();
+  renderRightPanel();
 }
 
 export async function forkFromHistory() {
@@ -1616,144 +1769,12 @@ export async function forkFromHistory() {
   }
 }
 
-function renderRealSubagentRow(agent) {
-  const background = isBackgroundSubagent(agent);
-  const mode = agent?.mode === 'background' || agent?.mode === 'foreground' ? agent.mode : '';
-  const name = realSubagentName(agent);
-  const st = agent.status || 'waiting';
-  const progressStr = agentProgressLabel(agent);
-  const last = oneLine(agent.lastText);
-  const open = state.viewingAgentId === agent.id;
-  return (
-    `<div class="sub-agent-row is-real${open ? ' is-open' : ''}" data-testid="subagent-row" data-agent-id="${escapeHtml(agent.id || '')}" data-role-id="${escapeHtml(agent.roleId || '')}" data-mode="${escapeHtml(mode)}" data-status="${escapeHtml(st)}" data-action="open-subagent" title="${escapeHtml(last || name)}">` +
-    `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
-    `<span class="sub-agent-copy">` +
-    `<span class="sub-agent-line">` +
-    `<span class="sub-agent-name">${escapeHtml(name)}</span>` +
-    (background ? `<span class="sub-agent-bg" data-testid="subagent-background">${escapeHtml(t('subagent_background'))}</span>` : '') +
-    (progressStr ? `<span class="sub-agent-progress" data-testid="subagent-progress">${escapeHtml(progressStr)}</span>` : '<span class="sub-agent-progress"></span>') +
-    `<span class="sub-agent-status status-text-${escapeHtml(st)}">${escapeHtml(t(`status_${st}`) || st)}</span>` +
-    `</span>` +
-    (last ? `<span class="sub-agent-last" data-testid="subagent-last">${escapeHtml(last)}</span>` : '') +
-    `</span>` +
-    `</div>`
-  );
-}
-
-export function renderSidebarAgents(conv) {
-  const agents = (state.activeConversationData && state.activeConversationData.id === conv.id && state.activeConversationData.agents)
-    ? state.activeConversationData.agents
-    : (conv.agents || []);
-
-  if (agents.length === 0) {
-    const status = conv.status || 'idle';
-    const statusClass = `dot-${status}`;
-    const statusTextStr = t(`status_${status}`) || status;
-    return (
-      `<div class="conv-node-agents">` +
-      `<div class="main-agent-node">` +
-      `<div class="main-agent-header">` +
-      `<span class="status-dot ${statusClass}" data-testid="status-dot" data-status="${escapeHtml(status)}"></span>` +
-      `<span class="main-agent-name">${escapeHtml(t('ag_group_main'))}</span>` +
-      `<span class="main-agent-state">${escapeHtml(statusTextStr)}</span>` +
-      `</div>` +
-      `</div>` +
-      `</div>`
-    );
-  }
-
-  return (
-    `<div class="conv-node-agents">` +
-    agents
-      .map((ag, index) => {
-        if (isRealSubagent(ag)) return renderRealSubagentRow(ag);
-        const isDefault = index === 0;
-        const name = String(ag.roleId || '').toLowerCase() === 'default'
-          ? t('ag_group_main')
-          : localizeRoleLabel(ag.roleId || ag.name || '');
-        const st = ag.status || (isDefault ? conv.status || 'idle' : 'waiting');
-        const statusClass = `dot-${st}`;
-        const statusText = t(`status_${st}`) || st;
-        const progressStr = agentProgressLabel(ag);
-
-        return (
-          `<div class="sub-agent-row" data-agent-id="${escapeHtml(ag.id || '')}">` +
-          `<span class="status-dot ${statusClass}" ${isDefault ? `data-testid="status-dot" data-status="${escapeHtml(st)}"` : ''}></span>` +
-          `<span class="sub-agent-name">${escapeHtml(name)}</span>` +
-          (progressStr ? `<span class="sub-agent-progress">${escapeHtml(progressStr)}</span>` : '') +
-          `<span class="sub-agent-status status-text-${escapeHtml(st)}">${escapeHtml(statusText)}</span>` +
-          `</div>`
-        );
-      })
-      .join('') +
-    `</div>`
-  );
-}
-
 export function renderConversations() {
-  const container = document.getElementById('conv-list-container');
-  if (!container) return;
-
-  container.innerHTML = state.conversations
-    .map((conv) => {
-      const isActive = conv.id === state.activeConversationId;
-      const status = conv.status || 'idle';
-      const archived = isArchivedConversation(conv);
-
-      return (
-        `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${escapeHtml(conv.id)}" data-status="${escapeHtml(status)}"${archived ? ' data-archived="true"' : ''}>` +
-        `<div class="conv-node-header" data-action="select-conversation" data-conv-id="${escapeHtml(conv.id)}" title="${escapeHtml(conv.title || '')}">` +
-        `<svg class="conv-node-icon icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>` +
-        `<span class="conv-node-title">${escapeHtml(conv.title || t('default_conversation_title'))}</span>` +
-        (archived ? `<span class="conv-archived-badge" data-testid="archived-badge">${escapeHtml(t('archived_badge'))}</span>` : '') +
-        (isActive ? `<span class="active-indicator"></span>` : '') +
-        `</div>` +
-        (isActive ? renderSidebarAgents(conv) : '') +
-        `</div>`
-      );
-    })
-    .join('');
+  renderSidebarWorkspaces();
 }
 
 export function renderRunningOverview() {
-  const activeCount = state.allRunningList.filter((c) => c.status === 'running' || c.status === 'recovering').length;
-  const pausedCount = state.allRunningList.filter((c) => c.status === 'paused').length;
-
-  const countTag = document.getElementById('running-count-tag');
-  if (countTag) {
-    if (pausedCount > 0) {
-      countTag.textContent = `${t('active_count', { n: activeCount })} · ${pausedCount} ${t('status_paused')}`;
-    } else {
-      countTag.textContent = t('active_count', { n: activeCount });
-    }
-  }
-
-  const panel = document.getElementById('running-panel');
-  if (!panel) return;
-
-  if (state.allRunningList.length === 0) {
-    panel.innerHTML = `<div style="font-size:11px;color:var(--text-muted);padding:4px 2px;">${escapeHtml(t('no_active_tasks'))}</div>`;
-    return;
-  }
-
-  panel.innerHTML = state.allRunningList
-    .map((c) => {
-      const statusTextStr = t(`status_${c.status}`) || c.status;
-      return (
-        `<div class="running-row" data-testid="agent-status-item" data-id="${escapeHtml(c.id)}" data-status="${escapeHtml(c.status)}" data-action="switch-ws-conv" data-ws-id="${escapeHtml(c.workspaceId)}" data-conv-id="${escapeHtml(c.id)}">` +
-        `<span class="status-dot dot-${escapeHtml(c.status)}"></span>` +
-        `<div class="running-path">` +
-        `<span class="rp-ws">${escapeHtml(c.workspaceName || 'ws')}</span>` +
-        `<span class="rp-div">›</span>` +
-        `<span class="rp-conv">${escapeHtml(c.title || '')}</span>` +
-        `<span class="rp-div">›</span>` +
-        `<span class="rp-agent">${escapeHtml(localizeRoleLabel(c.roleId || ''))}</span>` +
-        `<span class="rp-status">· ${escapeHtml(statusTextStr)}</span>` +
-        `</div>` +
-        `</div>`
-      );
-    })
-    .join('');
+  renderSidebarWorkspaces();
 }
 
 function renderComposerContext() {
@@ -1872,7 +1893,6 @@ function toggleAgentMenu() {
     showToast('err_archived');
     return;
   }
-  if (state.viewingAgentId) return;
   if (DISPATCH_BUSY.has(status)) {
     showToast('err_role_busy');
     return;
@@ -1942,6 +1962,8 @@ function renderDemoModelBadge() {
   }
 }
 
+const RUN_BAR_STATUSES = new Set(['running', 'recovering', 'paused']);
+
 export function renderStatusBar() {
   renderComposerContext();
   renderComposerAgent();
@@ -1950,13 +1972,41 @@ export function renderStatusBar() {
   if (!bar) return;
 
   const conv = state.activeConversationData;
+  const draft = isDraftActive();
   const status = conv?.status || 'idle';
   const autoContinues = conv?.autoContinues || 0;
+  const archived = isArchivedConversation(conv);
   const statusTextStr = t(`status_${status}`) || status;
+  const ws = (state.workspaces || []).find((w) => w.id === state.activeWorkspaceId);
 
+  const center = document.getElementById('col-center');
+  if (center) {
+    center.classList.toggle('is-draft', draft);
+    center.classList.toggle('is-empty', !state.activeWorkspaceId);
+  }
+
+  const title = document.getElementById('top-title');
+  if (title) {
+    const item = state.conversations.find((c) => c.id === state.activeConversationId);
+    title.textContent = draft
+      ? t('new_conversation')
+      : (state.activeConversationId ? (conv?.title || item?.title || t('default_conversation_title')) : '');
+    title.classList.toggle('is-draft', draft);
+  }
+
+  const wsEl = document.getElementById('topbar-workspace');
+  if (wsEl) wsEl.textContent = '';
+
+  const pill = document.getElementById('status-pill');
+  if (pill) pill.classList.toggle('is-hidden', !state.activeConversationId);
+  const dot = document.getElementById('status-dot');
+  if (dot) {
+    dot.className = `status-dot dot-${archived ? 'archived' : status}`;
+    dot.setAttribute('data-status', status);
+  }
   const statusTextEl = document.getElementById('status-text');
   if (statusTextEl) {
-    statusTextEl.textContent = statusTextStr;
+    statusTextEl.textContent = archived ? t('archived_badge') : statusTextStr;
     const failedText = status === 'failed'
       ? localizedErrorText(conv?.llmError?.message, conv?.llmError?.code)
       : '';
@@ -1964,27 +2014,22 @@ export function renderStatusBar() {
     else statusTextEl.removeAttribute('title');
   }
 
-  const ws = (state.workspaces || []).find((w) => w.id === state.activeWorkspaceId);
-  const wsEl = document.getElementById('topbar-workspace');
-  const wsSep = document.getElementById('topbar-ws-sep');
-  if (wsEl) wsEl.textContent = ws?.name || '';
-  if (wsSep) wsSep.classList.toggle('is-hidden', !ws?.name);
-
   const acBadge = document.getElementById('autocontinue-count');
-  const acSep = document.getElementById('autocontinue-sep');
   const showAc = autoContinues > 0;
   if (acBadge) {
     acBadge.classList.toggle('is-hidden', !showAc);
     acBadge.textContent = showAc ? `↻ ${autoContinues}` : '';
   }
-  if (acSep) acSep.classList.toggle('is-hidden', !showAc);
 
+  const cpWrap = document.getElementById('checkpoint-badge');
   const cpBadge = document.getElementById('checkpoint-badge-text');
+  if (cpWrap) cpWrap.classList.toggle('is-hidden', !state.activeConversationId);
   if (cpBadge) {
     if (conv?.lastCheckpointAt) {
       cpBadge.setAttribute('data-rel-time', '');
       cpBadge.setAttribute('data-ts', String(conv.lastCheckpointAt));
       cpBadge.textContent = formatRelativeTime(conv.lastCheckpointAt);
+      cpWrap?.setAttribute('title', `${t('checkpoint_title')} · ${formatRelativeTime(conv.lastCheckpointAt)}`);
     } else {
       cpBadge.removeAttribute('data-rel-time');
       cpBadge.removeAttribute('data-ts');
@@ -1992,15 +2037,94 @@ export function renderStatusBar() {
     }
   }
 
-  const archived = isArchivedConversation(conv);
+  renderRunBar(conv, status, archived);
+
+  const projName = document.getElementById('composer-project-name');
+  if (projName) projName.textContent = ws?.name || '';
+  const projChip = document.getElementById('composer-project-chip');
+  if (projChip) {
+    projChip.title = ws?.path || '';
+    projChip.classList.toggle('is-hidden', !ws);
+  }
+  const draftName = document.getElementById('draft-proj-name');
+  if (draftName) draftName.textContent = ws?.name || t('pick_project');
+  const hint = document.getElementById('draft-hint');
+  if (hint) {
+    hint.textContent = !state.workspaces.length
+      ? t('draft_hint_no_project')
+      : (draft && ws ? t('draft_hint', { path: ws.name }) : '');
+  }
+
+  renderCenterNotice();
+  syncComposerLock();
+  syncSendReady();
+}
+
+function formatElapsed(ms) {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const ss = String(sec % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+let runStartedAt = null;
+let runStartedFor = null;
+let runTicker = null;
+
+function renderRunBar(conv, status, archived) {
+  const runBar = document.getElementById('run-bar');
+  if (!runBar) return;
+  const show = Boolean(state.activeConversationId) && !archived && RUN_BAR_STATUSES.has(status);
+  runBar.hidden = !show;
+  runBar.classList.toggle('is-paused', status === 'paused');
+
   const btnPause = document.getElementById('btn-pause');
   const btnResume = document.getElementById('btn-resume');
   const btnStop = document.getElementById('btn-stop');
-  if (btnPause) btnPause.disabled = archived || status !== 'running';
-  if (btnResume) btnResume.disabled = archived || status !== 'paused';
-  if (btnStop) btnStop.disabled = archived || (status !== 'running' && status !== 'paused' && status !== 'recovering');
-  renderCenterNotice();
-  syncComposerLock();
+  const canPause = !archived && status === 'running';
+  const canResume = !archived && status === 'paused';
+  const canStop = !archived && RUN_BAR_STATUSES.has(status);
+  if (btnPause) { btnPause.disabled = !canPause; btnPause.hidden = !canPause; }
+  if (btnResume) { btnResume.disabled = !canResume; btnResume.hidden = !canResume; }
+  if (btnStop) { btnStop.disabled = !canStop; btnStop.hidden = !canStop; }
+
+  if (!show) {
+    runStartedAt = null;
+    runStartedFor = null;
+    if (runTicker) { clearInterval(runTicker); runTicker = null; }
+    return;
+  }
+  if (runStartedFor !== state.activeConversationId || runStartedAt == null) {
+    runStartedFor = state.activeConversationId;
+    const last = [...(conv?.messages || [])].reverse().find((m) => m.role === 'user');
+    const ts = Number(last?.createdAt || last?.ts || 0);
+    runStartedAt = ts > 0 && ts <= Date.now() ? ts : Date.now();
+  }
+  const titleEl = document.getElementById('run-title');
+  if (titleEl) titleEl.textContent = t(`status_${status}`) || status;
+  const stepEl = document.getElementById('run-step');
+  if (stepEl) stepEl.textContent = conv?.currentStep ? t('run_step', { n: conv.currentStep }) : '';
+  const agentsEl = document.getElementById('run-agents');
+  if (agentsEl) {
+    const subs = (conv?.agents || []).filter((ag) => isRealSubagent(ag));
+    const live = subs.filter((ag) => ACTIVE_RUN.has(ag.status)).length;
+    agentsEl.textContent = live ? t('run_subagents', { n: live }) : '';
+  }
+  const progress = document.querySelector('#run-bar .run-progress');
+  if (progress) progress.classList.toggle('is-indeterminate', status !== 'paused');
+  const tick = () => {
+    const el = document.getElementById('run-elapsed');
+    if (el && runStartedAt) el.textContent = formatElapsed(Date.now() - runStartedAt);
+  };
+  tick();
+  if (!runTicker) runTicker = setInterval(tick, 1000);
+}
+
+function syncSendReady() {
+  const input = document.querySelector('[data-testid="chat-input"]');
+  const send = document.querySelector('[data-testid="chat-send"]');
+  if (send) send.classList.toggle('is-ready', Boolean(input && !input.disabled && input.value.trim()));
 }
 
 export function renderCenterNotice() {
@@ -2008,18 +2132,7 @@ export function renderCenterNotice() {
   if (!host) return;
   const parts = [];
   const conv = state.activeConversationData;
-  if (state.viewingAgentId) {
-    const agent = state.viewingAgent || (conv?.agents || []).find((item) => item.id === state.viewingAgentId) || {};
-    const name = realSubagentName(agent.id ? agent : { id: state.viewingAgentId, name: agent.name, roleId: agent.roleId });
-    const st = agent.status || 'waiting';
-    parts.push(
-      `<div class="center-notice-row" data-testid="subagent-banner">` +
-      `<span class="center-notice-text" data-testid="subagent-banner-text">${escapeHtml(t('subagent_banner', { name, status: t(`status_${st}`) || st }))}</span>` +
-      `<button type="button" class="btn btn-sm" data-testid="subagent-back" data-action="close-subagent">${escapeHtml(t('subagent_back'))}</button>` +
-      `</div>`
-    );
-  }
-  if (isArchivedConversation(conv) && !state.viewingAgentId) {
+  if (isArchivedConversation(conv)) {
     parts.push(
       `<div class="center-notice-row" data-testid="archived-banner">` +
       `<span class="center-notice-text" data-testid="archived-banner-text">${escapeHtml(t('archived_banner'))}</span>` +
@@ -2033,19 +2146,22 @@ export function renderCenterNotice() {
 export function syncComposerLock() {
   const conv = state.activeConversationData;
   const archived = isArchivedConversation(conv);
-  const viewing = Boolean(state.viewingAgentId);
-  const locked = archived || viewing;
+  const noWorkspace = !state.activeWorkspaceId;
+  const locked = archived || noWorkspace;
   const input = document.querySelector('[data-testid="chat-input"]');
   const send = document.querySelector('[data-testid="chat-send"]');
+  const status = conv?.status || 'idle';
   if (input) {
     input.disabled = locked;
-    input.placeholder = archived ? t('archived_input') : (viewing ? t('subagent_input') : t('composer_placeholder'));
+    input.placeholder = archived
+      ? t('archived_input')
+      : (isDraftActive() ? t('draft_placeholder') : (RUN_BAR_STATUSES.has(status) ? t('composer_placeholder_running') : t('composer_placeholder')));
   }
   if (send) send.disabled = locked;
   const chip = document.getElementById('composer-agent-chip-btn');
   if (chip) {
-    chip.disabled = archived || viewing;
-    chip.setAttribute('aria-disabled', archived || viewing ? 'true' : 'false');
+    chip.disabled = archived;
+    chip.setAttribute('aria-disabled', archived ? 'true' : 'false');
   }
 }
 
@@ -2125,51 +2241,48 @@ export function toggleSubagent(agentId) {
   renderChatThread();
 }
 
-export function renderChatThread() {
-  renderCenterNotice();
-  const thread = document.getElementById('center-thread');
-  if (!thread) return;
+const DELEGATE_TOOLS = new Set(['delegate', 'subagent']);
 
-  const viewing = Boolean(state.viewingAgentId);
-  const conv = state.activeConversationData;
-  if (viewing && state.viewingAgent?.loading && !(state.viewingAgent.messages || []).length) {
-    thread.innerHTML = `<div class="empty-placeholder" data-testid="subagent-thread"><p style="font-size:12px;color:var(--text-muted);">${escapeHtml(t('subagent_loading'))}</p></div>`;
-    return;
-  }
-  if (!viewing && (!conv || !conv.messages || conv.messages.length === 0)) {
-    const errHtml = llmErrorHtml(conv);
-    thread.innerHTML = errHtml || `
-      <div class="empty-placeholder">
-        <div>
-          <h3 style="margin-bottom:8px;font-weight:600;">${escapeHtml(t('empty_chat_title'))}</h3>
-          <p style="font-size:12px;color:var(--text-muted);">${escapeHtml(t('composer_placeholder'))}</p>
-        </div>
-      </div>
-    `;
-    if (errHtml) thread.scrollTop = thread.scrollHeight;
-    return;
-  }
+function realSubagentRowHtml(agent) {
+  const background = isBackgroundSubagent(agent);
+  const mode = agent?.mode === 'background' || agent?.mode === 'foreground' ? agent.mode : '';
+  const name = realSubagentName(agent);
+  const st = agent.status || 'waiting';
+  const progressStr = agentProgressLabel(agent);
+  const last = oneLine(agent.lastText || agent.task || '');
+  const open = state.viewingAgentId === agent.id;
+  return (
+    `<div class="sub-agent-row is-real${open ? ' is-open' : ''}" data-testid="subagent-row" data-agent-id="${escapeHtml(agent.id || '')}" data-role-id="${escapeHtml(agent.roleId || '')}" data-mode="${escapeHtml(mode)}" data-status="${escapeHtml(st)}" data-action="open-subagent" data-ctx="subagent" title="${escapeHtml(t('subagent_open_title'))}">` +
+    `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
+    `<span class="sub-agent-name">${escapeHtml(name)}</span>` +
+    (background ? `<span class="sub-agent-bg" data-testid="subagent-background">${escapeHtml(t('subagent_background'))}</span>` : '') +
+    `<span class="sub-agent-last" data-testid="subagent-last">${escapeHtml(last)}</span>` +
+    (progressStr ? `<span class="sub-agent-progress" data-testid="subagent-progress">${escapeHtml(progressStr)}</span>` : '') +
+    `<span class="sub-agent-status status-text-${escapeHtml(st)}">${escapeHtml(t(`status_${st}`) || st)}</span>` +
+    `<span class="sub-agent-go">›</span>` +
+    `</div>`
+  );
+}
 
+function agentsCardHtml(agents) {
+  if (!agents.length) return '';
+  return `<div class="agents-card" data-testid="subagents-card">${agents.map(realSubagentRowHtml).join('')}</div>`;
+}
+
+/** Messages → HTML blocks. Shared by the main thread and the sub-agent pane. */
+function threadBlocksHtml(msgs, { afterToolRun, senderName } = {}) {
   const rendered = [];
-  const msgs = dedupeMessages(viewing ? (state.viewingAgent?.messages || []) : conv.messages);
   const toolRun = [];
   const flushToolRun = () => {
     if (!toolRun.length) return;
     rendered.push(renderToolGroupHtml(toolRun));
+    if (afterToolRun) {
+      const extra = afterToolRun(toolRun);
+      if (extra) rendered.push(extra);
+    }
     toolRun.length = 0;
   };
-  if (viewing && msgs.length === 0) {
-    thread.innerHTML = `<div class="empty-placeholder" data-testid="subagent-thread"><p style="font-size:12px;color:var(--text-muted);">${escapeHtml(t('subagent_empty'))}</p></div>`;
-    return;
-  }
-
-  const allAgents = viewing ? [] : (conv?.agents || []);
-  const cardAgents = allAgents.filter((ag) => !isRealSubagent(ag));
-  const subagents = cardAgents.length > 1 ? cardAgents : [];
-  let subagentsInserted = false;
-
-  for (let i = 0; i < msgs.length; i++) {
-    const m = msgs[i];
+  for (const m of msgs) {
     if (m.role === 'tool') {
       if (m.tool) toolRun.push(m.tool);
       else flushToolRun();
@@ -2195,53 +2308,70 @@ export function renderChatThread() {
     if (m.role === 'user') {
       rendered.push(
         `<div class="msg-group msg-side-user" data-testid="message" data-role="user">` +
-        `<div class="msg-header">` +
-        `<div class="msg-avatar avatar-user">U</div>` +
-        `<span class="msg-sender">${escapeHtml(t('user_name'))}</span>` +
-        `</div>` +
         `<div class="msg-body" data-testid="message-body">${renderMarkdown(m.text || '')}</div>` +
         `</div>`
       );
-
-      // Render dispatched subagent cards after the user prompt
-      if (!subagentsInserted && subagents.length > 0) {
-        subagentsInserted = true;
-        for (const sa of subagents) {
-          rendered.push(renderSubagentCardHtml(sa));
-        }
-      }
-    } else {
-      const bodyHtml = renderMarkdown(m.text || '');
-      const sender = assistantLabel(m);
-      const chip = assistantChip(m);
-      rendered.push(
-        `<div class="msg-group msg-side-agent" data-testid="message" data-role="assistant">` +
-        `<div class="msg-header">` +
-        `<div class="msg-avatar avatar-assistant">π</div>` +
-        `<span class="msg-sender" data-testid="message-sender">${escapeHtml(sender)}</span>` +
-        (chip ? `<span class="msg-chip">${escapeHtml(chip)}</span>` : '') +
-        `</div>` +
-        `<div class="msg-body" data-testid="message-body">${bodyHtml}</div>` +
-        `</div>`
-      );
+      continue;
     }
+    const chip = assistantChip(m);
+    rendered.push(
+      `<div class="msg-group msg-side-agent" data-testid="message" data-role="assistant">` +
+      `<div class="msg-header">` +
+      `<span class="msg-sender" data-testid="message-sender">${escapeHtml(senderName || assistantLabel(m))}</span>` +
+      (chip && !senderName ? `<span class="msg-chip">${escapeHtml(chip)}</span>` : '') +
+      `</div>` +
+      `<div class="msg-body" data-testid="message-body">${renderMarkdown(m.text || '')}</div>` +
+      `</div>`
+    );
   }
-
   flushToolRun();
-  if (!subagentsInserted && subagents.length > 0) {
-    for (const sa of subagents) {
-      rendered.push(renderSubagentCardHtml(sa));
-    }
-  }
+  return rendered;
+}
 
-  if (!viewing) {
+export function renderChatThread() {
+  renderCenterNotice();
+  const thread = document.getElementById('center-thread');
+  if (!thread) return;
+
+  const conv = state.activeConversationData;
+  if (!conv || !conv.messages || conv.messages.length === 0) {
     const errHtml = llmErrorHtml(conv);
-    if (errHtml) rendered.push(errHtml);
+    thread.innerHTML = errHtml
+      ? `<div class="thread-inner">${errHtml}</div>`
+      : (state.activeConversationId ? `<div class="thread-inner"><div class="thread-empty">${escapeHtml(t('empty_chat_hint'))}</div></div>` : '');
+    if (errHtml) thread.scrollTop = thread.scrollHeight;
+    return;
   }
 
-  const body = rendered.join('');
-  thread.innerHTML = viewing ? `<div data-testid="subagent-thread">${body}</div>` : body;
-  thread.scrollTop = thread.scrollHeight;
+  const stick = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+  const msgs = dedupeMessages(conv.messages);
+  const allAgents = conv.agents || [];
+  const realAgents = allAgents.filter((ag) => isRealSubagent(ag));
+  const cardAgents = allAgents.filter((ag) => !isRealSubagent(ag));
+  const steps = cardAgents.length > 1 ? cardAgents : [];
+  let agentsPlaced = false;
+
+  const rendered = threadBlocksHtml(msgs, {
+    afterToolRun(tools) {
+      if (agentsPlaced || !realAgents.length) return '';
+      if (!tools.some((tool) => DELEGATE_TOOLS.has(String(tool?.name || '').toLowerCase()))) return '';
+      agentsPlaced = true;
+      return agentsCardHtml(realAgents);
+    },
+  });
+
+  if (steps.length) {
+    const firstUser = rendered.findIndex((html) => html.includes('data-role="user"'));
+    rendered.splice(firstUser + 1, 0, ...steps.map((sa) => renderSubagentCardHtml(sa)));
+  }
+  if (!agentsPlaced && realAgents.length) rendered.push(agentsCardHtml(realAgents));
+
+  const errHtml = llmErrorHtml(conv);
+  if (errHtml) rendered.push(errHtml);
+
+  thread.innerHTML = `<div class="thread-inner">${rendered.join('')}</div>`;
+  if (stick || state.forceThreadBottom) thread.scrollTop = thread.scrollHeight;
+  state.forceThreadBottom = false;
 }
 
 function llmErrorHtml(conv) {
@@ -2411,18 +2541,12 @@ export function renderToolRowHtml(tool) {
 }
 
 function assistantLabel(m) {
-  if (state.viewingAgentId) {
-    const agent = state.viewingAgent
-      || (state.activeConversationData?.agents || []).find((item) => item.id === state.viewingAgentId);
-    const name = agent ? realSubagentName(agent) : '';
-    if (name) return name;
-  }
   const rid = m?.roleId || m?.agentId;
-  if (rid) {
+  if (rid && String(rid).toLowerCase() !== 'default') {
     const role = (state.roles || []).find((r) => r.id === rid);
     return localizeRoleLabel(role?.id || role?.name || rid);
   }
-  return t('agent_name');
+  return t('ag_group_main');
 }
 
 function assistantChip(m) {
@@ -2555,114 +2679,230 @@ function syncRightTabActive() {
   const tab = state.activeRightTab || 'diff';
   const nav = document.querySelector('#right-panel .tabs-nav');
   if (!nav) return;
+  const visual = tab === 'editor' || tab === 'markdown' ? 'file' : tab;
   nav.querySelectorAll('.tab-btn[data-tab]').forEach((btn) => {
-    btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+    btn.classList.toggle('active', btn.getAttribute('data-tab') === visual);
   });
+}
+
+function diffTotals(list) {
+  let added = 0;
+  let removed = 0;
+  for (const ch of list) {
+    added += Number(ch.added) || 0;
+    removed += Number(ch.removed) || 0;
+  }
+  return { added, removed };
+}
+
+/** Prototype-style unified diff: one column, sign + text. */
+export function renderUnifiedDiffHtml(diffText) {
+  if (!diffText) return `<div class="diff-note">${escapeHtml(t('no_diff_available'))}</div>`;
+  const rows = [];
+  let dels = [];
+  let adds = [];
+  const row = (kind, code) => {
+    const sign = kind === 'add' ? '+' : kind === 'del' ? '−' : '';
+    return `<div class="diff-line is-${kind}"><span class="sign">${sign}</span><span class="code">${escapeHtml(code)}</span></div>`;
+  };
+  // Within one run of changes, removed lines read before the lines that replace them.
+  const flush = () => {
+    for (const code of dels) rows.push(row('del', code));
+    for (const code of adds) rows.push(row('add', code));
+    dels = [];
+    adds = [];
+  };
+  for (const line of String(diffText).split(/\r?\n/)) {
+    if (line === '' || line.startsWith('---') || line.startsWith('+++') || line.startsWith('diff ') || line.startsWith('index ')) continue;
+    if (line.startsWith('\\')) continue;
+    if (line.startsWith('@@')) {
+      flush();
+      if (rows.length) rows.push(`<div class="diff-line is-hunk"><span class="sign"></span><span class="code">⋯</span></div>`);
+      continue;
+    }
+    if (line[0] === '+') { adds.push(line.slice(1)); continue; }
+    if (line[0] === '-') { dels.push(line.slice(1)); continue; }
+    flush();
+    rows.push(row('ctx', line[0] === ' ' ? line.slice(1) : line));
+  }
+  flush();
+  if (!rows.length) return `<div class="diff-note">${escapeHtml(t('diff_no_change'))}</div>`;
+  return `<div class="diff-lines">${rows.join('')}</div>`;
+}
+
+function changeFileHtml(ch) {
+  const open = !state.closedChangeFiles.has(ch.path);
+  const active = ch.path === state.activeFilePath;
+  const d = state.diffs[ch.path];
+  let body = '';
+  if (open) {
+    if (!d) body = `<div class="diff-note">${escapeHtml(t('loading'))}</div>`;
+    else if (diffIsUnchanged(d)) body = `<div class="diff-note" data-testid="diff-unchanged">${escapeHtml(t('diff_no_change'))}</div>`;
+    else body = renderUnifiedDiffHtml(d.unified || '');
+  }
+  return (
+    `<div class="change-file${open ? ' is-open' : ''}${active ? ' active' : ''}"${open && d ? ' data-testid="diff-view"' : ''} data-path="${escapeHtml(ch.path)}">` +
+    `<div class="changed-file-pill" data-testid="changed-file" data-path="${escapeHtml(ch.path)}" data-action="load-file" data-ctx="change-file" title="${escapeHtml(ch.path)}">` +
+    CHEV_SVG +
+    `<span class="changed-file-path">${escapeHtml(truncatePath(ch.path, 60))}</span>` +
+    (ch.added != null ? `<span class="stat-add">+${escapeHtml(ch.added)}</span>` : '') +
+    (ch.removed != null ? `<span class="stat-del">−${escapeHtml(ch.removed)}</span>` : '') +
+    `</div>` +
+    (open ? `<div class="diff-viewport">${body}</div>` : '') +
+    `</div>`
+  );
+}
+
+function renderChangesPaneHtml(visible) {
+  if (!state.activeConversationId) {
+    return `<div class="pane-empty" data-testid="diff-view">${escapeHtml(t('no_changes_yet'))}</div>`;
+  }
+  if (!visible.length) {
+    return `<div class="pane-empty" data-testid="diff-view">${escapeHtml(t('no_changes_yet'))}</div>`;
+  }
+  const tot = diffTotals(visible);
+  return (
+    `<div class="changes-pane">` +
+    `<div class="changes-head">` +
+    `<div class="changes-head-line"><b>${escapeHtml(t('changes_file_count', { n: visible.length }))}</b>` +
+    `<span class="stat-add">+${tot.added}</span><span class="stat-del">−${tot.removed}</span></div>` +
+    `<div class="changes-head-note">${escapeHtml(t('changes_note'))}</div>` +
+    `</div>` +
+    visible.map(changeFileHtml).join('') +
+    `</div>`
+  );
+}
+
+function renderAgentTab() {
+  const slot = document.getElementById('agent-tab-slot');
+  if (!slot) return;
+  if (!state.viewingAgentId) {
+    slot.innerHTML = '';
+    return;
+  }
+  const agent = viewingAgentInfo();
+  const st = agent.status || 'waiting';
+  slot.innerHTML =
+    `<span class="tab-sep"></span>` +
+    `<button type="button" class="tab-btn agent-tab${state.activeRightTab === 'agent' ? ' active' : ''}" data-action="switch-right-tab" data-tab="agent" data-testid="agent-tab" title="${escapeHtml(t('subagent_tab_title'))}">` +
+    `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
+    `<span class="agent-tab-name">${escapeHtml(realSubagentName(agent))}</span>` +
+    `<span class="tab-close" data-action="close-subagent" data-testid="subagent-back" title="${escapeHtml(t('btn_close'))}" aria-label="${escapeHtml(t('subagent_back'))}">×</span>` +
+    `</button>`;
+}
+
+function viewingAgentInfo() {
+  const known = (state.activeConversationData?.agents || []).find((item) => item.id === state.viewingAgentId) || {};
+  return { id: state.viewingAgentId, ...known, ...(state.viewingAgent || {}) };
+}
+
+function renderAgentPaneHtml() {
+  const agent = viewingAgentInfo();
+  const st = agent.status || 'waiting';
+  const name = realSubagentName(agent);
+  const msgs = dedupeMessages(state.viewingAgent?.messages || []);
+  const firstUser = msgs.find((m) => m.role === 'user');
+  const rest = firstUser ? msgs.filter((m) => m !== firstUser) : msgs;
+  const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant' && m.text);
+  const done = st === 'done';
+  const toolCount = msgs.filter((m) => m.role === 'tool').length;
+  const meta = [modelForDispatchRole((state.roles || []).find((r) => r.id === agent.roleId) || null), toolCount ? t('tool_calls_count', { n: toolCount }) : '']
+    .filter(Boolean).join(' · ');
+  let thread;
+  if (state.viewingAgent?.loading && !msgs.length) thread = `<div class="pane-empty">${escapeHtml(t('subagent_loading'))}</div>`;
+  else if (!msgs.length) thread = `<div class="pane-empty">${escapeHtml(t('subagent_empty'))}</div>`;
+  else thread = threadBlocksHtml(done && lastAssistant ? rest.filter((m) => m !== lastAssistant) : rest, { senderName: name }).join('');
+  return (
+    `<div class="agent-pane" data-testid="subagent-pane">` +
+    `<div class="agent-pane-body">` +
+    `<div class="agent-pane-head" data-testid="subagent-banner">` +
+    `<span class="agent-pane-tag">${escapeHtml(t('subagent_tag'))}</span>` +
+    `<span class="agent-pane-name" data-testid="subagent-banner-text">${escapeHtml(name)}</span>` +
+    `<span class="agent-pane-status status-text-${escapeHtml(st)}">${escapeHtml(t(`status_${st}`) || st)}</span>` +
+    (isBackgroundSubagent(agent) ? `<span class="sub-agent-bg">${escapeHtml(t('subagent_background'))}</span>` : '') +
+    `<span class="agent-pane-meta">${escapeHtml(meta)}</span>` +
+    `</div>` +
+    (firstUser
+      ? `<div class="agent-pane-brief" data-testid="message" data-role="user"><span class="k">${escapeHtml(t('subagent_brief'))}</span><span class="v" data-testid="message-body">${escapeHtml(firstUser.text || '')}</span></div>`
+      : '') +
+    `<div class="agent-pane-thread" data-testid="subagent-thread">${thread}` +
+    (done && lastAssistant
+      ? `<div class="agent-pane-result msg-group" data-testid="message" data-role="assistant"><span class="k" data-testid="message-sender">${escapeHtml(name)}</span><div class="msg-body" data-testid="message-body">${renderMarkdown(lastAssistant.text)}</div></div>`
+      : '') +
+    `</div>` +
+    `</div>` +
+    `<div class="agent-pane-foot">` +
+    `<div class="agent-pane-hint">${escapeHtml(done ? t('subagent_hint_done', { name }) : t('subagent_hint_running', { name }))}</div>` +
+    `</div>` +
+    `</div>`
+  );
 }
 
 export function renderRightPanel() {
   syncRightTabActive();
+  renderAgentTab();
+  renderRightOpenDot();
   const panel = document.getElementById('right-panel');
   if (!panel) return;
 
   const visibleChanges = changesWithDiff(state.changes);
-  const changesBar = document.getElementById('changed-files-bar');
-  if (changesBar) {
-    if (visibleChanges.length === 0) {
-      changesBar.innerHTML = `<span style="font-size:11px;color:var(--text-muted);">${escapeHtml(t('no_changed_files'))}</span>`;
-    } else {
-      changesBar.innerHTML = visibleChanges
-        .map((ch) => {
-          const isActive = ch.path === state.activeFilePath;
-          const display = truncatePath(ch.path, 30);
-          return (
-            `<span class="changed-file-pill ${isActive ? 'active' : ''}" data-testid="changed-file" data-path="${escapeHtml(ch.path)}" data-action="load-file">` +
-            `<span>${escapeHtml(display)}</span>` +
-            (ch.added != null ? `<span class="stat-add">+${escapeHtml(ch.added)}</span>` : '') +
-            (ch.removed != null ? `<span class="stat-del">−${escapeHtml(ch.removed)}</span>` : '') +
-            `</span>`
-          );
-        })
-        .join('');
-    }
-  }
-
+  const tot = diffTotals(visibleChanges);
+  const stat = document.getElementById('diff-tab-stat');
+  if (stat) stat.innerHTML = visibleChanges.length ? `<span class="add">+${tot.added}</span><span class="del">−${tot.removed}</span>` : '';
   const badge = document.getElementById('diff-tab-badge');
   if (badge) badge.textContent = visibleChanges.length || 0;
+  const editBtn = document.querySelector('[data-testid="file-open-editor"]');
+  if (editBtn) editBtn.classList.toggle('is-hidden', !state.activeFilePath || state.activeRightTab === 'agent' || state.activeRightTab === 'editor');
 
   const viewport = document.getElementById('right-viewport');
   if (!viewport) return;
 
+  if (state.activeRightTab === 'agent' && state.viewingAgentId) {
+    const body = viewport.querySelector('.agent-pane-body');
+    const stick = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+    viewport.innerHTML = renderAgentPaneHtml();
+    const next = viewport.querySelector('.agent-pane-body');
+    if (next && stick) next.scrollTop = next.scrollHeight;
+    return;
+  }
   if (state.activeRightTab === 'editor' && state.activeFilePath) {
     viewport.innerHTML = `
       <div class="md-editor-container" data-testid="md-editor">
         <div class="md-editor-toolbar">
-          <span style="font-family:var(--font-mono);font-size:12px;font-weight:500;">${escapeHtml(state.activeFilePath)}</span>
-          <button class="btn btn-ctrl" data-testid="md-editor-save" data-action="save-editor-file">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-            ${escapeHtml(t('btn_save'))}
-          </button>
+          <span class="path">${escapeHtml(state.activeFilePath)}</span>
+          <button type="button" class="btn btn-sm p" data-testid="md-editor-save" data-action="save-editor-file">${escapeHtml(t('btn_save'))}</button>
         </div>
         <div class="md-editor-content" contenteditable="true" spellcheck="false">${escapeHtml(state.activeFileContent ?? '')}</div>
       </div>
     `;
-  } else if (state.activeRightTab === 'file') {
+    return;
+  }
+  if (state.activeRightTab === 'file') {
     ensureWorkspaceTree();
     viewport.innerHTML = renderFileBrowserHtml();
-  } else {
-    if (!state.activeDiff) {
-      const emptyKey = visibleChanges.length === 0 ? 'no_changes_yet' : 'select_file_for_diff';
-      viewport.innerHTML = `
-        <div class="diff-viewport" data-testid="diff-view">
-          <div class="empty-placeholder">${escapeHtml(t(emptyKey))}</div>
-        </div>
-      `;
-    } else if (diffIsUnchanged(state.activeDiff)) {
-      viewport.innerHTML = `
-        <div class="diff-viewport" data-testid="diff-view">
-          <div class="empty-placeholder" data-testid="diff-unchanged">${escapeHtml(t('diff_no_change'))}</div>
-        </div>
-      `;
-    } else {
-      const d = state.activeDiff;
-      const single = isAddedFileDiff(d.unified || '');
-      viewport.innerHTML = `
-        <div class="diff-viewport" data-testid="diff-view">
-          <div class="diff-file-header">
-            <div class="file-path-title">
-              <svg class="file-path-icon icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
-              <span>${escapeHtml(d.path)}</span>
-            </div>
-            <div class="file-diff-stats">
-              <span class="stat-add">+${escapeHtml(d.added ?? 0)}</span>
-              <span class="stat-del">−${escapeHtml(d.removed ?? 0)}</span>
-            </div>
-          </div>
-          <div class="diff-col-legend${single ? ' is-single' : ''}">
-            ${single ? '' : `<div class="legend-side"><span>${escapeHtml(t('baseline'))}</span></div>`}
-            <div class="legend-side"><span>${escapeHtml(t('working_copy'))}</span></div>
-          </div>
-          ${renderDiffHtml(d.unified || '')}
-        </div>
-      `;
-    }
+    return;
   }
+  const pane = viewport.querySelector('.changes-pane');
+  const top = pane ? pane.scrollTop : 0;
+  viewport.innerHTML = renderChangesPaneHtml(visibleChanges);
+  const next = viewport.querySelector('.changes-pane');
+  if (next) next.scrollTop = top;
 }
 
 function renderFileBrowserHtml() {
   const treeHtml = workspaceTreeRowsHtml();
+  const ws = (state.workspaces || []).find((w) => w.id === state.activeWorkspaceId);
 
   let preview;
   if (state.activeFilePath && state.activeFileContent != null && !looksBinary(state.activeFileContent)) {
     const shown = state.activeFileContent.length > 200000
       ? `${state.activeFileContent.slice(0, 200000)}\n…`
       : state.activeFileContent;
-    preview = `
-      <div class="md-editor-toolbar">
-        <span style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(state.activeFilePath)}</span>
-      </div>
-      <pre class="file-view-content"><code>${escapeHtml(shown)}</code></pre>
-    `;
+    const lines = shown.split('\n');
+    const changed = changesWithDiff(state.changes).some((c) => c.path === state.activeFilePath);
+    preview =
+      `<div class="file-preview-head"><span>${escapeHtml(state.activeFilePath)}</span><span>${escapeHtml(changed ? t('file_modified_note') : t('file_lines', { n: lines.length }))}</span></div>` +
+      `<div class="file-lines file-view-content">${lines.map((line, i) => `<div class="file-line"><span class="n">${i + 1}</span><span class="code">${escapeHtml(line)}</span></div>`).join('')}</div>`;
   } else if (state.activeFilePath && looksBinary(state.activeFileContent)) {
     preview = `<div class="file-preview-empty">${escapeHtml(state.activeFilePath)} — ${escapeHtml(t('file_binary'))}</div>`;
   } else {
@@ -2671,7 +2911,7 @@ function renderFileBrowserHtml() {
 
   return `
     <div class="file-browser" data-testid="file-tree">
-      <div class="file-tree">${treeHtml}</div>
+      <div class="file-tree">${ws ? `<div class="file-tree-root" title="${escapeHtml(ws.path || '')}">${escapeHtml(truncatePath(ws.path || ws.name, 52))}</div>` : ''}${treeHtml}</div>
       <div class="file-preview" data-testid="file-view">${preview}</div>
     </div>
   `;
@@ -2690,25 +2930,43 @@ export function openFileInEditor() {
   const isMd = state.activeFilePath.endsWith('.md');
   state.activeRightTab = isMd ? 'editor' : 'file';
   localStorage.setItem('piwork_active_right_tab', state.activeRightTab);
+  setRightOpen(true);
   syncRightTabActive();
   loadFileOrDiff(state.activeFilePath);
 }
 
 export function switchRightTab(tab) {
   state.activeRightTab = tab;
-  localStorage.setItem('piwork_active_right_tab', tab);
+  if (tab !== 'agent') localStorage.setItem('piwork_active_right_tab', tab);
+  setRightOpen(true);
   syncRightTabActive();
+  if (tab === 'agent') {
+    renderRightPanel();
+    return;
+  }
   if (tab === 'file') {
     ensureWorkspaceTree();
     if (state.activeFilePath) loadFileOrDiff(state.activeFilePath);
     else renderRightPanel();
     return;
   }
-  if (state.activeFilePath) {
-    loadFileOrDiff(state.activeFilePath);
-  } else {
-    renderRightPanel();
-  }
+  refreshChangeDiffs();
+  renderRightPanel();
+}
+
+/** Loads the diff of every visible changed file that is expanded and not cached yet. */
+function refreshChangeDiffs({ force = false } = {}) {
+  const cid = state.activeConversationId;
+  if (!cid) return;
+  const visible = changesWithDiff(state.changes).slice(-30);
+  const todo = visible.filter((ch) => !state.closedChangeFiles.has(ch.path) && (force || !state.diffs[ch.path]));
+  if (!todo.length) return;
+  Promise.all(todo.map((ch) => api(`/api/conversations/${encodeURIComponent(cid)}/diff?path=${encodeURIComponent(ch.path)}`)
+    .then((d) => { if (state.activeConversationId === cid) state.diffs[ch.path] = d; })
+    .catch(() => {})))
+    .then(() => {
+      if (state.activeConversationId === cid && (state.activeRightTab === 'diff' || !state.activeRightTab)) renderRightPanel();
+    });
 }
 
 // ============================================================================
@@ -2958,19 +3216,10 @@ function renderSettingsTabContent(tab) {
         <div class="l"><b>${escapeHtml(t('theme_label'))}</b><span>${escapeHtml(t('theme_desc'))}</span></div>
         <div class="th">
           <div class="${curTheme === 'white' ? 'on' : ''}" data-action="switch-theme-family" data-family="white">
-            <i><b style="background:#fafafa"></b><b style="background:#ffffff;flex:3"></b><b style="background:#1a1a1a;flex:.3"></b></i>White
+            <i><b style="background:#f5f5f5"></b><b style="background:#fcfcfc;flex:3"></b><b style="background:#2b2b2b;flex:.3"></b></i>${escapeHtml(t('theme_graphite'))}
           </div>
           <div class="${curTheme === 'claude' ? 'on' : ''}" data-action="switch-theme-family" data-family="claude">
-            <i><b style="background:#f3f1ea"></b><b style="background:#faf9f5;flex:3"></b><b style="background:#c0674a;flex:.3"></b></i>Claude
-          </div>
-          <div class="${curTheme === 'codex' ? 'on' : ''}" data-action="switch-theme-family" data-family="codex">
-            <i><b style="background:#f9f9f9"></b><b style="background:#ffffff;flex:3"></b><b style="background:#0d0d0d;flex:.3"></b></i>Codex
-          </div>
-          <div class="${curTheme === 'grok' ? 'on' : ''}" data-action="switch-theme-family" data-family="grok">
-            <i><b style="background:#0a0a0a"></b><b style="background:#000000;flex:3"></b><b style="background:#ffffff;flex:.3"></b></i>Grok
-          </div>
-          <div class="${curTheme === 'cursor' ? 'on' : ''}" data-action="switch-theme-family" data-family="cursor">
-            <i><b style="background:#141414"></b><b style="background:#181818;flex:3"></b><b style="background:#cfcfcf;flex:.3"></b></i>Cursor
+            <i><b style="background:#f3f1ec"></b><b style="background:#faf9f6;flex:3"></b><b style="background:oklch(0.6 0.1 45);flex:.3"></b></i>${escapeHtml(t('theme_terra'))}
           </div>
         </div>
       </div>
@@ -3196,16 +3445,21 @@ export async function switchLanguage(lang) {
   rerenderI18nSurfaces();
 }
 
+function settingsOpen() {
+  const ov = document.getElementById('settings-overlay');
+  return Boolean(ov && ov.style.display !== 'none');
+}
+
 export async function switchAppearance(mode) {
   applyTheme(state.theme, mode);
   try { await api('/api/settings', 'PUT', { appearance: mode }); } catch { /* ignore */ }
-  renderSettingsModal();
+  if (settingsOpen()) renderSettingsModal();
 }
 
 export async function switchThemeFamily(family) {
   applyTheme(family, state.appearance);
   try { await api('/api/settings', 'PUT', { theme: family }); } catch { /* ignore */ }
-  renderSettingsModal();
+  if (settingsOpen()) renderSettingsModal();
 }
 
 export function switchFontSize(sz) {
@@ -3464,7 +3718,11 @@ export function openNewWorkspaceModal() {
         </div>
         <div class="form-group">
           <label>${escapeHtml(t('ws_path_label'))}</label>
-          <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${escapeHtml(t('ws_path_placeholder'))}" />
+          <div class="path-row">
+            <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${escapeHtml(t('ws_path_placeholder'))}" />
+            <button type="button" class="btn" data-action="ws-browse" data-testid="workspace-browse">${escapeHtml(t('ws_browse'))}</button>
+          </div>
+          <div id="ws-dir-browser" class="dir-browser" data-testid="dir-browser" hidden></div>
           <div id="ws-path-hint" class="form-hint">${state.allowedWorkspaceRoot ? escapeHtml(t('ws_path_hint', { root: state.allowedWorkspaceRoot })) : ''}</div>
         </div>
       </div>
@@ -3487,6 +3745,104 @@ export function openNewWorkspaceModal() {
       }
     }).catch(() => {});
   }
+}
+
+// ---- Folder picker in the new-workspace dialog ------------------------------
+let dirBrowse = null;
+
+function dirSep(root) {
+  return String(root || '').includes('\\') && !String(root || '').includes('/') ? '\\' : '/';
+}
+
+function dirCrumbs(data) {
+  const sep = dirSep(data.root);
+  const root = String(data.root || '');
+  const rootName = root.split(/[\\/]/).filter(Boolean).pop() || root;
+  const crumbs = [{ label: rootName, path: root }];
+  const rest = String(data.path || '').slice(root.length).split(/[\\/]/).filter(Boolean);
+  let acc = root.replace(/[\\/]+$/, '');
+  for (const part of rest) {
+    acc = `${acc}${sep}${part}`;
+    crumbs.push({ label: part, path: acc });
+  }
+  return crumbs;
+}
+
+function renderDirBrowser() {
+  const host = document.getElementById('ws-dir-browser');
+  if (!host || !dirBrowse) return;
+  const { data, loading, error } = dirBrowse;
+  const folderSvg = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 3.2c0-.6.4-1 1-1h2.3l1 1.2h3.7c.6 0 1 .4 1 1v4.4c0 .6-.4 1-1 1h-7c-.6 0-1-.4-1-1z"></path></svg>';
+  const crumbs = data ? dirCrumbs(data) : [];
+  let list;
+  if (error) list = `<div class="dir-note is-error">${escapeHtml(error)}</div>`;
+  else if (!data) list = `<div class="dir-note">${escapeHtml(t('loading'))}</div>`;
+  else if (!data.entries.length) list = `<div class="dir-note">${escapeHtml(t('ws_dir_empty'))}</div>`;
+  else {
+    list = data.entries.map((ent) =>
+      `<div class="dir-row" data-action="ws-dir-open" data-path="${escapeHtml(ent.path)}" data-testid="dir-row" title="${escapeHtml(ent.path)}">` +
+      `<span class="dir-icon">${folderSvg}</span><span class="dir-name">${escapeHtml(ent.name)}</span>` +
+      (ent.git ? '<span class="dir-git">Git</span>' : '') +
+      `<button type="button" class="dir-choose" data-action="ws-dir-choose" data-path="${escapeHtml(ent.path)}" data-testid="dir-choose">${escapeHtml(t('ws_dir_choose'))}</button>` +
+      `</div>`).join('') +
+      (data.truncated ? `<div class="dir-note">${escapeHtml(t('ws_dir_truncated'))}</div>` : '');
+  }
+  host.innerHTML =
+    `<div class="dir-crumbs">` +
+    (data?.parent ? `<button type="button" class="dir-up" data-action="ws-dir-open" data-path="${escapeHtml(data.parent)}" title="${escapeHtml(t('ws_dir_up'))}">←</button>` : '') +
+    crumbs.map((c, i) => (i === crumbs.length - 1
+      ? `<span class="dir-crumb is-current">${escapeHtml(c.label)}</span>`
+      : `<button type="button" class="dir-crumb" data-action="ws-dir-open" data-path="${escapeHtml(c.path)}">${escapeHtml(c.label)}</button><span class="dir-crumb-sep">/</span>`)).join('') +
+    (loading ? '<span class="ms-spin dir-spin" aria-hidden="true"></span>' : '') +
+    `</div>` +
+    `<div class="dir-list">${list}</div>` +
+    `<div class="dir-foot">` +
+    `<span class="dir-foot-path" title="${escapeHtml(data?.path || '')}">${escapeHtml(data?.path || '')}${data?.git ? ' · Git' : ''}</span>` +
+    `<button type="button" class="btn p" data-action="ws-dir-choose" data-path="${escapeHtml(data?.path || '')}" data-testid="dir-choose-here"${data?.selectable ? '' : ' disabled'}>${escapeHtml(t('ws_dir_choose_here'))}</button>` +
+    `</div>`;
+}
+
+async function openDirBrowser(dirPath) {
+  const seq = (dirBrowse?.seq || 0) + 1;
+  dirBrowse = { ...(dirBrowse || {}), seq, loading: true, error: '' };
+  renderDirBrowser();
+  try {
+    const q = dirPath ? `?path=${encodeURIComponent(dirPath)}` : '';
+    const data = await api(`/api/workspace-root/dirs${q}`);
+    if (dirBrowse?.seq !== seq) return;
+    dirBrowse = { seq, data, loading: false, error: '' };
+  } catch (err) {
+    if (dirBrowse?.seq !== seq) return;
+    dirBrowse = { ...dirBrowse, loading: false, error: t('ws_dir_error') };
+  }
+  renderDirBrowser();
+}
+
+function toggleDirBrowser() {
+  const host = document.getElementById('ws-dir-browser');
+  if (!host) return;
+  if (!host.hidden) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  const typed = document.getElementById('ws-path-input')?.value.trim();
+  dirBrowse = null;
+  openDirBrowser(typed || '').then(() => {
+    // A typed path outside the root falls back to the root itself.
+    if (typed && dirBrowse?.error) openDirBrowser('');
+  });
+}
+
+function chooseDir(dirPath) {
+  if (!dirPath) return;
+  const input = document.getElementById('ws-path-input');
+  if (input) input.value = dirPath;
+  const name = document.getElementById('ws-name-input');
+  if (name && !name.value.trim()) name.value = dirPath.split(/[\\/]/).filter(Boolean).pop() || '';
+  const host = document.getElementById('ws-dir-browser');
+  if (host) host.hidden = true;
+  clearWorkspaceModalError();
 }
 
 let wsModalMode = 'local';
@@ -3670,13 +4026,350 @@ export async function submitNewSkill() {
 }
 
 export async function switchWorkspaceAndConv(wid, cid) {
-  if (state.activeWorkspaceId !== wid) {
+  if (wid && state.activeWorkspaceId !== wid) {
+    if (cid) localStorage.setItem('piwork_active_conv', cid);
     await selectWorkspace(wid);
   }
   if (state.activeConversationId !== cid) {
     await selectConversation(cid);
   }
 }
+
+
+// ============================================================================
+// Layout: side panels, resizing, shortcuts, context menus
+// ============================================================================
+const LEFT_OVERLAY_BELOW = 860;
+const RIGHT_OVERLAY_BELOW = 1180;
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+
+function persistOpenProjects() {
+  localStorage.setItem('piwork_open_projects', JSON.stringify([...state.openProjects]));
+}
+
+function openProject(wid) {
+  if (!wid || state.openProjects.has(wid)) return;
+  state.openProjects.add(wid);
+  persistOpenProjects();
+}
+
+function toggleProject(wid) {
+  if (!wid) return;
+  const isOpen = state.openProjects.has(wid) || (wid === state.activeWorkspaceId && state.openProjects.size === 0);
+  if (isOpen) state.openProjects.delete(wid);
+  else state.openProjects.add(wid);
+  persistOpenProjects();
+  renderSidebarWorkspaces();
+}
+
+export function applyLayout() {
+  const shell = document.getElementById('app-shell');
+  if (!shell) return;
+  // Overlay positioning below the breakpoints lives in app.css media queries.
+  shell.classList.toggle('left-closed', !state.leftOpen);
+  shell.classList.toggle('right-closed', !state.rightOpen);
+  shell.style.setProperty('--left-w', `${state.leftW}px`);
+  shell.style.setProperty('--right-w', `${state.rightW}px`);
+}
+
+export function setLeftOpen(open) {
+  state.leftOpen = Boolean(open);
+  if (window.innerWidth >= LEFT_OVERLAY_BELOW) localStorage.setItem('piwork_left_open', String(state.leftOpen));
+  applyLayout();
+}
+
+export function setRightOpen(open) {
+  state.rightOpen = Boolean(open);
+  if (window.innerWidth >= RIGHT_OVERLAY_BELOW) localStorage.setItem('piwork_right_open', String(state.rightOpen));
+  applyLayout();
+}
+
+let lastLayoutWidth = window.innerWidth;
+
+function onLayoutResize() {
+  const vw = window.innerWidth;
+  if (lastLayoutWidth >= LEFT_OVERLAY_BELOW && vw < LEFT_OVERLAY_BELOW) state.leftOpen = false;
+  if (lastLayoutWidth < LEFT_OVERLAY_BELOW && vw >= LEFT_OVERLAY_BELOW) state.leftOpen = readPref('piwork_left_open', true);
+  if (lastLayoutWidth >= RIGHT_OVERLAY_BELOW && vw < RIGHT_OVERLAY_BELOW) state.rightOpen = false;
+  if (lastLayoutWidth < RIGHT_OVERLAY_BELOW && vw >= RIGHT_OVERLAY_BELOW) state.rightOpen = readPref('piwork_right_open', true);
+  lastLayoutWidth = vw;
+  applyLayout();
+}
+
+/** A floating side panel closes when the chat behind it is clicked. */
+function closeOverlaysFrom(target) {
+  if (!target?.closest?.('#col-center')) return;
+  const vw = window.innerWidth;
+  if (vw < LEFT_OVERLAY_BELOW && state.leftOpen) setLeftOpen(false);
+  if (vw < RIGHT_OVERLAY_BELOW && state.rightOpen && !target.closest('[data-action="toggle-right"],[data-action="open-subagent"],[data-action="open-file-in-editor"]')) setRightOpen(false);
+}
+
+function startDividerDrag(e, side) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const shell = document.getElementById('app-shell');
+  const divider = e.currentTarget;
+  const startX = e.clientX;
+  const startW = side === 'left' ? state.leftW : state.rightW;
+  const move = (ev) => {
+    const dx = ev.clientX - startX;
+    if (side === 'left') {
+      state.leftW = clampNum(startW + dx, 200, 420);
+    } else {
+      const max = Math.max(360, window.innerWidth - (state.leftOpen ? state.leftW : 0) - 420);
+      state.rightW = clampNum(startW - dx, 320, max);
+    }
+    applyLayout();
+  };
+  const up = () => {
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', up);
+    shell?.classList.remove('is-dragging');
+    divider.classList.remove('is-active');
+    localStorage.setItem('piwork_left_w', String(state.leftW));
+    localStorage.setItem('piwork_right_w', String(state.rightW));
+  };
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+  shell?.classList.add('is-dragging');
+  divider.classList.add('is-active');
+}
+
+function resetDivider(side) {
+  if (side === 'left') state.leftW = 264;
+  else state.rightW = 440;
+  localStorage.setItem('piwork_left_w', String(state.leftW));
+  localStorage.setItem('piwork_right_w', String(state.rightW));
+  applyLayout();
+}
+
+function renderModeToggle() {
+  const btn = document.getElementById('mode-toggle');
+  if (!btn) return;
+  const dark = document.documentElement.getAttribute('data-theme')?.endsWith('-dark');
+  btn.title = dark ? t('switch_to_light') : t('switch_to_dark');
+  btn.setAttribute('aria-label', btn.title);
+  btn.innerHTML = dark
+    ? '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="7" cy="7" r="2.6"></circle><path d="M7 1.2v1.4M7 11.4v1.4M1.2 7h1.4M11.4 7h1.4M2.9 2.9l1 1M10.1 10.1l1 1M2.9 11.1l1-1M10.1 3.9l1-1"></path></svg>'
+    : '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M11.8 8.6A5 5 0 0 1 5.4 2.2a5 5 0 1 0 6.4 6.4z"></path></svg>';
+}
+
+function toggleMode() {
+  const dark = document.documentElement.getAttribute('data-theme')?.endsWith('-dark');
+  switchAppearance(dark ? 'light' : 'dark');
+}
+
+function applyShortcutLabels() {
+  const mod = IS_MAC ? '⌘' : 'Ctrl+';
+  document.querySelectorAll('[data-shortcut]').forEach((el) => {
+    el.textContent = `${mod}${el.getAttribute('data-shortcut')}`;
+  });
+}
+
+// ---- Context menu ----------------------------------------------------------
+let ctxItems = [];
+
+function closeCtxMenu() {
+  const menu = document.getElementById('ctx-menu');
+  if (menu && !menu.hidden) {
+    menu.hidden = true;
+    menu.innerHTML = '';
+  }
+  ctxItems = [];
+}
+
+function openCtxMenu(e, items, title = '') {
+  e.preventDefault();
+  e.stopPropagation();
+  const menu = document.getElementById('ctx-menu');
+  if (!menu || !items.length) return;
+  ctxItems = items;
+  menu.innerHTML =
+    (title ? `<div class="ctx-menu-title">${escapeHtml(title)}</div>` : '') +
+    items.map((item, i) => (item.sep
+      ? '<div class="ctx-menu-sep"></div>'
+      : `<button type="button" class="ctx-menu-item${item.danger ? ' is-danger' : ''}" data-ctx-index="${i}" role="menuitem"${item.disabled ? ' disabled' : ''}>` +
+        `<span>${escapeHtml(item.label)}</span>${item.key ? `<span class="ctx-menu-key">${escapeHtml(item.key)}</span>` : ''}</button>`)).join('');
+  menu.hidden = false;
+  const w = menu.offsetWidth || 220;
+  const h = menu.offsetHeight || 120;
+  const anchor = e.type === 'click' && e.currentTarget?.getBoundingClientRect ? e.currentTarget.getBoundingClientRect() : null;
+  const target = e.type === 'click' ? (e.target.closest('[data-action]') || e.target) : null;
+  const r = anchor && anchor.width ? anchor : target?.getBoundingClientRect?.();
+  let x = r ? (r.left + w > window.innerWidth ? r.right - w : r.left) : e.clientX;
+  let y = r ? (r.bottom + h + 8 > window.innerHeight ? r.top - h - 4 : r.bottom + 4) : e.clientY;
+  x = Math.max(8, Math.min(x, window.innerWidth - w - 8));
+  y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('copied');
+  } catch {
+    showToast('err_copy');
+  }
+}
+
+function projectMenuItems(wid) {
+  const ws = state.workspaces.find((w) => w.id === wid);
+  if (!ws) return [];
+  return [
+    { label: t('new_conversation'), key: IS_MAC ? '⌘N' : 'Ctrl+N', run: () => startNewConversation(wid) },
+    { label: t('copy_path'), run: () => copyText(ws.path || '') },
+    { label: t('show_files'), run: async () => { if (state.activeWorkspaceId !== wid) await selectWorkspace(wid); switchRightTab('file'); } },
+    { sep: true },
+    { label: t('ws_remove'), danger: true, run: () => removeWorkspace(wid) },
+  ];
+}
+
+/** Hides the workspace from the list. Files on disk and its conversations are kept. */
+async function removeWorkspace(wid) {
+  const ws = state.workspaces.find((w) => w.id === wid);
+  if (!ws) return;
+  const busy = projectConversations(wid).some((c) => RUN_BAR_STATUSES.has(c.status));
+  if (busy) {
+    showToast('ws_remove_busy');
+    return;
+  }
+  const ok = await confirmDialog({
+    title: t('ws_remove_title', { name: ws.name }),
+    message: t('ws_remove_message', { path: ws.path || '' }),
+    confirmLabel: t('ws_remove'),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/workspaces/${encodeURIComponent(wid)}`, 'DELETE');
+  } catch (err) {
+    showToast(err?.status === 409 || err?.body?.code === 'E_WS_BUSY' ? 'ws_remove_busy' : (err?.message || 'err_save'));
+    return;
+  }
+  state.openProjects.delete(wid);
+  persistOpenProjects();
+  delete state.allConversations[wid];
+  if (state.activeWorkspaceId === wid) {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+    state.activeWorkspaceId = null;
+    state.activeConversationId = null;
+    state.activeConversationData = null;
+    localStorage.removeItem('piwork_active_ws');
+    localStorage.removeItem('piwork_active_conv');
+  }
+  showToast('ws_removed', { name: ws.name });
+  await loadWorkspaces();
+}
+
+function conversationMenuItems(wid, cid) {
+  const conv = projectConversations(wid).find((c) => c.id === cid) || {};
+  const running = RUN_BAR_STATUSES.has(conv.status);
+  const items = [];
+  if (running) {
+    items.push({ label: t('btn_stop'), run: async () => { await switchWorkspaceAndConv(wid, cid); stopConversation(); } });
+    items.push({ sep: true });
+  }
+  items.push({ label: t('open_conversation'), run: () => switchWorkspaceAndConv(wid, cid) });
+  if (isArchivedConversation(conv)) {
+    items.push({ label: t('archived_fork'), run: async () => { await switchWorkspaceAndConv(wid, cid); forkFromHistory(); } });
+  }
+  items.push({ label: t('copy_conversation_id'), run: () => copyText(cid) });
+  return items;
+}
+
+function subagentMenuItems(aid) {
+  const agent = (state.activeConversationData?.agents || []).find((a) => a.id === aid) || {};
+  return [
+    { label: t('subagent_open'), run: () => openSubagent(aid) },
+    { label: t('copy_output'), disabled: !agent.lastText, run: () => copyText(agent.lastText || '') },
+  ];
+}
+
+function changeFileMenuItems(filePath) {
+  return [
+    { label: t('show_in_files'), run: () => { state.activeFilePath = filePath; switchRightTab('file'); } },
+    { label: t('copy_path'), run: () => copyText(filePath) },
+  ];
+}
+
+function handleContextMenu(e) {
+  const el = e.target.closest('[data-ctx]');
+  if (!el) {
+    closeCtxMenu();
+    return;
+  }
+  const kind = el.getAttribute('data-ctx');
+  if (kind === 'project') {
+    const wid = el.getAttribute('data-ws-id');
+    const ws = state.workspaces.find((w) => w.id === wid);
+    openCtxMenu(e, projectMenuItems(wid), ws?.name || '');
+  } else if (kind === 'conversation') {
+    const wid = el.getAttribute('data-ws-id');
+    const cid = el.getAttribute('data-conv-id');
+    openCtxMenu(e, conversationMenuItems(wid, cid), el.getAttribute('title') || '');
+  } else if (kind === 'subagent') {
+    openCtxMenu(e, subagentMenuItems(el.getAttribute('data-agent-id')), t('subagent_tag'));
+  } else if (kind === 'change-file') {
+    openCtxMenu(e, changeFileMenuItems(el.getAttribute('data-path')), el.getAttribute('data-path') || '');
+  }
+}
+
+function openDraftProjectMenu(e) {
+  const items = state.workspaces.map((ws) => ({
+    label: ws.name,
+    key: ws.id === state.activeWorkspaceId ? '✓' : '',
+    run: () => startNewConversation(ws.id),
+  }));
+  items.push({ sep: true }, { label: t('new_workspace'), run: () => openNewWorkspaceModal() });
+  openCtxMenu(e, items, t('pick_project'));
+}
+
+function openProjectChipMenu(e) {
+  const wid = state.activeWorkspaceId;
+  if (!wid) return;
+  const ws = state.workspaces.find((w) => w.id === wid);
+  openCtxMenu(e, projectMenuItems(wid), ws?.path || ws?.name || '');
+}
+
+function newChatFromTop() {
+  const wid = state.activeWorkspaceId || state.workspaces[0]?.id;
+  if (!wid) {
+    openNewWorkspaceModal();
+    return;
+  }
+  startNewConversation(wid);
+}
+
+document.addEventListener('contextmenu', handleContextMenu);
+document.addEventListener('mousedown', (e) => {
+  const divider = e.target.closest?.('.col-divider');
+  if (divider) startDividerDrag(e, divider.getAttribute('data-side'));
+  if (!e.target.closest?.('#ctx-menu')) {
+    const menu = document.getElementById('ctx-menu');
+    if (menu && !menu.hidden && !e.target.closest?.('[data-action="project-menu"],[data-action="pick-draft-project"],[data-action="project-chip-menu"]')) closeCtxMenu();
+  }
+});
+document.addEventListener('dblclick', (e) => {
+  const divider = e.target.closest?.('.col-divider');
+  if (divider) resetDivider(divider.getAttribute('data-side'));
+});
+document.addEventListener('click', (e) => {
+  const item = e.target.closest?.('#ctx-menu [data-ctx-index]');
+  if (!item) return;
+  const entry = ctxItems[Number(item.getAttribute('data-ctx-index'))];
+  closeCtxMenu();
+  entry?.run?.();
+}, true);
+window.addEventListener('resize', () => {
+  onLayoutResize();
+  closeCtxMenu();
+});
+document.addEventListener('pointerdown', (e) => closeOverlaysFrom(e.target));
+window.addEventListener('blur', closeCtxMenu);
 
 // Global exposure for external or test compatibility
 window.__app = {
@@ -3803,6 +4496,7 @@ document.addEventListener('click', (e) => {
       break;
     case 'switch-ws-conv':
       switchWorkspaceAndConv(actionEl.getAttribute('data-ws-id'), actionEl.getAttribute('data-conv-id'));
+      if (window.innerWidth < LEFT_OVERLAY_BELOW) setLeftOpen(false);
       break;
     case 'toggle-tool-group':
       toggleToolGroup(actionEl.getAttribute('data-group-id'));
@@ -3816,8 +4510,40 @@ document.addEventListener('click', (e) => {
       }
       break;
     case 'load-file':
-      state.userPickedFile = true;
-      loadFileOrDiff(actionEl.getAttribute('data-path'));
+      toggleChangeFile(actionEl.getAttribute('data-path'));
+      break;
+    case 'toggle-left':
+      setLeftOpen(!state.leftOpen);
+      break;
+    case 'toggle-right':
+      setRightOpen(!state.rightOpen);
+      if (state.rightOpen) renderRightPanel();
+      break;
+    case 'new-chat-top':
+      newChatFromTop();
+      break;
+    case 'toggle-project':
+      toggleProject(actionEl.getAttribute('data-ws-id'));
+      break;
+    case 'project-menu': {
+      const wid = actionEl.getAttribute('data-ws-id');
+      const ws = state.workspaces.find((w) => w.id === wid);
+      openCtxMenu(e, projectMenuItems(wid), ws?.name || '');
+      break;
+    }
+    case 'toggle-archived':
+      state.archivedOpen = !state.archivedOpen;
+      localStorage.setItem('piwork_archived_open', String(state.archivedOpen));
+      renderSidebarWorkspaces();
+      break;
+    case 'toggle-mode':
+      toggleMode();
+      break;
+    case 'pick-draft-project':
+      openDraftProjectMenu(e);
+      break;
+    case 'project-chip-menu':
+      openProjectChipMenu(e);
       break;
     case 'load-workspace-file':
       state.userPickedFile = true;
@@ -3874,6 +4600,15 @@ document.addEventListener('click', (e) => {
       break;
     case 'submit-workspace':
       submitWorkspaceModal();
+      break;
+    case 'ws-browse':
+      toggleDirBrowser();
+      break;
+    case 'ws-dir-open':
+      if (!e.target.closest('[data-action="ws-dir-choose"]')) openDirBrowser(actionEl.getAttribute('data-path'));
+      break;
+    case 'ws-dir-choose':
+      chooseDir(actionEl.getAttribute('data-path'));
       break;
     case 'git-add':
     case 'git-close-drawer':
@@ -3987,13 +4722,15 @@ window.addEventListener('DOMContentLoaded', async () => {
   const sendBtn = document.querySelector('[data-testid="chat-send"]');
 
   if (composer) {
+    composer.addEventListener('input', syncSendReady);
     composer.addEventListener('keydown', (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         const val = composer.value.trim();
         if (val) {
           sendMessage(val);
           composer.value = '';
+          syncSendReady();
         }
       }
     });
@@ -4012,6 +4749,14 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 
   window.addEventListener('keydown', (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && !e.shiftKey && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'b') { e.preventDefault(); setLeftOpen(!state.leftOpen); return; }
+      if (k === 'j') { e.preventDefault(); setRightOpen(!state.rightOpen); if (state.rightOpen) renderRightPanel(); return; }
+      if (k === ',') { e.preventDefault(); openSettings(); return; }
+      if (k === 'n') { e.preventDefault(); newChatFromTop(); return; }
+    }
     if (e.key === 'Enter' && e.target?.id === 'plug-path-input') {
       e.preventDefault();
       submitImportPlugin();
@@ -4022,13 +4767,22 @@ window.addEventListener('DOMContentLoaded', async () => {
         finishConfirm(false);
         return;
       }
+      const menu = document.getElementById('ctx-menu');
+      if (menu && !menu.hidden) {
+        closeCtxMenu();
+        return;
+      }
       closeAgentMenu();
       closeSettings();
       closeModal();
     }
   });
 
+  applyLayout();
+  applyShortcutLabels();
   applyI18n();
   await loadInitialData();
   applyChromeLabels();
+  renderModeToggle();
+  renderStatusBar();
 });

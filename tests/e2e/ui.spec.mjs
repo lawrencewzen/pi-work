@@ -55,9 +55,14 @@ test('click changed file -> diff panel; md editor save persists', async ({ page 
   await newConversation(page);
   await send(page, 'go');
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
-  await page.locator(`[data-testid=changed-file][data-path="${FILE}"]`).click();
-  const diff = page.getByTestId('diff-view');
+  // Changed files are listed with their diffs unfolded; clicking the selected file folds it, a second click unfolds it.
+  const fileRow = page.locator(`[data-testid=changed-file][data-path="${FILE}"]`);
+  const diff = page.locator(`.change-file[data-path="${FILE}"][data-testid=diff-view]`);
   await expect(diff).toBeVisible();
+  await expect(diff).toContainText('line two');
+  await fileRow.click();
+  await expect(diff).toHaveCount(0);
+  await fileRow.click();
   await expect(diff).toContainText('line two');
   await page.getByTestId('file-open-editor').click(); // .md -> markdown editor
   const editor = page.getByTestId('md-editor');
@@ -91,4 +96,33 @@ test('sandbox: file API rejects escape', async () => {
   const r = await api(srv.url, 'GET', `/workspaces/${w.body.id}/files?path=${encodeURIComponent('../../etc/passwd')}`);
   expect(r.status).toBe(403);
   expect(r.body.error).toBe('E_SANDBOX');
+});
+
+test('new workspace: browse to a folder fills path and name', async ({ page }) => {
+  await openApp(page, srv);
+  await page.getByTestId('workspace-new').click();
+  await page.getByTestId('workspace-browse').click();
+  const browser = page.getByTestId('dir-browser');
+  await expect(browser).toBeVisible();
+  await browser.getByTestId('dir-row').filter({ hasText: path.basename(ws) }).click();
+  await browser.getByTestId('dir-choose-here').click();
+  await expect(browser).toBeHidden();
+  await expect(page.getByTestId('workspace-path-input')).toHaveValue(ws);
+  await expect(page.getByTestId('workspace-name-input')).toHaveValue(path.basename(ws));
+  await page.getByTestId('workspace-create-submit').click();
+  await expect(page.getByTestId('workspace-item').filter({ hasText: path.basename(ws) })).toBeVisible();
+});
+
+test('remove workspace from the project menu keeps the folder on disk', async ({ page }) => {
+  await openApp(page, srv);
+  await createWorkspace(page, 'gone', ws);
+  const item = page.getByTestId('workspace-item').filter({ hasText: 'gone' });
+  await item.hover();
+  await item.locator('[data-action=project-menu]').click();
+  await page.locator('#ctx-menu .ctx-menu-item.is-danger').click();
+  await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+  await expect(page.getByTestId('confirm-message')).toContainText(ws);
+  await page.getByTestId('confirm-ok').click();
+  await expect(page.getByTestId('workspace-item')).toHaveCount(0);
+  await expect.poll(() => fs.stat(ws).then((st) => st.isDirectory())).toBe(true);
 });

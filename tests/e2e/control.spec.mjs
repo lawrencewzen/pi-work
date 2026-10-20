@@ -44,8 +44,8 @@ test('two agents run in parallel', async ({ page }) => {
   await newConversation(page);
   await send(page, 'job two');
   // both conversations show running at the same time
-  // agent-status list in left panel shows all running conversations across workspaces
-  await expect(page.locator('[data-testid=agent-status-item][data-status=running]')).toHaveCount(2, { timeout: 5000 });
+  // the sidebar keeps both projects open and marks both conversations as running
+  await expect(page.locator('[data-testid=conversation-item][data-status=running]')).toHaveCount(2, { timeout: 5000 });
   const t0 = Date.now();
   await expect.poll(async () => (await exists(path.join(ws1, 'b.txt'))) && (await exists(path.join(ws2, 'b.txt'))), { timeout: 20000 }).toBe(true);
   expect(Date.now() - t0).toBeLessThan(9000); // serial would be ~2x slow.json duration
