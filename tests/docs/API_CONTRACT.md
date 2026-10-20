@@ -67,7 +67,7 @@
 | `GET /pipelines` · `POST /pipelines` | Pipeline | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |
 | `PUT /pipelines/:id` | Pipeline | 同角色更新。步骤里的 role 必须已存在 |
 | `DELETE /pipelines/:id` | | 200 `{ok:true,id}`。被对话 `pipelineId` 引用 409 `{error:'pipeline_in_use',conversations:n}`。成功删除写入 tombstone，下次启动不会从 `pipelines/*.json` 或 `examples/pipelines/*.json` 再种回该 id |
-status 取值：`idle | running | waiting | failed | done | stopped`。应用库只存最近一次 `submit` 的 `last_submission_id`。状态是 `harness.submission(id).status()`：`queued` / `placed` 为运行中，`done` 为完成，`unanswered` 且 `reason` 为 `aborted` 为已停止，其它 `unanswered` 为失败（`llmError` 来自这条记录的 `reason` / `detail`）。还没有这个指针的对话是空闲。没有 harness id 的旧行不出现在列表里。
+status 取值：`idle | running | waiting | failed | done | stopped`。应用库只存最近一次 `submit` 的 `last_submission_id`。状态是 `harness.submission(id).status()`：`queued` / `placed` 为运行中，`done` 为完成，`unanswered` 且 `reason` 为 `aborted` 为已停止，其它 `unanswered` 为失败（`llmError` 来自这条记录的 `reason` / `detail`）。还没有这个指针的对话是空闲。指针指向的提交在 Harness 里找不到时，状态是 `failed`，`llmError` 为 `{code:'E_SUBMISSION_MISSING', message:'找不到这次运行的记录'}`，HTTP 仍是 200。没有 harness id 的旧行不出现在列表里。
 
 ### Git 导入
 

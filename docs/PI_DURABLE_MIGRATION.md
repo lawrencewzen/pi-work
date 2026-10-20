@@ -1,5 +1,7 @@
 # T5-0：把运行时换回 Pi Durable 内核
 
+历史迁移稿，暂停 / recovering / 409 等语义已在 T12-2 移除，当前行为以 docs/ARCHITECTURE.md 为准。
+
 本文是可执行的迁移方案。原型在分支 [`spike/pi-durable-kernel`](https://github.com/lawrencewzen/pi-work/tree/spike/pi-durable-kernel)（提交 `7b7ab38`），不合并。真正换内核按文末分批另派。
 
 API 以已安装的 `@earendil-works/pi-durable@1.1.0`、`@earendil-works/pi-ai@1.1.0` 的 `dist/**/*.d.ts` 和 `node_modules/@earendil-works/pi-durable/README.md` 为准。GitHub `earendil-works/pi` 上 `main` 的示例 22/23 比 1.1.0 新：示例返回 `{ output }`，已发布的 `ToolExecutionResult` 和 README 用 `content`。原型按已发布包写。

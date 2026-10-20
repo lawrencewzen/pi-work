@@ -677,3 +677,28 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('a missing submission is failed, not 500', { timeout: 20000 }, async () => {
+  const srv = await startServer({ PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'ok' });
+  try {
+    const { conv } = await openConversation(srv.base, 'missing');
+    const db = new DatabaseSync(path.join(srv.dataDir, 'pi-work.sqlite'));
+    db.prepare('UPDATE conversations SET last_submission_id = ? WHERE id = ?').run(999999, conv.id);
+    db.close();
+    const got = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
+    assert.equal(got.status, 200, srv.logs());
+    assert.equal(got.body.status, 'failed');
+    assert.equal(got.body.llmError?.code, 'E_SUBMISSION_MISSING');
+    assert.equal(got.body.llmError?.message, '找不到这次运行的记录');
+    assert.match(srv.logs(), /PI_WORK_SUBMISSION_MISSING/);
+    const events = await collectSse(srv.base, conv.id, {
+      ready: (list) => list.some((ev) => ev.event === 'status'),
+      quietMs: 200,
+    });
+    assert.equal(events[0].event, 'status');
+    assert.equal(events[0].data.status, 'failed');
+  } finally {
+    await stopProcess(srv.proc);
+    await rm(srv.dataDir, { recursive: true, force: true });
+  }
+});
