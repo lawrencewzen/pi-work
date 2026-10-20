@@ -191,7 +191,16 @@ export function formatRelativeTime(ts) {
   if (!Number.isFinite(n) || n <= 0) return '';
   const diffSec = Math.max(1, Math.round((Date.now() - n) / 1000));
   if (diffSec < 60) return t('sec_ago', { n: diffSec });
-  return t('min_ago', { n: Math.max(1, Math.round(diffSec / 60)) });
+  if (diffSec < 3600) return t('min_ago', { n: Math.max(1, Math.round(diffSec / 60)) });
+  if (diffSec < 86400) return t('hour_ago', { n: Math.floor(diffSec / 3600) });
+  const then = new Date(n);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.ceil((today.getTime() - then.getTime()) / 86400000);
+  if (days <= 1) return t('yesterday');
+  if (days < 7) return t(`weekday_${then.getDay()}`);
+  if (days < 30) return t('day_ago', { n: days });
+  return t('date_md', { m: then.getMonth() + 1, d: then.getDate() });
 }
 
 /** Refresh every element stamped with data-rel-time / data-ts. */
