@@ -141,10 +141,9 @@ test('new conversation can run the feature pipeline', async ({ page }) => {
   await expect.poll(() => fs.readFile(path.join(ws, 'src/add.test.js'), 'utf8').catch(() => '')).toContain('add(1, 2)');
   await expect.poll(() => fs.readFile(path.join(ws, 'AUDIT.md'), 'utf8').catch(() => '')).toBe('');
 
-  const names = page.locator('.conv-active .sub-agent-name');
+  // Pipeline steps are listed as cards in the chat (the sidebar only lists conversations now).
+  const names = page.locator('[data-testid=subagent-card] .subagent-card-name');
   await expect(names).toHaveText(['规划', '编码', '测试', '审计']);
-  await expect(page.locator('.conv-active .main-agent-name')).toHaveCount(0);
-  await expect(page.locator('.conv-active')).not.toContainText('主');
 
   await expect(page.getByTestId('message').filter({ hasText: 'Planner:' })).toBeVisible();
   await expect(page.getByTestId('message').filter({ hasText: 'Coder:' })).toBeVisible();

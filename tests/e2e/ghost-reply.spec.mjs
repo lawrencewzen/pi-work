@@ -4,7 +4,7 @@ import path from 'node:path';
 import { startServer, prepareWorkspaces } from './helpers/server.mjs';
 import { createWorkspace, newConversation, send, statusText, openApp } from './helpers/ui.mjs';
 
-const SHOTS = '/opt/cursor/artifacts/screenshots';
+const SHOTS = process.env.PI_WORK_SHOTS || '/opt/cursor/artifacts/screenshots';
 const TEXT_A = '这是一个 TypeScript/Node.js 项目，用于开发相关。';
 const TEXT_B = '第二轮已经看完，结论里有顿号、和的字。';
 

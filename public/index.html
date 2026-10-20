@@ -2,190 +2,171 @@
 <html lang="zh-CN" data-theme="white-light" data-font-size="md">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=1440, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>pi-work</title>
   <link rel="stylesheet" href="/themes.css">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div class="app-shell">
+  <div class="app-shell" id="app-shell">
 
-    <!-- ======================================================================
-         COLUMN 1: LEFT SIDEBAR (~260px)
-         ====================================================================== -->
-    <aside class="col-left">
-      <!-- App Brand Header -->
-      <div class="left-header">
-        <div class="brand-group">
-          <div class="brand-logo">π</div>
-          <span class="brand-name">pi-work</span>
-          <span class="brand-badge" data-i18n="app_badge">workbench</span>
-        </div>
-      </div>
-
-      <!-- Scrollable Inner Sidebar Content -->
-      <div class="left-body">
-        
-        <!-- Workspaces & Conversations Section -->
-        <div class="hierarchy-section">
-          <div class="section-label">
-            <span data-i18n="workspaces_and_chats">工作区 & 对话</span>
-            <div class="section-actions">
-              <span id="ws-count-label" style="font-size: 10px; opacity: 0.6; margin-right: 4px;"></span>
-              <button class="btn-icon-xs" data-testid="workspace-new" data-action="new-workspace" data-i18n-title="new_workspace" title="新建工作区">+</button>
-            </div>
-          </div>
-
-          <div class="tree-root" id="ws-tree-container">
-            <!-- Dynamically populated workspaces and conversations -->
-          </div>
-        </div>
-
-        <!-- Bottom-left: 「运行中」 overview grouped by workspace -->
-        <div class="running-section">
-          <div class="section-label">
-            <span data-i18n="running_overview">运行中概览</span>
-            <span class="running-count-tag" id="running-count-tag">0</span>
-          </div>
-          <div class="running-panel" id="running-panel">
-            <!-- Dynamically populated running tasks -->
-          </div>
-        </div>
-
-      </div>
-
-      <!-- Left Sidebar Footer -->
-      <div class="left-footer">
-        <div class="runtime-meta">
-          <span class="runtime-ping"></span>
-          <span id="runtime-footer-label" data-i18n="runtime_name">持久化运行时（SQLite 日志）</span>
-        </div>
-        
-        <button class="sidebar-icon-btn" data-action="open-settings" data-i18n-title="settings_title" title="系统设置">
-          <svg class="icon" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-          </svg>
+    <!-- Left: projects and conversations -->
+    <aside class="col-left" id="col-left">
+      <div class="left-top">
+        <button type="button" class="icon-btn" data-action="toggle-left" data-i18n-title="collapse_sidebar" title="收起侧栏 ⌘B">
+          <span class="ico-panel ico-panel-left" aria-hidden="true"></span>
         </button>
       </div>
-    </aside>
+      <div class="left-new">
+        <button type="button" class="new-chat-btn" data-action="new-chat-top" data-testid="new-chat-top">
+          <span data-i18n="new_conversation">新对话</span><kbd class="kbd" data-shortcut="N">⌘N</kbd>
+        </button>
+      </div>
 
-    <!-- ======================================================================
-         COLUMN 2: CENTER PANE (flex: 1)
-         ====================================================================== -->
-    <main class="col-center">
-      <!-- Top Status Bar -->
-      <header class="center-top-bar" data-testid="status-bar" id="status-bar">
-        <div class="status-bar-left">
-          <span id="topbar-workspace" class="topbar-ws-name" data-testid="topbar-workspace"></span>
-          <span class="step-sep is-hidden" id="topbar-ws-sep">/</span>
-          <div class="step-indicator" data-i18n-title="status_title" title="当前执行状态">
-            <span class="step-pulse-ring"></span>
-            <span id="status-text" data-testid="status-text">就绪</span>
-          </div>
-          <span id="demo-model-badge" class="demo-model-badge is-hidden" data-testid="demo-model-badge" data-i18n="demo_model_badge">演示模型</span>
-          <span class="step-sep">/</span>
-          <div class="checkpoint-badge" data-i18n-title="checkpoint_title" title="持久化检查点">
-            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-            <span id="checkpoint-badge-text">检查点</span>
-          </div>
-          <span class="step-sep is-hidden" id="autocontinue-sep">/</span>
-          <div class="resume-count-badge is-hidden" data-i18n-title="autocontinue_title" title="自动恢复计数" data-testid="autocontinue-count" id="autocontinue-count"></div>
+      <div class="left-body">
+        <div class="left-section-label">
+          <span data-i18n="projects_label">项目</span>
+          <button type="button" class="btn-icon-xs" data-testid="workspace-new" data-action="new-workspace" data-i18n-title="new_workspace" title="新建工作区">+</button>
         </div>
+        <div class="tree-root" id="ws-tree-container"></div>
+        <div id="archived-container"></div>
+      </div>
 
-        <div class="status-bar-controls">
-          <button class="btn-ctrl" data-testid="btn-pause" id="btn-pause" data-action="pause-conversation" data-i18n-aria="btn_pause" data-i18n-title="btn_pause_title" aria-label="暂停" title="暂停执行" disabled>
-            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-            <span class="btn-ctrl-label" data-i18n="btn_pause">暂停</span>
+      <div class="left-footer">
+        <button type="button" class="foot-link" data-action="open-settings" data-i18n="settings_short" data-i18n-title="settings_title" title="系统设置">设置</button>
+        <span class="left-footer-right">
+          <span class="runtime-meta" id="runtime-meta" data-i18n-title="runtime_name" title="持久化运行时（SQLite 日志）">
+            <span class="runtime-ping"></span>
+          </span>
+          <button type="button" class="icon-btn is-sm" id="mode-toggle" data-action="toggle-mode" data-testid="mode-toggle"></button>
+        </span>
+      </div>
+    </aside>
+    <div class="col-divider" id="left-divider" data-side="left" data-i18n-title="drag_resize" title="拖动调整宽度，双击复位"></div>
+
+    <!-- Center: conversation -->
+    <main class="col-center" id="col-center">
+      <header class="center-top-bar" data-testid="status-bar" id="status-bar">
+        <div class="top-left">
+          <button type="button" class="icon-btn top-left-open" data-action="toggle-left" data-i18n-title="expand_sidebar" title="展开侧栏 ⌘B">
+            <span class="ico-panel ico-panel-left" aria-hidden="true"></span>
           </button>
-          <button class="btn-ctrl" data-testid="btn-resume" id="btn-resume" data-action="resume-conversation" data-i18n-aria="btn_resume" data-i18n-title="btn_resume_title" aria-label="继续" title="继续执行" disabled>
-            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-            <span class="btn-ctrl-label" data-i18n="btn_resume">继续</span>
-          </button>
-          <button class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-aria="btn_stop" data-i18n-title="btn_stop_title" aria-label="终止" title="终止并保存检查点" disabled>
-            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>
-            <span class="btn-ctrl-label" data-i18n="btn_stop">终止</span>
+          <span class="top-title" id="top-title" data-testid="top-title"></span>
+          <span class="topbar-ws-name" id="topbar-workspace" data-testid="topbar-workspace"></span>
+          <span class="status-pill" id="status-pill" data-i18n-title="status_title" title="当前执行状态">
+            <span class="status-dot dot-idle" id="status-dot" data-testid="status-dot" data-status="idle"></span>
+            <span id="status-text" data-testid="status-text">就绪</span>
+          </span>
+          <span id="demo-model-badge" class="demo-model-badge is-hidden" data-testid="demo-model-badge" data-i18n="demo_model_badge">演示模型</span>
+          <span class="resume-count-badge is-hidden" data-i18n-title="autocontinue_title" title="自动恢复计数" data-testid="autocontinue-count" id="autocontinue-count"></span>
+        </div>
+        <div class="top-right">
+          <span class="checkpoint-badge" id="checkpoint-badge" data-i18n-title="checkpoint_title" title="持久化检查点">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+            <span id="checkpoint-badge-text">检查点</span>
+          </span>
+          <button type="button" class="icon-btn top-right-open" data-action="toggle-right" data-i18n-title="expand_panel" title="展开面板 ⌘J">
+            <span class="ico-panel ico-panel-right" aria-hidden="true"></span>
+            <span class="top-right-dot" id="right-open-dot"></span>
           </button>
         </div>
       </header>
 
       <div id="center-notice" class="center-notice"></div>
 
-      <!-- Scrollable Chat Thread -->
-      <div class="center-thread" id="center-thread">
-        <!-- Messages dynamically rendered here -->
+      <div class="draft-hero" id="draft-hero">
+        <span data-i18n="draft_hero_pre">要在</span>
+        <button type="button" class="draft-proj" data-action="pick-draft-project" data-testid="draft-project">
+          <span id="draft-proj-name"></span><span class="caret">▾</span>
+        </button>
+        <span data-i18n="draft_hero_post">里做什么？</span>
       </div>
 
-      <!-- Composer at Bottom -->
-      <footer class="center-composer">
-        <div class="composer-box">
-          <textarea class="composer-textarea" data-testid="chat-input" data-i18n-placeholder="composer_placeholder" placeholder="向 Agent 补充要求或发送指令... (⌘↵ 发送)"></textarea>
-          <div class="composer-bar">
-            <div class="composer-chips">
-              <div class="chip-selector-wrap" id="composer-agent-wrap">
-                <button type="button" class="chip-selector" id="composer-agent-chip-btn" data-action="toggle-agent-picker" data-testid="composer-agent" title="当前调度模型" aria-haspopup="listbox" aria-expanded="false">
-                  <span class="chip-dot"></span>
-                  <span id="composer-agent-chip">Agent</span>
-                  <svg class="icon" style="width:11px;height:11px;opacity:0.7;" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                </button>
-                <div id="composer-agent-menu" class="chip-menu" role="listbox" data-testid="composer-agent-menu"></div>
-              </div>
-              <span id="demo-model-chip" class="demo-model-badge is-hidden" data-testid="demo-model-chip" data-i18n="demo_model_badge">演示模型</span>
-              <span class="chip-runtime-meta"><span data-i18n="context_tokens">上下文</span>: <span id="composer-context-value" data-testid="composer-context">—</span></span>
-            </div>
+      <div class="center-thread" id="center-thread"></div>
 
-            <div class="composer-actions">
-              <span class="shortcut-hint" data-i18n="shortcut_send">⌘↵ 发送</span>
-              <button class="btn-send" data-testid="chat-send" data-action="send-message" data-i18n-title="send_title" title="发送指令 (Cmd+Enter)">
-                <svg class="icon" style="width:13px;height:13px;" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+      <footer class="center-composer">
+        <div class="composer-stack">
+          <div class="run-bar" id="run-bar" data-testid="run-bar" hidden>
+            <div class="run-bar-head">
+              <span class="run-spin" aria-hidden="true"><span></span></span>
+              <span class="run-title" id="run-title"></span>
+              <span class="run-step" id="run-step"></span>
+              <span class="run-agents" id="run-agents"></span>
+              <span class="run-elapsed" id="run-elapsed"></span>
+              <button type="button" class="btn-ctrl" data-testid="btn-pause" id="btn-pause" data-action="pause-conversation" data-i18n-aria="btn_pause" data-i18n-title="btn_pause_title" aria-label="暂停" title="暂停执行" disabled>
+                <span class="btn-ctrl-label" data-i18n="btn_pause">暂停</span>
+              </button>
+              <button type="button" class="btn-ctrl" data-testid="btn-resume" id="btn-resume" data-action="resume-conversation" data-i18n-aria="btn_resume" data-i18n-title="btn_resume_title" aria-label="继续" title="继续执行" disabled>
+                <span class="btn-ctrl-label" data-i18n="btn_resume">继续</span>
+              </button>
+              <button type="button" class="btn-ctrl btn-stop" data-testid="btn-stop" id="btn-stop" data-action="stop-conversation" data-i18n-aria="btn_stop" data-i18n-title="btn_stop_title" aria-label="终止" title="终止并保存检查点" disabled>
+                <span class="btn-ctrl-label" data-i18n="btn_stop">终止</span>
               </button>
             </div>
+            <div class="run-progress"><div class="run-progress-fill" id="run-progress-fill"></div></div>
           </div>
+
+          <div class="composer-box">
+            <textarea class="composer-textarea" data-testid="chat-input" data-i18n-placeholder="composer_placeholder" placeholder="继续对话，@ 引用文件，/ 使用命令"></textarea>
+            <div class="composer-bar">
+              <div class="composer-chips">
+                <div class="chip-selector-wrap" id="composer-agent-wrap">
+                  <button type="button" class="chip-selector" id="composer-agent-chip-btn" data-action="toggle-agent-picker" data-testid="composer-agent" title="当前调度模型" aria-haspopup="listbox" aria-expanded="false">
+                    <span id="composer-agent-chip">Agent</span><span class="caret">▾</span>
+                  </button>
+                  <div id="composer-agent-menu" class="chip-menu" role="listbox" data-testid="composer-agent-menu"></div>
+                </div>
+                <span id="demo-model-chip" class="demo-model-badge is-hidden" data-testid="demo-model-chip" data-i18n="demo_model_badge">演示模型</span>
+                <button type="button" class="chip-plain" id="composer-project-chip" data-action="project-chip-menu" data-testid="composer-project">
+                  <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 3.2c0-.6.4-1 1-1h2.3l1 1.2h3.7c.6 0 1 .4 1 1v4.4c0 .6-.4 1-1 1h-7c-.6 0-1-.4-1-1z"></path></svg>
+                  <span id="composer-project-name"></span>
+                </button>
+              </div>
+              <div class="composer-actions">
+                <span class="chip-runtime-meta" id="composer-context-wrap"><span class="ctx-label" data-i18n="context_tokens">上下文</span> <span id="composer-context-value" data-testid="composer-context">—</span></span>
+                <button type="button" class="btn-send" data-testid="chat-send" data-action="send-message" data-i18n-title="send_title" title="发送">
+                  <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 11.5V2.5M3 6.5l4-4 4 4"></path></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="draft-hint" id="draft-hint"></div>
         </div>
       </footer>
     </main>
 
-    <!-- ======================================================================
-         COLUMN 3: RIGHT PANE (~520px)
-         ====================================================================== -->
+    <div class="col-divider" id="right-divider" data-side="right" data-i18n-title="drag_resize" title="拖动调整宽度，双击复位"></div>
+
+    <!-- Right: changes / files / sub-agent -->
     <aside class="col-right" data-testid="right-panel" id="right-panel">
-      <!-- Tabs Header: Diff | File | Markdown -->
       <header class="right-tabs-bar">
         <nav class="tabs-nav">
-          <button class="tab-btn active" id="tab-btn-diff" data-action="switch-right-tab" data-tab="diff" data-i18n-title="tab_diff_title" title="Diff 对比视图">
-            <span data-i18n="tab_diff">Diff</span>
+          <button type="button" class="tab-btn active" id="tab-btn-diff" data-action="switch-right-tab" data-tab="diff" data-i18n-title="tab_diff_title" title="改动">
+            <span data-i18n="tab_diff">变更</span>
+            <span class="tab-stat" id="diff-tab-stat"></span>
             <span class="tab-badge" id="diff-tab-badge">0</span>
           </button>
-          <button class="tab-btn" id="tab-btn-file" data-action="switch-right-tab" data-tab="file" data-i18n-title="tab_file_title" title="查看源码">
+          <button type="button" class="tab-btn" id="tab-btn-file" data-action="switch-right-tab" data-tab="file" data-i18n-title="tab_file_title" title="查看文件">
             <span data-i18n="tab_file">文件</span>
           </button>
-          <button class="tab-btn" id="tab-btn-editor" data-action="switch-right-tab" data-tab="editor" data-i18n-title="tab_markdown_title" title="Markdown 编辑器">
-            <span data-i18n="tab_markdown">Markdown</span>
-          </button>
+          <span id="agent-tab-slot" class="agent-tab-slot"></span>
         </nav>
-
         <div class="tabs-actions">
-          <button class="tab-action-icon" data-testid="file-open-editor" data-action="open-file-in-editor" data-i18n-title="open_editor" title="打开编辑器">
-            <svg class="icon" style="width:12px;height:12px;" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+          <button type="button" class="tab-action-icon" data-testid="file-open-editor" data-action="open-file-in-editor" data-i18n-title="open_editor" title="打开编辑器">
             <span data-i18n="btn_edit">编辑</span>
+          </button>
+          <button type="button" class="icon-btn" data-action="toggle-right" data-i18n-title="collapse_panel" title="收起面板 ⌘J">
+            <span class="ico-panel ico-panel-right" aria-hidden="true"></span>
           </button>
         </div>
       </header>
-
-      <!-- Changed files horizontal bar -->
-      <div class="changed-files-bar" id="changed-files-bar">
-        <!-- Changed files pills -->
-      </div>
-
-      <!-- Right Viewport Content (Diff / File / Markdown Editor) -->
-      <div id="right-viewport" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
-        <div class="diff-viewport" data-testid="diff-view">
-          <div class="empty-placeholder" data-i18n="no_changes_yet">暂无变更</div>
-        </div>
-      </div>
+      <div id="right-viewport" class="right-viewport"></div>
     </aside>
 
   </div>
+
+  <!-- Context menu -->
+  <div id="ctx-menu" class="ctx-menu" role="menu" hidden></div>
 
   <!-- Settings Modal Container -->
   <div id="settings-overlay" class="sm-ov" style="display:none"></div>
@@ -196,7 +177,6 @@
   <!-- Fullscreen 401 Unauthorized Notice Container -->
   <div id="auth-overlay" class="auth-overlay" style="display:none"></div>
 
-  <!-- Main Application Script -->
   <script type="module" src="/app.js"></script>
 </body>
 </html>

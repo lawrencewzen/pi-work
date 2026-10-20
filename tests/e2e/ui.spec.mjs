@@ -55,9 +55,14 @@ test('click changed file -> diff panel; md editor save persists', async ({ page 
   await newConversation(page);
   await send(page, 'go');
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
-  await page.locator(`[data-testid=changed-file][data-path="${FILE}"]`).click();
-  const diff = page.getByTestId('diff-view');
+  // Changed files are listed with their diffs unfolded; clicking the selected file folds it, a second click unfolds it.
+  const fileRow = page.locator(`[data-testid=changed-file][data-path="${FILE}"]`);
+  const diff = page.locator(`.change-file[data-path="${FILE}"][data-testid=diff-view]`);
   await expect(diff).toBeVisible();
+  await expect(diff).toContainText('line two');
+  await fileRow.click();
+  await expect(diff).toHaveCount(0);
+  await fileRow.click();
   await expect(diff).toContainText('line two');
   await page.getByTestId('file-open-editor').click(); // .md -> markdown editor
   const editor = page.getByTestId('md-editor');
