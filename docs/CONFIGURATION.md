@@ -18,10 +18,6 @@
 | `NOTIFY_WEBHOOK_KIND` | `generic` | `generic` JSON / `feishu` 文本机器人 |
 | `NOTIFY_MODE` | `errors` | `errors`：仅明确失败的后台任务；`all`：也发成功/提醒/计划触发；`off`：不发送 |
 | `ENABLE_CRASH_DEMO` | `0` | 生产模式是否开放 `POST /api/crash`；正式服务应保持 `0` |
-| `WECHAT_ENABLED` | `0` | 是否启用微信入站转发；需同时启动 `wx-bot` profile |
-| `WECHAT_WEBHOOK_KEY` | 空 | 微信桥到 Node 的入站 Bearer token |
-| `WECHAT_SEND_TOKEN` | 空 | Node 到微信桥本地发送接口的令牌，必须与入站令牌不同 |
-| `WECHAT_SEND_URL` | `http://127.0.0.1:18790/v1/send` | 共用网络命名空间内的微信发送地址，通常不要更改 |
 | `OBSIDIAN_ROOT` | 空 | 只读 Obsidian 仓库根目录。留空时知识库工具会说明未启用，不影响聊天 |
 | `OBSIDIAN_ALLOW` | 空 | 额外允许的相对路径，用英文逗号分隔。默认已包含 AI学习、X灵感、VPS小白教程 |
 
@@ -63,16 +59,14 @@ ENABLE_CRASH_DEMO=0
 
 **通知：**不配置 `NOTIFY_WEBHOOK_URL` 时后台任务照常进行，只是不会主动向手机或飞书群发送事件。主分支的 Webhook / 飞书仍是尽力发送：**没有持久通用 Outbox**；出错可能丢失消息。Webhook 对端应按 `X-Pi-Event-ID` 去重。
 
-**微信：**默认不开启。启用前分别用 `openssl rand -hex 32` 生成 `WECHAT_WEBHOOK_KEY` 与 `WECHAT_SEND_TOKEN`，将 `WECHAT_ENABLED=1` 放入 `.env`，使用 `--profile wechat` 启动。微信扫码凭据保存在专用 Docker 命名卷，不应导出到仓库。
-
 **笔记检索：**设置 `OBSIDIAN_ROOT` 后，助手只能只读检索白名单笔记，回答带来源路径和行号，不会写回 Obsidian。默认只开放 AI学习、X灵感、VPS小白教程；财务、个人档案和服务器资产不在范围内。
 
 ## 安全建议
 
-- 不提交 `.env`、服务商 Key、微信数据卷备份和包含鉴权信息的日志。
+- 不提交 `.env`、服务商 Key 和包含鉴权信息的日志。
 - 项目是单用户原型，不提供多租户隔离、SSO 或多用户权限矩阵；尽量只通过自己控制的 HTTPS 入口访问。
 - 模型费用可能产生在供应商/中转平台；**项目内 `cost: 0` 占位不等于免费**，建议在上游平台设置预算和额度限制。
 - 只下载/接入信任的模型或服务地址；不要把私有文件附件发送给不信任的模型提供商。
-- 对持久化 SQLite 和微信状态卷进行一致性备份；参考 [部署手册](DEPLOYMENT.md)。
+- 对持久化 SQLite 进行一致性备份；参考 [部署手册](DEPLOYMENT.md)。
 
 [返回 README](../README.md) · [故障排查](TROUBLESHOOTING.md)

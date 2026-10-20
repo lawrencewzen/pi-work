@@ -7,7 +7,7 @@ docker compose ps
 docker compose logs --tail=100 pi-durable-assistant
 ```
 
-提交 Issue 前，请去掉 API Key、Webhook 签名、Cookie、微信 ID、手机号、业务文本和其他敏感数据。
+提交 Issue 前，请去掉 API Key、Webhook 签名、Cookie、手机号、业务文本和其他敏感数据。
 
 | 现象 | 常见原因 | 最小排查动作 |
 | --- | --- | --- |
@@ -24,9 +24,6 @@ docker compose logs --tail=100 pi-durable-assistant
 | 飞书/Webhook 收不到消息 | URL、机器人权限、限流、网络；当前是尽力发送 | 先验证 Webhook 目标；主分支暂无通用持久重试，别误当“保证送达” |
 | 上传失败、提示类型不支持 | 超过 5 个文件、5MiB 图片、200KiB 文本、10MiB 总额，或不支持的格式 | 缩小文件；使用 PNG/JPEG/WebP/GIF 和 UTF-8 文本类文件 |
 | 网页图片上传成功但模型看不到图 | 模型 API 不支持图像，或 `LLM_API=faux` | 选择确实支持多模态的服务商/模型；并核对协议兼容性 |
-| 微信收不到回复 | 未扫码/失效、`WECHAT_ENABLED` 未启用、发送 token 不匹配 | 检查 `wx-bot` 状态、允许的发送方和本地接口 |
-| 微信显示 `-14` | iLink 登录过期 | 重新 `login primary` |
-| 微信显示 `no context_token` | 没有可用于回复的上下文令牌 | 先从微信主动给 ClawBot 发一条消息；旧阻断消息不自动补发 |
 | 更新后会话不见了 | 使用了不同的 Compose project/数据卷，或误执行 `down -v` | **暂停写入**，检查卷，不要用新数据覆盖旧数据；从已验证备份恢复 |
 
 ## 常用自检命令
@@ -49,15 +46,8 @@ docker compose ps
 docker compose logs --tail=100 pi-durable-assistant
 ```
 
-微信（已启用时）：
-
-```bash
-docker compose --profile wechat ps
-docker compose --profile wechat logs --tail=100 wx-bot
-```
-
 ## 提 Issue 时提供什么
 
-请使用模板说明：当前 `main` 或 PR 分支、操作系统、Node 与 Docker 版本、预期行为、实际行为、最短复现步骤、`npm run check` 与 `npm test` 结果、脱敏日志。不要直接公开 `.env`、Docker 数据卷、聊天历史、JWT、微信 token 或任何 API 密钥。
+请使用模板说明：当前 `main` 或 PR 分支、操作系统、Node 与 Docker 版本、预期行为、实际行为、最短复现步骤、`npm run check` 与 `npm test` 结果、脱敏日志。不要直接公开 `.env`、Docker 数据卷、聊天历史、JWT 或任何 API 密钥。
 
 [快速开始](GETTING_STARTED.md) · [配置参考](CONFIGURATION.md) · [部署与备份](DEPLOYMENT.md)
