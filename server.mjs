@@ -66,7 +66,7 @@ import {
   consumeSseTicket,
   tokensMatch,
 } from './src/core/auth.mjs';
-import { resolveAllowedWorkspacePath, defaultWorkspaceRoot } from './src/core/workspace-guard.mjs';
+import { resolveAllowedWorkspacePath, defaultWorkspaceRoot, listBrowsableDirs } from './src/core/workspace-guard.mjs';
 import { acquireDataDirLock } from './src/core/lock.mjs';
 import { presentContext } from './src/core/usage.mjs';
 import { openConversationKernel } from './src/kernel/conversations.mjs';
@@ -887,6 +887,15 @@ async function routeApi(req, res, url) {
 
   if (m === 'GET' && p === '/api/workspace-root') {
     sendJson(res, 200, { root: defaultWorkspaceRoot() });
+    return;
+  }
+
+  if (m === 'GET' && p === '/api/workspace-root/dirs') {
+    try {
+      sendJson(res, 200, await listBrowsableDirs(url.searchParams.get('path')));
+    } catch (err) {
+      sendJson(res, err.status || 400, { error: err.message || 'path is not allowed', code: err.code || 'E_PATH' });
+    }
     return;
   }
 

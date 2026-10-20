@@ -97,3 +97,18 @@ test('sandbox: file API rejects escape', async () => {
   expect(r.status).toBe(403);
   expect(r.body.error).toBe('E_SANDBOX');
 });
+
+test('new workspace: browse to a folder fills path and name', async ({ page }) => {
+  await openApp(page, srv);
+  await page.getByTestId('workspace-new').click();
+  await page.getByTestId('workspace-browse').click();
+  const browser = page.getByTestId('dir-browser');
+  await expect(browser).toBeVisible();
+  await browser.getByTestId('dir-row').filter({ hasText: path.basename(ws) }).click();
+  await browser.getByTestId('dir-choose-here').click();
+  await expect(browser).toBeHidden();
+  await expect(page.getByTestId('workspace-path-input')).toHaveValue(ws);
+  await expect(page.getByTestId('workspace-name-input')).toHaveValue(path.basename(ws));
+  await page.getByTestId('workspace-create-submit').click();
+  await expect(page.getByTestId('workspace-item').filter({ hasText: path.basename(ws) })).toBeVisible();
+});

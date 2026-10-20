@@ -2,6 +2,13 @@
 
 export const translations = {
   zh: {
+    ws_browse: '浏览…',
+    ws_dir_choose: '选择',
+    ws_dir_choose_here: '选择这个文件夹',
+    ws_dir_empty: '这里没有子文件夹',
+    ws_dir_up: '上一级',
+    ws_dir_error: '读不了这个目录',
+    ws_dir_truncated: '只显示前 500 个文件夹',
     collapse_sidebar: '收起侧栏 ⌘B',
     expand_sidebar: '展开侧栏 ⌘B',
     drag_resize: '拖动调整宽度，双击复位',
@@ -762,6 +769,13 @@ export const translations = {
     handoff_note: '{from} → {to}',
   },
   en: {
+    ws_browse: 'Browse…',
+    ws_dir_choose: 'Choose',
+    ws_dir_choose_here: 'Choose this folder',
+    ws_dir_empty: 'No sub-folders here',
+    ws_dir_up: 'Up one level',
+    ws_dir_error: 'This folder cannot be read',
+    ws_dir_truncated: 'Only the first 500 folders are shown',
     collapse_sidebar: 'Collapse sidebar ⌘B',
     expand_sidebar: 'Expand sidebar ⌘B',
     drag_resize: 'Drag to resize, double-click to reset',

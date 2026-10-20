@@ -3718,7 +3718,11 @@ export function openNewWorkspaceModal() {
         </div>
         <div class="form-group">
           <label>${escapeHtml(t('ws_path_label'))}</label>
-          <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${escapeHtml(t('ws_path_placeholder'))}" />
+          <div class="path-row">
+            <input id="ws-path-input" data-testid="workspace-path-input" placeholder="${escapeHtml(t('ws_path_placeholder'))}" />
+            <button type="button" class="btn" data-action="ws-browse" data-testid="workspace-browse">${escapeHtml(t('ws_browse'))}</button>
+          </div>
+          <div id="ws-dir-browser" class="dir-browser" data-testid="dir-browser" hidden></div>
           <div id="ws-path-hint" class="form-hint">${state.allowedWorkspaceRoot ? escapeHtml(t('ws_path_hint', { root: state.allowedWorkspaceRoot })) : ''}</div>
         </div>
       </div>
@@ -3741,6 +3745,104 @@ export function openNewWorkspaceModal() {
       }
     }).catch(() => {});
   }
+}
+
+// ---- Folder picker in the new-workspace dialog ------------------------------
+let dirBrowse = null;
+
+function dirSep(root) {
+  return String(root || '').includes('\\') && !String(root || '').includes('/') ? '\\' : '/';
+}
+
+function dirCrumbs(data) {
+  const sep = dirSep(data.root);
+  const root = String(data.root || '');
+  const rootName = root.split(/[\\/]/).filter(Boolean).pop() || root;
+  const crumbs = [{ label: rootName, path: root }];
+  const rest = String(data.path || '').slice(root.length).split(/[\\/]/).filter(Boolean);
+  let acc = root.replace(/[\\/]+$/, '');
+  for (const part of rest) {
+    acc = `${acc}${sep}${part}`;
+    crumbs.push({ label: part, path: acc });
+  }
+  return crumbs;
+}
+
+function renderDirBrowser() {
+  const host = document.getElementById('ws-dir-browser');
+  if (!host || !dirBrowse) return;
+  const { data, loading, error } = dirBrowse;
+  const folderSvg = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 3.2c0-.6.4-1 1-1h2.3l1 1.2h3.7c.6 0 1 .4 1 1v4.4c0 .6-.4 1-1 1h-7c-.6 0-1-.4-1-1z"></path></svg>';
+  const crumbs = data ? dirCrumbs(data) : [];
+  let list;
+  if (error) list = `<div class="dir-note is-error">${escapeHtml(error)}</div>`;
+  else if (!data) list = `<div class="dir-note">${escapeHtml(t('loading'))}</div>`;
+  else if (!data.entries.length) list = `<div class="dir-note">${escapeHtml(t('ws_dir_empty'))}</div>`;
+  else {
+    list = data.entries.map((ent) =>
+      `<div class="dir-row" data-action="ws-dir-open" data-path="${escapeHtml(ent.path)}" data-testid="dir-row" title="${escapeHtml(ent.path)}">` +
+      `<span class="dir-icon">${folderSvg}</span><span class="dir-name">${escapeHtml(ent.name)}</span>` +
+      (ent.git ? '<span class="dir-git">Git</span>' : '') +
+      `<button type="button" class="dir-choose" data-action="ws-dir-choose" data-path="${escapeHtml(ent.path)}" data-testid="dir-choose">${escapeHtml(t('ws_dir_choose'))}</button>` +
+      `</div>`).join('') +
+      (data.truncated ? `<div class="dir-note">${escapeHtml(t('ws_dir_truncated'))}</div>` : '');
+  }
+  host.innerHTML =
+    `<div class="dir-crumbs">` +
+    (data?.parent ? `<button type="button" class="dir-up" data-action="ws-dir-open" data-path="${escapeHtml(data.parent)}" title="${escapeHtml(t('ws_dir_up'))}">←</button>` : '') +
+    crumbs.map((c, i) => (i === crumbs.length - 1
+      ? `<span class="dir-crumb is-current">${escapeHtml(c.label)}</span>`
+      : `<button type="button" class="dir-crumb" data-action="ws-dir-open" data-path="${escapeHtml(c.path)}">${escapeHtml(c.label)}</button><span class="dir-crumb-sep">/</span>`)).join('') +
+    (loading ? '<span class="ms-spin dir-spin" aria-hidden="true"></span>' : '') +
+    `</div>` +
+    `<div class="dir-list">${list}</div>` +
+    `<div class="dir-foot">` +
+    `<span class="dir-foot-path" title="${escapeHtml(data?.path || '')}">${escapeHtml(data?.path || '')}${data?.git ? ' · Git' : ''}</span>` +
+    `<button type="button" class="btn p" data-action="ws-dir-choose" data-path="${escapeHtml(data?.path || '')}" data-testid="dir-choose-here"${data?.selectable ? '' : ' disabled'}>${escapeHtml(t('ws_dir_choose_here'))}</button>` +
+    `</div>`;
+}
+
+async function openDirBrowser(dirPath) {
+  const seq = (dirBrowse?.seq || 0) + 1;
+  dirBrowse = { ...(dirBrowse || {}), seq, loading: true, error: '' };
+  renderDirBrowser();
+  try {
+    const q = dirPath ? `?path=${encodeURIComponent(dirPath)}` : '';
+    const data = await api(`/api/workspace-root/dirs${q}`);
+    if (dirBrowse?.seq !== seq) return;
+    dirBrowse = { seq, data, loading: false, error: '' };
+  } catch (err) {
+    if (dirBrowse?.seq !== seq) return;
+    dirBrowse = { ...dirBrowse, loading: false, error: t('ws_dir_error') };
+  }
+  renderDirBrowser();
+}
+
+function toggleDirBrowser() {
+  const host = document.getElementById('ws-dir-browser');
+  if (!host) return;
+  if (!host.hidden) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  const typed = document.getElementById('ws-path-input')?.value.trim();
+  dirBrowse = null;
+  openDirBrowser(typed || '').then(() => {
+    // A typed path outside the root falls back to the root itself.
+    if (typed && dirBrowse?.error) openDirBrowser('');
+  });
+}
+
+function chooseDir(dirPath) {
+  if (!dirPath) return;
+  const input = document.getElementById('ws-path-input');
+  if (input) input.value = dirPath;
+  const name = document.getElementById('ws-name-input');
+  if (name && !name.value.trim()) name.value = dirPath.split(/[\\/]/).filter(Boolean).pop() || '';
+  const host = document.getElementById('ws-dir-browser');
+  if (host) host.hidden = true;
+  clearWorkspaceModalError();
 }
 
 let wsModalMode = 'local';
@@ -4456,6 +4558,15 @@ document.addEventListener('click', (e) => {
       break;
     case 'submit-workspace':
       submitWorkspaceModal();
+      break;
+    case 'ws-browse':
+      toggleDirBrowser();
+      break;
+    case 'ws-dir-open':
+      if (!e.target.closest('[data-action="ws-dir-choose"]')) openDirBrowser(actionEl.getAttribute('data-path'));
+      break;
+    case 'ws-dir-choose':
+      chooseDir(actionEl.getAttribute('data-path'));
       break;
     case 'git-add':
     case 'git-close-drawer':
