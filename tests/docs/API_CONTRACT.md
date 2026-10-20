@@ -224,3 +224,24 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"tools":[{"
 | `POST /api/conversations/:cid/stop` | `200 {status:'stopped'}`。停掉这条对话里的全部工作，包括后台子 Agent |
 
 暂停仍不是本接口的停止语义。
+
+## 11. Git 连接与从 GitLab 导入
+
+连接存在 `settings.gitConnections`，不从 `GET /api/settings` 或 `PUT /api/settings` 读写。`PUT /api/settings` 里的 `gitConnections` 被忽略。输出一律掩码 `token`（与模型来源相同，`••••` 加末四位），并带 `hasToken`。编辑时掩码或空令牌表示不修改。
+
+一条连接：`{id, name, kind, baseUrl, token, hasToken, allowHttp, caFile, lastTest}`。`kind` 为 `gitlab-self` | `gitlab-com` | `other`。`gitlab-com` 的 `baseUrl` 固定 `https://gitlab.com`。`allowHttp` 只对 `gitlab-self` 能为 `true`。`lastTest` 为 `{ok, username, error, at}` 或 `null`；`error` 是原因码，不是原文。
+
+| 方法 路径 | 请求 | 响应 |
+|---|---|---|
+| `GET /api/git/connections` | | `200` 连接数组，令牌已掩码 |
+| `POST /api/git/connections` | `{name, kind, baseUrl, token, allowHttp?, caFile?}` | `201` 新建的公开连接。校验失败 `400 {error:'invalid connection', errors}` |
+| `PATCH /api/git/connections/:id` | 同字段，均可省略 | `200` 公开连接。不存在 `404 {error:'not_found'}`。掩码或空 `token` 保留原令牌 |
+| `DELETE /api/git/connections/:id` | | `200 {ok:true,id}`。不存在 `404` |
+| `POST /api/git/connections/:id/test` | | `200 {ok:true, username, connection}` 或 `200 {ok:false, code, connection}`。会写入 `lastTest` |
+| `POST /api/git/connections/test` | 未保存的表单，可带 `id` | `200 {ok, username?, code?}`。不写库。带 `id` 且令牌是掩码或空时，用已保存的令牌测 |
+| `GET /api/git/connections/:id/projects?search=` | | `200 {projects:[{id, path, description, defaultBranch, lastActivityAt, httpUrl}]}`。`kind:other` 为 `400 {code:'not_gitlab'}` |
+| `GET /api/git/connections/:id/projects/:pid/branches` | | `200 {branches:[{name, default}], defaultBranch}` |
+
+GitLab 请求只用 Node 内置 `http`/`https`，请求头 `PRIVATE-TOKEN`。设了 `caFile` 时，该文件作为 HTTPS 的 CA。`http://` 且未勾选允许 http 时不发请求，原因码 `http_not_allowed`。上游失败映射为 `auth_failed`（401/403）、`cert_failed`、`repo_not_found`、`branch_not_found`、`network`、`timeout`、`unknown`。响应和 `lastTest.error` 不含令牌。
+
+`POST /api/workspaces` 除 `{name, path}` 和 `{name, gitUrl, branch?}` 外，接受 `{name, connectionId, projectId, branch?}`。`projectId` 向该连接的 GitLab 取 `http_url_to_repo`，去掉用户信息后，用连接的 origin 克隆。只填 `gitUrl` 时，若主机属于某条连接，用那条连接的令牌；否则仍走本机 git。用连接令牌克隆时，令牌放在子进程环境 `GIT_CONFIG_VALUE_*` 的 `http.extraHeader`（`Authorization: Bearer <token>`，GitLab 把个人访问令牌当作 Bearer），同时把 `credential.helper` 置空，避免系统凭证助手。令牌不出现在命令行参数、仓库地址、`.git/config`、workspace 记录或错误信息里。连接的 `allowHttp` / `caFile` 对这次克隆同样生效。失败 `400 {error, code, via:'connection'}`，`code` 同上；未知失败可带已打码的 `detail`。`http://` 未被允许时 `code` 为 `http_not_allowed`。
