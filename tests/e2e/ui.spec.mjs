@@ -25,6 +25,14 @@ test('create workspace & conversation, markdown rendered', async ({ page }) => {
   await expect(body.locator('h2')).toHaveText('计划');
   await expect(body.locator('strong')).toHaveText('README');
   await expect(body.locator('pre code')).toContainText('console.log(1)');
+  await expect(body.locator('table')).toContainText('a');
+  await expect(body.locator('hr')).toHaveCount(1);
+  await expect(body.locator('blockquote')).toContainText('引用块');
+  await expect(body.locator('.code-block-bar')).toContainText('js');
+  await expect(body.locator('script')).toHaveCount(0);
+  await expect(body.locator('[onerror]')).toHaveCount(0);
+  await expect(body.locator('a[href^="javascript"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__xss)).toBeUndefined();
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
   await expect(page.getByTestId('status-dot').first()).toHaveAttribute('data-status', 'done');
 });

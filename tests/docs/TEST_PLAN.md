@@ -17,7 +17,8 @@
 | U5 | 单元 | SSE：格式、缺 id、对象内换行单行、多行字符串、往返含中文 | unit/sse |
 | U6 | 单元 | Role/Pipeline 校验：合法、默认工具、非法 id/空提示词/未知工具、空步骤/未知角色/超 20 步 | unit/config |
 | U7 | 单元 | 内核：两个会话并行且工作区隔离；暂停一个不影响另一个；stop 终态；断流重试后完成 | unit/kernel-control、unit/kernel-tools |
-| E1 | E2E | 新建工作区+会话，发消息，Markdown（h2/strong/代码块）渲染，状态点 done | e2e/ui |
+| U-md | 单元 | Markdown：表格、分隔线、引用、嵌套列表、代码块、链接、任务列表；`<script>` / onerror / javascript: 被清掉；`/vendor/` 只提供 marked 与 DOMPurify | unit/markdown |
+| E1 | E2E | 新建工作区+会话，发消息，Markdown（h2/strong/代码块/表格/分隔线/引用）渲染，XSS 节点不进 DOM，状态点 done | e2e/ui |
 | E2 | E2E | 工具行折叠：路径含 `…`、`+3 −0`，点击展开详情 | e2e/ui |
 | E3 | E2E | 点改动文件 → diff；打开 md 编辑器编辑保存 → 落盘，刷新仍在 | e2e/ui |
 | E4 | E2E | 刷新后工作区、会话、消息、工具行、状态保持 | e2e/ui |

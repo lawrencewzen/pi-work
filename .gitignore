@@ -1,4 +1,5 @@
 node_modules/
+public/vendor/
 /test-results/
 /playwright-report/
 /tests/test-results/
