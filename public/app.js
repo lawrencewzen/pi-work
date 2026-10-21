@@ -1,6 +1,10 @@
 import { t, tPlural, getLocale, setLocale, applyI18n, translations } from './i18n.js';
 import {
   clipOutputText,
+  isProbeFailure,
+  isRealToolFailure,
+  relativizePath,
+  relativizeText,
   summarizeToolGroup,
   toolDiffCounts,
   toolFocus,
@@ -2004,9 +2008,10 @@ function renderToolCallListHtml(calls) {
   let rows = [];
   const flush = () => {
     if (!rows.length) return;
+    const group = rows;
     parts.push(
       `<div class="tool-group is-open"><div class="tool-group-list">` +
-      rows.map((tool) => renderToolRowHtml(tool)).join('') +
+      group.map((tool) => renderToolRowHtml(tool, group)).join('') +
       `</div></div>`
     );
     rows = [];
@@ -2023,6 +2028,16 @@ function renderToolCallListHtml(calls) {
   return parts.join('');
 }
 
+function conversationWorkspacePath() {
+  const data = state.activeConversationData;
+  if (data?.workspacePath) return data.workspacePath;
+  const listed = (state.conversations || []).find((item) => item.id === state.activeConversationId);
+  if (listed?.workspacePath) return listed.workspacePath;
+  const wid = data?.workspaceId || listed?.workspaceId || state.activeWorkspaceId;
+  const ws = (state.workspaces || []).find((item) => item.id === wid);
+  return ws?.path || '';
+}
+
 export function renderToolGroupHtml(tools, idPrefix = '') {
   const list = (tools || []).filter(Boolean);
   if (!list.length) return '';
@@ -2030,6 +2045,7 @@ export function renderToolGroupHtml(tools, idPrefix = '') {
   const open = state.expandedToolGroups.has(id);
   const summary = summarizeToolGroup(list, t);
   const preview = toolGroupPreview(list, state.expandedToolGroupOlder.has(id));
+  const realFailed = summary.failed > 0 && !summary.running;
   const fail = summary.failed > 0
     ? `<span class="tool-group-fail" data-testid="tool-group-fail">${escapeHtml(t('tool_fail_count', { n: summary.failed }))}</span>`
     : '';
@@ -2039,8 +2055,14 @@ export function renderToolGroupHtml(tools, idPrefix = '') {
   const older = preview.hidden > 0
     ? `<button type="button" class="tool-group-older" data-testid="tool-group-older" data-action="expand-tool-group-older" data-group-id="${escapeHtml(id)}">${escapeHtml(tPlural('tool_group_older', preview.hidden))}</button>`
     : '';
+  const groupClass = [
+    'tool-group',
+    open ? 'is-open' : '',
+    summary.running ? 'is-running' : '',
+    realFailed ? 'is-failed' : '',
+  ].filter(Boolean).join(' ');
   return (
-    `<div class="tool-group${open ? ' is-open' : ''}${summary.running ? ' is-running' : ''}" data-testid="tool-group" data-group-id="${escapeHtml(id)}">` +
+    `<div class="${groupClass}" data-testid="tool-group" data-group-id="${escapeHtml(id)}">` +
     `<button type="button" class="tool-group-summary" data-testid="tool-group-summary" data-action="toggle-tool-group" data-group-id="${escapeHtml(id)}" aria-expanded="${open ? 'true' : 'false'}">` +
     spin +
     `<span class="tool-group-text" data-testid="tool-group-text">${escapeHtml(summary.text)}</span>` +
@@ -2049,7 +2071,7 @@ export function renderToolGroupHtml(tools, idPrefix = '') {
     `</button>` +
     `<div class="tool-group-list" data-testid="tool-group-list">` +
     older +
-    preview.tools.map((tool) => renderToolRowHtml(tool)).join('') +
+    preview.tools.map((tool) => renderToolRowHtml(tool, list)).join('') +
     `</div>` +
     `</div>`
   );
@@ -2086,16 +2108,16 @@ function toolActionLabel(name) {
   return t(`tool_act_${kind}`);
 }
 
-function toolRowOriginal(tool) {
+function toolRowOriginal(tool, workspacePath) {
   const focus = toolFocus(tool);
   if (focus.mode === 'text') return truncateCommand(focus.text);
   const raw = tool?.path || tool?.input?.path || focus.text || '';
-  return truncatePath(raw);
+  return truncatePath(relativizePath(raw, workspacePath));
 }
 
-function toolRowDisplay(tool) {
+function toolRowDisplay(tool, workspacePath) {
   const heading = toolRowHeading(tool);
-  const original = toolRowOriginal(tool);
+  const original = toolRowOriginal(tool, workspacePath);
   if (heading.intent) return { title: heading.title, detail: original, intent: true };
   return { title: original, detail: '', intent: false };
 }
@@ -2112,19 +2134,22 @@ function toolOutputSource(output) {
   return JSON.stringify(output, null, 2);
 }
 
-function isToolDetailOpen(tool) {
+function isToolDetailOpen(tool, tools) {
   const id = tool?.id;
   if (id == null || String(id) === '') return false;
   if (state.collapsedToolDetails.has(id)) return false;
   if (state.expandedTools.has(id)) return true;
-  return toolStatusBucket(tool.status) === 'failed';
+  return isRealToolFailure(tool, tools);
 }
 
-export function renderToolRowHtml(tool) {
+export function renderToolRowHtml(tool, tools = []) {
   if (!tool) return '';
+  const group = Array.isArray(tools) && tools.length ? tools : [tool];
+  const workspacePath = conversationWorkspacePath();
   const toolName = tool.name || 'tool';
   const rawPath = tool.path || tool.input?.path || '';
-  const display = toolRowDisplay(tool);
+  const shownPath = relativizePath(rawPath, workspacePath);
+  const display = toolRowDisplay(tool, workspacePath);
   const pathClass = display.intent ? 'tool-path is-intent' : 'tool-path';
   const origHtml = display.detail
     ? `<span class="tool-path-orig" data-testid="tool-row-orig">${escapeHtml(display.detail)}</span>`
@@ -2134,29 +2159,34 @@ export function renderToolRowHtml(tool) {
   const added = diff.added != null ? `+${diff.added}` : '';
   const removed = diff.removed != null ? `−${diff.removed}` : '';
   const bucket = toolStatusBucket(tool.status);
-  const isExpanded = isToolDetailOpen(tool);
-  const hint = toolResultHint(tool, t);
+  const probe = isProbeFailure(tool, group);
+  const realFail = isRealToolFailure(tool, group);
+  const isExpanded = isToolDetailOpen(tool, group);
+  const hint = toolResultHint(tool, t, { workspacePath });
+  const hintFailed = hint.failed && !probe;
   const diffBadge =
     `<span class="tool-diff-badge${showDiff ? '' : ' is-hidden'}">` +
     `<span class="add" data-testid="tool-row-added">${escapeHtml(added)}</span>` +
     `<span class="del" data-testid="tool-row-removed">${escapeHtml(removed)}</span>` +
     `</span>`;
-  const statusHtml = bucket === 'failed' || bucket === 'interrupted'
-    ? `<span class="tool-row-status is-${bucket}" data-testid="tool-row-status">${escapeHtml(localizeToolStatus(tool.status))}</span>`
-    : '';
+  const statusHtml = realFail
+    ? `<span class="tool-row-status is-failed" data-testid="tool-row-status">${escapeHtml(localizeToolStatus('failed'))}</span>`
+    : (bucket === 'interrupted'
+      ? `<span class="tool-row-status is-interrupted" data-testid="tool-row-status">${escapeHtml(localizeToolStatus(tool.status))}</span>`
+      : '');
   const preview = pluginResultPreview(tool);
-  const outputText = unwrapHarnessDiagnostics(toolOutputSource(tool.output));
+  const outputText = relativizeText(unwrapHarnessDiagnostics(toolOutputSource(tool.output)), workspacePath);
   const showAllOutput = state.expandedToolOutputs.has(tool.id);
-  const clipLimit = bucket === 'failed' && !showAllOutput ? TOOL_ERROR_PREVIEW_LINES : 20;
+  const clipLimit = realFail && !showAllOutput ? TOOL_ERROR_PREVIEW_LINES : 20;
   const clipped = clipOutputText(outputText, showAllOutput, clipLimit);
   const inputText = tool.input ? JSON.stringify(tool.input, null, 2) : '';
   const hintHtml = hint.text
-    ? `<span class="tool-row-hint${hint.failed ? ' is-failed' : ''}" data-testid="tool-row-hint">${escapeHtml(hint.text)}</span>`
+    ? `<span class="tool-row-hint${hintFailed ? ' is-failed' : ''}" data-testid="tool-row-hint">${escapeHtml(hint.text)}</span>`
     : (preview ? `<span class="tool-result" data-testid="tool-row-output">${escapeHtml(preview)}</span>` : '');
   const rowClass = [
     'tool-row',
     bucket === 'interrupted' ? 'tool-interrupted' : '',
-    bucket === 'failed' ? 'is-failed' : '',
+    realFail ? 'is-failed' : '',
   ].filter(Boolean).join(' ');
 
   return (
@@ -2172,9 +2202,9 @@ export function renderToolRowHtml(tool) {
     `</div>` +
     `<div class="tool-meta">${statusHtml}</div>` +
     `<div class="tool-detail-card" data-testid="tool-row-detail" style="display:${isExpanded ? 'block' : 'none'}">` +
-    `<div class="tool-detail-block${bucket === 'failed' ? ' is-failed' : ''}">` +
-    (rawPath ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_path_label'))}</span> ${escapeHtml(rawPath)}</div>` : '') +
-    (bucket === 'failed' ? '' : (inputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_input'))}</span>\n${escapeHtml(inputText)}</div>` : '')) +
+    `<div class="tool-detail-block${realFail ? ' is-failed' : ''}">` +
+    (shownPath ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_path_label'))}</span> ${escapeHtml(shownPath)}</div>` : '') +
+    (realFail ? '' : (inputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_input'))}</span>\n${escapeHtml(inputText)}</div>` : '')) +
     (outputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_output'))}</span>\n${escapeHtml(clipped.text)}</div>` : '') +
     `</div>` +
     (clipped.clipped
@@ -2289,10 +2319,31 @@ function findToolById(id) {
   return null;
 }
 
+function toolGroupFor(tool) {
+  const msgs = state.activeConversationData?.messages || [];
+  const tools = [];
+  let capturing = false;
+  let found = false;
+  for (const message of msgs) {
+    if (message?.role === 'tool' && message.tool) {
+      capturing = true;
+      tools.push(message.tool);
+      if (tool && (message.tool === tool || String(message.tool.id) === String(tool.id))) found = true;
+      continue;
+    }
+    if (capturing) {
+      if (found) return tools;
+      tools.length = 0;
+      capturing = false;
+    }
+  }
+  return found ? tools : (tool ? [tool] : []);
+}
+
 export function toggleToolDetail(id) {
   if (!id) return;
   const tool = findToolById(id);
-  const open = tool ? isToolDetailOpen(tool) : state.expandedTools.has(id);
+  const open = tool ? isToolDetailOpen(tool, toolGroupFor(tool)) : state.expandedTools.has(id);
   if (open) {
     state.expandedTools.delete(id);
     state.collapsedToolDetails.add(id);

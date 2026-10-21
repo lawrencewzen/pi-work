@@ -3,6 +3,8 @@
 const KINDS = new Set(['read', 'write', 'edit', 'ls', 'grep', 'bash']);
 const COUNT_KINDS = new Set(['read', 'ls', 'grep', 'other']);
 const CHANGE_KINDS = new Set(['write', 'edit']);
+const PROBE_KINDS = new Set(['read', 'ls', 'grep']);
+const NAMED_KIND_LIMIT = 2;
 
 export const TOOL_GROUP_PREVIEW = 8;
 export const TOOL_ERROR_PREVIEW_LINES = 8;
@@ -32,6 +34,72 @@ export function toolFileLabel(pathLike) {
   if (!s || s === '.' || s === './') return '';
   const parts = s.split('/').filter(Boolean);
   return parts.pop() || s;
+}
+
+function slashPath(value) {
+  return String(value ?? '').replaceAll('\\', '/');
+}
+
+/** Workspace-relative path for display. Paths outside the workspace stay as-is. */
+export function relativizePath(pathLike, workspacePath) {
+  const raw = String(pathLike ?? '');
+  const rootRaw = String(workspacePath ?? '');
+  if (!raw || !rootRaw) return raw;
+  const file = slashPath(raw);
+  const root = slashPath(rootRaw).replace(/\/+$/, '');
+  if (!root) return raw;
+  const fileCmp = file.toLowerCase();
+  const rootCmp = root.toLowerCase();
+  if (fileCmp === rootCmp) return '.';
+  if (fileCmp.startsWith(`${rootCmp}/`)) return file.slice(root.length + 1);
+  return raw;
+}
+
+function rootVariants(workspacePath) {
+  const rootRaw = String(workspacePath ?? '');
+  if (!rootRaw) return [];
+  const trimmed = rootRaw.replace(/[\\/]+$/, '');
+  const forward = slashPath(trimmed).replace(/\/+$/, '');
+  const backward = trimmed.replaceAll('/', '\\').replace(/\\+$/, '');
+  const seen = new Set();
+  const out = [];
+  for (const item of [trimmed, forward, backward]) {
+    if (!item || seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  out.sort((a, b) => b.length - a.length);
+  return out;
+}
+
+/** Replace absolute workspace prefixes in error text with relative paths. */
+export function relativizeText(text, workspacePath) {
+  const raw = String(text ?? '');
+  if (!raw) return raw;
+  let out = raw;
+  for (const root of rootVariants(workspacePath)) {
+    const sep = root.includes('\\') ? '\\' : '/';
+    out = out.split(root + sep).join('');
+    const quoted = new RegExp(`(['"])${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\1`, 'g');
+    out = out.replace(quoted, '$1.$1');
+  }
+  return out;
+}
+
+const FILE_ERROR_CODES = [
+  { re: /\bENOENT\b/, key: 'tool_err_enoent' },
+  { re: /\bEACCES\b|\bEPERM\b/, key: 'tool_err_eacces' },
+  { re: /\bE_SANDBOX\b/, key: 'tool_err_sandbox' },
+  { re: /\bEISDIR\b/, key: 'tool_err_eisdir' },
+  { re: /\bENOTDIR\b/, key: 'tool_err_enotdir' },
+];
+
+export function shortErrorHint(text, t) {
+  const raw = String(text ?? '');
+  for (const item of FILE_ERROR_CODES) {
+    if (item.re.test(raw)) return t(item.key);
+  }
+  return '';
 }
 
 /**
@@ -177,7 +245,7 @@ function changedClause(tools, t) {
   const names = [];
   const seen = new Set();
   for (const tool of tools) {
-    if (toolStatusBucket(tool.status) === 'failed') continue;
+    if (isCallFailed(tool)) continue;
     if (!CHANGE_KINDS.has(toolKind(tool?.name))) continue;
     const path = targetOf(tool);
     if (!path || seen.has(path)) continue;
@@ -193,7 +261,7 @@ function changedClause(tools, t) {
 }
 
 function failedClause(tools, t) {
-  const failed = tools.filter((tool) => toolStatusBucket(tool.status) === 'failed');
+  const failed = tools.filter((tool) => isRealToolFailure(tool, tools));
   if (!failed.length) return '';
   return failed.slice(0, 2).map((tool) => failedPhrase(tool, t)).join(t('tool_sum_names_join'));
 }
@@ -201,7 +269,7 @@ function failedClause(tools, t) {
 function commandClause(tools, t) {
   const cmds = [];
   for (const tool of tools) {
-    if (toolStatusBucket(tool.status) === 'failed') continue;
+    if (isCallFailed(tool)) continue;
     if (toolKind(tool?.name) !== 'bash') continue;
     const text = targetOf(tool);
     if (!text) continue;
@@ -212,13 +280,63 @@ function commandClause(tools, t) {
   return t('tool_sum_ran', { names: shown.join(t('tool_sum_names_join')) });
 }
 
-function countOnlyClause(tools, t) {
+function uniqueFileNames(tools) {
+  const names = [];
+  const seen = new Set();
+  for (const tool of tools) {
+    const label = toolFileLabel(targetOf(tool));
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    names.push(label);
+  }
+  return names;
+}
+
+function grepQuery(tool) {
+  const input = tool?.input && typeof tool.input === 'object' ? tool.input : {};
+  return oneLine(input.pattern || input.query || '', 32);
+}
+
+function namedKindPhrase(kind, tools, t) {
+  if (kind === 'grep') {
+    const query = tools.map(grepQuery).find(Boolean);
+    if (query) return t('tool_sum_grep_named', { query });
+    return countPhrase(tools, t);
+  }
+  if (kind === 'read' || kind === 'ls') {
+    const names = uniqueFileNames(tools);
+    if (!names.length) return countPhrase(tools, t);
+    const shown = names.slice(0, NAMED_KIND_LIMIT);
+    const joined = shown.join(t('tool_sum_names_join'));
+    if (tools.length > shown.length) {
+      return t(`tool_sum_${kind}_named_more`, { names: joined, n: tools.length });
+    }
+    return t(`tool_sum_${kind}_named`, { names: joined });
+  }
+  return countPhrase(tools, t);
+}
+
+function namedCountClause(tools, t) {
   const rest = tools.filter((tool) => {
-    if (toolStatusBucket(tool.status) === 'failed') return false;
+    if (isCallFailed(tool)) return false;
     return COUNT_KINDS.has(toolKind(tool?.name));
   });
   if (!rest.length) return '';
-  return countPhrase(rest, t);
+  const order = [];
+  const groups = new Map();
+  for (const tool of rest) {
+    const kind = toolKind(tool?.name);
+    const key = kind === 'other' ? `other:${tool?.name || 'tool'}` : kind;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      order.push(key);
+    }
+    groups.get(key).push(tool);
+  }
+  return order.map((key) => {
+    const kind = key.startsWith('other:') ? 'other' : key;
+    return namedKindPhrase(kind, groups.get(key), t);
+  }).join(t('tool_sum_join'));
 }
 
 function richSummary(list, t) {
@@ -232,7 +350,7 @@ function richSummary(list, t) {
     if (kind === 'bash') return commandClause(list, t) || singlePhrase(tool, t);
     return singlePhrase(tool, t);
   }
-  const clauses = [changedClause(list, t), failedClause(list, t), commandClause(list, t), countOnlyClause(list, t)]
+  const clauses = [changedClause(list, t), failedClause(list, t), commandClause(list, t), namedCountClause(list, t)]
     .filter(Boolean);
   if (!clauses.length) return countPhrase(list, t);
   return clauses.join(t('tool_sum_join'));
@@ -240,7 +358,7 @@ function richSummary(list, t) {
 
 export function summarizeToolGroup(tools, t) {
   const list = (Array.isArray(tools) ? tools : []).filter(Boolean);
-  const failed = list.filter((tool) => toolStatusBucket(tool.status) === 'failed').length;
+  const failed = list.filter((tool) => isRealToolFailure(tool, list)).length;
   let runningTool = null;
   for (let i = list.length - 1; i >= 0; i -= 1) {
     if (toolStatusBucket(list[i].status) === 'running') {
@@ -344,9 +462,49 @@ function bashStreams(tool) {
   return { parsed, json, stdout, stderr, code };
 }
 
+function bashNonZero(tool) {
+  if (toolKind(tool?.name) !== 'bash') return false;
+  const { code } = bashStreams(tool);
+  if (code == null || code === '') return false;
+  return Number(code) !== 0;
+}
+
+function isCallFailed(tool) {
+  return toolStatusBucket(tool?.status) === 'failed' || bashNonZero(tool);
+}
+
+function isCallSuccessful(tool) {
+  return toolStatusBucket(tool?.status) === 'done' && !bashNonZero(tool);
+}
+
+function indexInGroup(tool, list) {
+  const direct = list.indexOf(tool);
+  if (direct >= 0) return direct;
+  if (tool?.id == null || String(tool.id) === '') return -1;
+  return list.findIndex((item) => item && item.id === tool.id);
+}
+
+/**
+ * A failed read/ls/grep is a probe when a later call in the same group succeeded.
+ * Write/edit/bash failures, a non-zero bash exit, and the group's last failure are real.
+ */
+export function isProbeFailure(tool, tools) {
+  if (!isCallFailed(tool)) return false;
+  if (!PROBE_KINDS.has(toolKind(tool?.name))) return false;
+  const list = Array.isArray(tools) ? tools.filter(Boolean) : [];
+  const index = indexInGroup(tool, list);
+  if (index < 0 || index === list.length - 1) return false;
+  return list.slice(index + 1).some(isCallSuccessful);
+}
+
+export function isRealToolFailure(tool, tools) {
+  return isCallFailed(tool) && !isProbeFailure(tool, tools);
+}
+
 /** Short result hint shown on a row without expanding it. */
-export function toolResultHint(tool, t) {
+export function toolResultHint(tool, t, options = {}) {
   if (!tool) return { text: '', failed: false };
+  const workspacePath = options.workspacePath || '';
   const bucket = toolStatusBucket(tool.status);
   const parsed = parseToolOutput(tool.output);
   const json = parsed.json && typeof parsed.json === 'object' ? parsed.json : null;
@@ -354,8 +512,10 @@ export function toolResultHint(tool, t) {
     ? String(json.stderr || json.message || json.error || json.stdout || parsed.text || '')
     : parsed.text;
 
-  if (bucket === 'failed') {
-    return { text: firstLine(unwrapHarnessDiagnostics(failText || parsed.text), 64), failed: true };
+  if (bucket === 'failed' || bashNonZero(tool)) {
+    const unwrapped = relativizeText(unwrapHarnessDiagnostics(failText || parsed.text), workspacePath);
+    const short = shortErrorHint(unwrapped, t);
+    return { text: short || firstLine(unwrapped, 64), failed: true };
   }
   if (bucket === 'running') return { text: '', failed: false };
 

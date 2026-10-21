@@ -1,0 +1,5 @@
+{ "turns": [
+  { "text": "先探路。", "tool": "read", "args": { "path": "missing.txt" } },
+  { "tool": "read", "args": { "path": "a.txt" } },
+  { "text": "找到了。" }
+] }
