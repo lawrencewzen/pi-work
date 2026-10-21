@@ -451,6 +451,40 @@ function firstLine(text, max = 72) {
   return oneLine(line, max);
 }
 
+function lastLine(text, max = 72) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (lines[i].trim()) return oneLine(lines[i], max);
+  }
+  return '';
+}
+
+/** Official bash appends this diagnostic: `Command exited with code ${exitCode}`. */
+const BASH_EXIT_NOTICE = /^(?:\[(?:error|warn|warning|info)\]\s+)?Command exited with code (\d+)\s*$/i;
+
+function stripTrailingBashExitNotice(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  let exitCode = null;
+  while (lines.length) {
+    const trimmed = lines[lines.length - 1].trim();
+    if (!trimmed) {
+      lines.pop();
+      continue;
+    }
+    const match = trimmed.match(BASH_EXIT_NOTICE);
+    if (!match) break;
+    exitCode = Number(match[1]);
+    lines.pop();
+  }
+  return { text: lines.join('\n'), exitCode };
+}
+
+function bashResultText(tool) {
+  const { parsed, json, stdout, stderr } = bashStreams(tool);
+  if (json && (json.stdout != null || json.stderr != null)) return stdout || stderr;
+  return parsed.text;
+}
+
 function bashStreams(tool) {
   const parsed = parseToolOutput(tool?.output);
   const json = parsed.json && typeof parsed.json === 'object' ? parsed.json : null;
@@ -501,6 +535,31 @@ export function isRealToolFailure(tool, tools) {
   return isCallFailed(tool) && !isProbeFailure(tool, tools);
 }
 
+function bashFailedHint(tool, t, workspacePath) {
+  const { parsed, json, code } = bashStreams(tool);
+  const failText = json
+    ? String(json.stderr || json.message || json.error || json.stdout || bashResultText(tool) || parsed.text || '')
+    : (bashResultText(tool) || parsed.text);
+  const unwrapped = relativizeText(unwrapHarnessDiagnostics(failText || parsed.text), workspacePath);
+  const short = shortErrorHint(unwrapped, t);
+  if (short) return { text: short, failed: true };
+  const stripped = stripTrailingBashExitNotice(unwrapped);
+  const exit = (code != null && code !== '') ? code : stripped.exitCode;
+  const line = lastLine(stripped.text, 64);
+  if (exit != null && exit !== '' && line) {
+    return { text: t('tool_hint_exit_line', { code: exit, line }), failed: true };
+  }
+  if (exit != null && exit !== '') {
+    return { text: t('tool_hint_exit', { code: exit }), failed: true };
+  }
+  return { text: line, failed: true };
+}
+
+function bashSuccessHint(tool, t) {
+  const line = lastLine(bashResultText(tool), 48);
+  return { text: line || t('tool_hint_no_output'), failed: false };
+}
+
 /** Short result hint shown on a row without expanding it. */
 export function toolResultHint(tool, t, options = {}) {
   if (!tool) return { text: '', failed: false };
@@ -511,7 +570,11 @@ export function toolResultHint(tool, t, options = {}) {
   const failText = json
     ? String(json.stderr || json.message || json.error || json.stdout || parsed.text || '')
     : parsed.text;
+  const kind = toolKind(tool?.name);
 
+  if (kind === 'bash' && (bucket === 'failed' || bashNonZero(tool))) {
+    return bashFailedHint(tool, t, workspacePath);
+  }
   if (bucket === 'failed' || bashNonZero(tool)) {
     const unwrapped = relativizeText(unwrapHarnessDiagnostics(failText || parsed.text), workspacePath);
     const short = shortErrorHint(unwrapped, t);
@@ -519,7 +582,6 @@ export function toolResultHint(tool, t, options = {}) {
   }
   if (bucket === 'running') return { text: '', failed: false };
 
-  const kind = toolKind(tool?.name);
   if (kind === 'read') {
     return { text: t('tool_hint_lines', { n: outputLineCount(parsed.text) }), failed: false };
   }
@@ -530,12 +592,7 @@ export function toolResultHint(tool, t, options = {}) {
     return { text: t('tool_hint_matches', { n: nonemptyLines(parsed.text).length }), failed: false };
   }
   if (kind === 'bash') {
-    const { stdout, stderr, code } = bashStreams(tool);
-    if (code != null && code !== '') {
-      return { text: t('tool_hint_exit', { code }), failed: Number(code) !== 0 };
-    }
-    const line = firstLine(stdout || stderr || parsed.text, 48);
-    return { text: line, failed: false };
+    return bashSuccessHint(tool, t);
   }
   return { text: '', failed: false };
 }

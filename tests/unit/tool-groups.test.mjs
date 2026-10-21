@@ -80,6 +80,8 @@ const zh = {
   tool_hint_items: '{n} 项',
   tool_hint_matches: '{n} 处匹配',
   tool_hint_exit: '退出码 {code}',
+  tool_hint_exit_line: '退出码 {code} · {line}',
+  tool_hint_no_output: '无输出',
 };
 
 const en = {
@@ -116,6 +118,8 @@ const en = {
   tool_hint_items: '{n} items',
   tool_hint_matches: '{n} matches',
   tool_hint_exit: 'exit {code}',
+  tool_hint_exit_line: 'exit {code} · {line}',
+  tool_hint_no_output: 'no output',
 };
 
 function translate(dict) {
@@ -427,13 +431,13 @@ test('diff counts fall back to the write output line', () => {
   assert.deepEqual(toolDiffCounts({ output: 'hello' }), { added: null, removed: null });
 });
 
-test('row hints report lines, items, matches, exit code, first output line, and failed first line', () => {
+test('row hints report lines, items, matches, last bash line, and failed first line', () => {
   assert.equal(toolResultHint(tool('read', { output: 'a\nb\nc\n' }), t).text, '3 行');
   assert.equal(toolResultHint(tool('ls', { output: 'd src\nf a.js\nf b.js' }), t).text, '3 项');
   assert.equal(toolResultHint(tool('grep', { output: 'a.js:1:foo\nb.js:2:foo' }), t).text, '2 处匹配');
   assert.equal(
     toolResultHint(tool('bash', { output: '{"stdout":"ok\\n","stderr":"","code":0}' }), t).text,
-    '退出码 0',
+    'ok',
   );
   assert.equal(
     toolResultHint(tool('bash', { output: '{"stdout":"first line of a long build log that should be trimmed a lot","stderr":"","code":null}' }), t).text.length <= 48,
@@ -447,6 +451,56 @@ test('row hints report lines, items, matches, exit code, first output line, and 
   assert.equal(failed.text, '不存在');
   assert.equal(outputLineCount('a\nb\nc\n'), 3);
   assert.equal(toolFileLabel('src/api/auth.ts'), 'auth.ts');
+});
+
+test('bash hints use the last nonempty line, empty output, and skip the official exit notice', () => {
+  assert.equal(
+    toolResultHint(tool('bash', { output: '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n' }), t).text,
+    '12',
+  );
+  assert.equal(
+    toolResultHint(tool('bash', { output: '{"stdout":"ok\\n# pass 230\\n","stderr":"","code":0}' }), t).text,
+    '# pass 230',
+  );
+  assert.equal(toolResultHint(tool('bash', { output: '' }), t).text, '无输出');
+  assert.equal(
+    toolResultHint(tool('bash', { output: '{"stdout":"","stderr":"","code":0}' }), t).text,
+    '无输出',
+  );
+  const te = translate(en);
+  assert.equal(toolResultHint(tool('bash', { output: '' }), te).text, 'no output');
+
+  const failed = toolResultHint(tool('bash', {
+    status: 'error',
+    output: '{"stdout":"","stderr":"failed\\n","code":1}',
+  }), t);
+  assert.equal(failed.failed, true);
+  assert.equal(failed.text, '退出码 1 · failed');
+
+  const official = [
+    '1',
+    '2',
+    'Tests: 12 passed, 1 failed',
+    '<harness>',
+    '[error] Command exited with code 1',
+    '</harness>',
+  ].join('\n');
+  const skipped = toolResultHint(tool('bash', { status: 'error', output: official }), t);
+  assert.equal(skipped.failed, true);
+  assert.equal(skipped.text, '退出码 1 · Tests: 12 passed, 1 failed');
+
+  const onlyNotice = toolResultHint(tool('bash', {
+    status: 'error',
+    output: '<harness>\n[error] Command exited with code 2\n</harness>',
+  }), t);
+  assert.equal(onlyNotice.failed, true);
+  assert.equal(onlyNotice.text, '退出码 2');
+
+  const enFail = toolResultHint(tool('bash', {
+    status: 'error',
+    output: official,
+  }), te);
+  assert.equal(enFail.text, 'exit 1 · Tests: 12 passed, 1 failed');
 });
 
 test('harness diagnostic wrapping is stripped from failed hints; plain output is unchanged', () => {
