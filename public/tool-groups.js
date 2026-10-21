@@ -57,6 +57,26 @@ export function toolFocus(tool) {
   return { mode: 'path', text: file };
 }
 
+/** One-line intent from `input.description`, or empty when the model omitted it. */
+export function toolIntent(tool) {
+  const input = tool?.input && typeof tool.input === 'object' && !Array.isArray(tool.input)
+    ? tool.input
+    : {};
+  if (typeof input.description !== 'string') return '';
+  return oneLine(input.description);
+}
+
+/**
+ * Expanded-row heading. Prefer the intent as the title and keep the command or
+ * path as secondary detail so the actual call is still visible.
+ */
+export function toolRowHeading(tool) {
+  const intent = toolIntent(tool);
+  const focus = toolFocus(tool);
+  if (intent) return { title: intent, detail: focus.text, intent: true };
+  return { title: focus.text, detail: '', intent: false };
+}
+
 export function toolGroupKey(tools) {
   const list = Array.isArray(tools) ? tools : [];
   const first = list.find((tool) => tool && tool.id != null && String(tool.id) !== '');
@@ -111,6 +131,8 @@ function shortFocus(tool) {
 }
 
 function singlePhrase(tool, t) {
+  const intent = toolIntent(tool);
+  if (intent) return intent;
   const kind = toolKind(tool?.name);
   const target = targetOf(tool);
   if (kind === 'other') {
@@ -124,6 +146,8 @@ function singlePhrase(tool, t) {
 }
 
 function runningPhrase(tool, t) {
+  const intent = toolIntent(tool);
+  if (intent) return intent;
   const kind = toolKind(tool?.name);
   const target = targetOf(tool);
   if (kind === 'other') {
@@ -201,6 +225,8 @@ function richSummary(list, t) {
   if (list.length === 1) {
     const tool = list[0];
     if (toolStatusBucket(tool.status) === 'failed') return failedPhrase(tool, t);
+    const intent = toolIntent(tool);
+    if (intent) return intent;
     const kind = toolKind(tool?.name);
     if (CHANGE_KINDS.has(kind)) return changedClause(list, t) || singlePhrase(tool, t);
     if (kind === 'bash') return commandClause(list, t) || singlePhrase(tool, t);

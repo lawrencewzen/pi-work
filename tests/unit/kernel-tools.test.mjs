@@ -4,9 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { Type } from '@earendil-works/pi-ai';
 import { parseSSE } from '../../src/core/sse.mjs';
 import { fauxTurnFromScript, offeredToolNames } from '../../src/kernel/faux-script.mjs';
-import { toolsForRole, workspaceTools } from '../../src/kernel/tools.mjs';
+import { toolsForRole, withIntent, workspaceTools } from '../../src/kernel/tools.mjs';
+import { createWorkspaceEnv } from '../../src/kernel/workspace-env.mjs';
 import { ROOT } from './_root.mjs';
 
 const TOKEN = 'unit-kernel-tools-token';
@@ -228,6 +231,64 @@ test('a role tool list is the offered set, in that order', () => {
       ],
     }),
     ['read', 'ls'],
+  );
+});
+
+test('withIntent: bash with description runs; the original tool does not see it', async () => {
+  let seen;
+  const wrapped = withIntent({
+    name: 'bash',
+    description: 'run a command',
+    parameters: Type.Object({
+      command: Type.String(),
+      timeout: Type.Optional(Type.Number()),
+    }),
+    async execute(args) {
+      seen = args;
+      return { output: [{ type: 'text', text: 'ok' }] };
+    },
+  });
+  assert.ok(wrapped.parameters.properties.description);
+  assert.equal(wrapped.parameters.required?.includes('description'), false);
+  const prepared = wrapped.prepareArguments({ command: 'echo hi', description: '打招呼', timeout: 5 });
+  assert.equal(prepared.command, 'echo hi');
+  assert.equal(prepared.timeout, 5);
+  assert.equal(prepared.description, '打招呼');
+  const result = await wrapped.execute({ command: 'echo hi', description: '打招呼' }, {}, {});
+  assert.deepEqual(seen, { command: 'echo hi' });
+  assert.equal(result.output[0].text, 'ok');
+
+  for (const tool of workspaceTools()) {
+    assert.ok(tool.parameters?.properties?.description, tool.name);
+    assert.equal((tool.parameters.required || []).includes('description'), false, tool.name);
+  }
+  const bash = workspaceTools().find((tool) => tool.name === 'bash');
+  const dir = await mkdtemp(path.join(tmpdir(), 'piw-intent-'));
+  const env = await createWorkspaceEnv({ cwd: dir });
+  const chunks = [];
+  try {
+    const command = process.platform === 'win32' ? 'echo intent-ok' : 'printf intent-ok';
+    const ran = await bash.execute(
+      { command, description: '打招呼' },
+      {
+        env,
+        output(text) { chunks.push(String(text ?? '')); },
+        retainedOutput() { return { text: chunks.join(''), truncated: false }; },
+        diagnostic() {},
+      },
+      BACKGROUND_CONTEXT,
+    );
+    const text = `${chunks.join('')}${ran?.structuredOutput?.output || ''}`;
+    assert.equal(text.includes('intent-ok'), true, JSON.stringify({ chunks, ran }));
+  } finally {
+    await env.cleanup(BACKGROUND_CONTEXT).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+
+  assert.deepEqual(toolsForRole({ tools: ['grep', 'read'] }).map((tool) => tool.name), ['grep', 'read']);
+  assert.deepEqual(
+    toolsForRole({ tools: ['bash'] }).map((tool) => tool.name),
+    ['bash'],
   );
 });
 
