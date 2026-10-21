@@ -89,6 +89,8 @@ test('harness batches map onto the contract events', () => {
         model: [{
           role: 'assistant',
           content: [{ type: 'text', text: 'hello' }],
+          model: 'deepseek-flash',
+          provider: 'src-abc',
           usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 5, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         }],
       },
@@ -136,6 +138,7 @@ test('harness batches map onto the contract events', () => {
   assert.equal(events[2].data.messageId, '11');
   assert.equal(events[2].data.liveId, 'live-1');
   assert.equal(events[2].data.text, 'hello');
+  assert.equal(events[2].data.model, 'deepseek-flash');
   assert.equal(events[3].data.usage.total, 5);
   assert.equal(events[3].data.contextLabel.includes('/'), true);
   assert.equal(events[4].data.tool.path, 'a.txt');
@@ -173,6 +176,48 @@ test('a snapshot asks the client to refetch instead of replaying rows', () => {
   assert.equal(mapped.refresh, true);
   assert.deepEqual(mapped.events, []);
   assert.equal(ctx.liveId, null);
+});
+
+test('assistant messages carry the stored model name', () => {
+  const { messages } = messagesFromEntries([
+    {
+      id: 1,
+      kind: 'pi.user',
+      model: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+    },
+    {
+      id: 2,
+      kind: 'pi.assistant',
+      model: [{
+        role: 'assistant',
+        content: [{ type: 'text', text: 'first' }],
+        model: 'deepseek-flash',
+        provider: 'src-abc',
+      }],
+    },
+    {
+      id: 3,
+      kind: 'pi.assistant',
+      model: [{
+        role: 'assistant',
+        content: [{ type: 'text', text: 'second' }],
+        model: 'grok-build',
+      }],
+    },
+    {
+      id: 4,
+      kind: 'pi.assistant',
+      model: [{
+        role: 'assistant',
+        content: [{ type: 'text', text: 'no model field' }],
+      }],
+    },
+  ]);
+  assert.equal(messages.find((message) => message.id === '1').role, 'user');
+  assert.equal(Object.hasOwn(messages.find((message) => message.id === '1'), 'model'), false);
+  assert.equal(messages.find((message) => message.id === '2').model, 'deepseek-flash');
+  assert.equal(messages.find((message) => message.id === '3').model, 'grok-build');
+  assert.equal(Object.hasOwn(messages.find((message) => message.id === '4'), 'model'), false);
 });
 
 test('a tool call without a result is still a running tool message', () => {
@@ -250,7 +295,9 @@ test('kernel path: faux turn pushes live events, and a new connection starts at 
     assert.equal(got.status, 200);
     assert.equal(got.body.status, 'done');
     assert.equal(got.body.messages.some((m) => m.role === 'user' && m.text === 'ping'), true);
-    assert.equal(got.body.messages.some((m) => m.role === 'assistant' && m.text === 'kernel-ok'), true);
+    const assistant = got.body.messages.find((m) => m.role === 'assistant' && m.text === 'kernel-ok');
+    assert.equal(assistant?.text, 'kernel-ok');
+    assert.equal(assistant?.model, 'faux-1');
     assert.equal(got.body.contextLabel.includes('/'), true);
   } finally {
     await stopServer(srv);

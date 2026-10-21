@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { startServer, prepareWorkspaces } from './helpers/server.mjs';
-import { createWorkspace, newConversation, send, statusText, openApp } from './helpers/ui.mjs';
+import { createWorkspace, newConversation, send, statusText, openApp, visualText } from './helpers/ui.mjs';
 
 let srv;
 test.afterEach(async () => { await srv?.kill(); });
@@ -86,6 +86,11 @@ test('main thread omits default sender and does not show 主 Agent', async ({ pa
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
   await expect(page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-sender]')).toHaveCount(0);
   await expect(page.locator('#center-thread')).not.toContainText('主 Agent');
+  const chip = page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-chip]').first();
+  await expect(chip).toBeVisible();
+  const chipText = await visualText(chip);
+  expect(chipText.startsWith('·')).toBe(false);
+  expect(chipText).toBe('faux-1');
 });
 
 test('stream cut retries and finishes', async ({ page }) => {

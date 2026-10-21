@@ -124,6 +124,16 @@ test('short delta fragments that already occurred are still appended', () => {
   assert.equal(replaced.filter((message) => message.streaming).length, 1);
 });
 
+test('message.done copies the assistant model onto the bubble', () => {
+  const msgs = [];
+  applyStreamDelta(msgs, { messageId: 'live-1', text: 'hi' });
+  applyMessageDone(msgs, { messageId: '11', liveId: 'live-1', text: 'hi', model: 'deepseek-flash' });
+  assert.equal(msgs.length, 1);
+  assert.equal(msgs[0].id, '11');
+  assert.equal(msgs[0].model, 'deepseek-flash');
+  assert.equal(msgs[0].streaming, false);
+});
+
 test('two generations leave two assistant bubbles and a refresh drops the live fragment', () => {
   const round = (liveId, messageId, chunks, text) => [
     ...chunks.map((chunk) => ({ event: 'message.delta', data: { messageId: liveId, text: chunk } })),

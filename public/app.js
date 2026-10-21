@@ -1920,7 +1920,7 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, stre
     const chip = assistantChip(m);
     const headerBits = [];
     if (roleLabel) headerBits.push(`<span class="msg-sender" data-testid="message-sender">${escapeHtml(roleLabel)}</span>`);
-    if (chip && !senderName) headerBits.push(`<span class="msg-chip">${escapeHtml(chip)}</span>`);
+    if (chip && !senderName) headerBits.push(`<span class="msg-chip" data-testid="message-chip">${escapeHtml(chip)}</span>`);
     const header = headerBits.length ? `<div class="msg-header">${headerBits.join('')}</div>` : '';
     const spin = streamSpin && m === last
       ? `<span class="msg-stream-spin" data-testid="assistant-stream-spin" aria-hidden="true"></span>`
@@ -2186,15 +2186,6 @@ export function renderToolRowHtml(tool) {
   );
 }
 
-function assistantLabel(m) {
-  const rid = m?.roleId || m?.agentId;
-  if (rid && String(rid).toLowerCase() !== 'default') {
-    const role = (state.roles || []).find((r) => r.id === rid);
-    return localizeRoleLabel(role?.id || role?.name || rid);
-  }
-  return t('ag_group_main');
-}
-
 function assistantSenderText(m, fallbackRoleId) {
   const rid = m?.roleId || m?.agentId || fallbackRoleId;
   if (!rid || String(rid).toLowerCase() === 'default') return '';
@@ -2203,16 +2194,7 @@ function assistantSenderText(m, fallbackRoleId) {
 }
 
 function assistantChip(m) {
-  const rid = m?.roleId || '';
-  const role = rid ? (state.roles || []).find((item) => item.id === rid) || null : null;
-  const chip = resolveDispatchModel({
-    role,
-    roleId: rid,
-    models: state.settings?.models || {},
-    sources: state.settings?.sources || [],
-    grokSignedIn: Boolean(state.settings?.grok?.signedIn),
-  });
-  if (!chip || chip === assistantLabel(m)) return '';
+  const chip = typeof m?.model === 'string' ? m.model.trim() : '';
   return chip;
 }
 

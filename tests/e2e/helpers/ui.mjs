@@ -36,6 +36,19 @@ export async function send(page, text) {
 }
 export const statusText = (page) => page.getByTestId('status-text');
 
+/** Element text including CSS `::before` (the · between sender and model). */
+export async function visualText(locator) {
+  return locator.evaluate((el) => {
+    const before = getComputedStyle(el, '::before').content;
+    let prefix = '';
+    if (before && before !== 'none') {
+      const unquoted = before.replace(/^['"]|['"]$/g, '');
+      if (unquoted) prefix = unquoted;
+    }
+    return prefix + (el.textContent || '');
+  });
+}
+
 /**
  * Settings rebuilds `.sm` with innerHTML on every open/tab change. boundingBox()
  * can see a 0-size or uncentered frame, and CJK fallback fonts can still be

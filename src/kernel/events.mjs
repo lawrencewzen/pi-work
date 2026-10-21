@@ -53,12 +53,21 @@ function toolBody({ id, name, status, input, output, path, added, removed }) {
   return tool;
 }
 
+function assistantModelName(entry) {
+  const value = entry?.model?.[0]?.model;
+  return typeof value === 'string' && value ? value : '';
+}
+
 function messageDone(entry) {
   const message = entry.model?.[0];
   const text = textOf(message?.content);
   const data = { messageId: String(entry.id) };
   if (text) data.text = text;
   if (entry.kind === 'pi.user') data.role = 'user';
+  else {
+    const model = assistantModelName(entry);
+    if (model) data.model = model;
+  }
   return { event: 'message.done', data };
 }
 
@@ -265,6 +274,10 @@ export function messagesFromEntries(entries) {
       if (entry.kind === 'pi.assistant' && !text) continue;
       const msg = { id: String(entry.id), role: entry.kind === 'pi.user' ? 'user' : 'assistant' };
       if (text) msg.text = text;
+      if (entry.kind === 'pi.assistant') {
+        const model = assistantModelName(entry);
+        if (model) msg.model = model;
+      }
       messages.push(msg);
       continue;
     }

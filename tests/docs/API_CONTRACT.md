@@ -69,7 +69,7 @@ status 取值：`idle | running | waiting | failed | done | stopped`。应用库
 
 `POST /workspaces` 请求 `{name, gitUrl, branch?}` 时把仓库克隆到数据目录，并创建 `source:'git'` 的工作区。成功 `201`，响应里的 `gitUrl` 已去掉 `user:pass@`。非法地址 `400 {error:'invalid gitUrl'}`；非法分支 `400 {error:'invalid branch'}`。克隆失败 `400 {error:'git clone failed', code}`，`code` 为 `git_not_found` | `auth_failed` | `cert_failed` | `repo_not_found` | `branch_not_found` | `network` | `timeout` | `unknown`。只有 `unknown` 另外带 `detail`（脱敏后的 stderr 末几行）。`http://` 的主机不在 `PI_WORK_GIT_HTTP_HOSTS` 里时，与非法地址相同。
 
-消息 `messages[]`：`{id, role:'user'|'assistant'|'tool', text?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。
+消息 `messages[]`：`{id, role:'user'|'assistant'|'tool', text?, model?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。助手消息在 transcript 里有模型名时带 `model`（这条回复实际调用的模型 id）；没有则不加该字段。用户和工具消息不加 `model`。
 
 ### 旧对话
 
@@ -77,7 +77,7 @@ status 取值：`idle | running | waiting | failed | done | stopped`。应用库
 
 ## 4. SSE：`GET /api/conversations/:cid/events`
 不落库，不使用 `Last-Event-ID`。连接后先推一条当前 `status`，之后只推这次连接上新发生的事件。前端在连接或重连时重新 `GET /conversations/:cid`。事件：
-`status {status}` · `message.delta {messageId, text}` · `message.done {messageId, text?, role?, liveId?}` · `tool.start {tool}` · `tool.end {tool}` · `retry {attempt, delayMs, reason}` · `error {code, message}` · `usage {usage, contextWindow, contextLabel}` · `agent`。`usage` 仅在模型响应带了 token 计数时发送；最新一次调用覆盖上一次，不把多轮相加。
+`status {status}` · `message.delta {messageId, text}` · `message.done {messageId, text?, role?, liveId?, model?}` · `tool.start {tool}` · `tool.end {tool}` · `retry {attempt, delayMs, reason}` · `error {code, message}` · `usage {usage, contextWindow, contextLabel}` · `agent`。`usage` 仅在模型响应带了 token 计数时发送；最新一次调用覆盖上一次，不把多轮相加。助手 `message.done` 在条目里有模型名时带 `model`；流式增量拿不到时，结束后 `GET` 刷新会补上。
 
 `message.delta` 的 `text` 是增量片段，接收方直接拼到当前气泡后面，不能因为这段文字以前出现过就丢掉。同一次生成的增量共用一个 `messageId`（`live-1`、`live-2`……；更早的事件也可能仍是 `live`）。它不是 transcript 里的正式 id。同一时刻最多一个流式气泡。断线后重新 GET 对话，不靠补发 partial。
 
@@ -103,7 +103,7 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...
 | `chat-input` / `chat-send` | 输入与发送 |
 | `composer-context` | 作曲栏上下文用量（`—` 或 `1.2k / 128k`） |
 | `composer-agent` / `composer-agent-menu` | 作曲栏当前模型；点击按来源列出模型，可选「默认」跟随设置绑定 |
-| `message` (+`data-role`) / `message-body` | 消息与渲染体（Markdown → HTML） |
+| `message` (+`data-role`) / `message-body` / `message-sender` / `message-chip` | 消息、渲染体（Markdown → HTML）、发送者小字、该回复实际用的模型标签 |
 | `tool-row` (+`data-tool`,`data-path`) / `tool-row-path` / `tool-row-added` / `tool-row-removed` / `tool-row-detail` | 工具行（点击展开 detail） |
 | `status-bar` / `status-text` / `btn-stop` | 状态条。运行中输入框保持可用 |
 | `right-panel` / `diff-view` / `file-view` / `md-editor` / `md-editor-save` / `changed-file` (+`data-path`) | 右栏 |
