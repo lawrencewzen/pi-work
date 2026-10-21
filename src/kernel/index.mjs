@@ -58,7 +58,7 @@ export function registerFaux(models, options) {
  * Returns the harness and a close function. A second open in this process throws
  * until close() finishes. Call harness.resume() after a restart to continue unfinished work.
  */
-export async function openKernel({ dataDir, models, registry, settings } = {}) {
+export async function openKernel({ dataDir, models, registry, settings, env } = {}) {
   if (!dataDir) throw new Error('dataDir is required');
   if (!models) throw new Error('models is required');
   if (!registry) throw new Error('registry is required');
@@ -77,6 +77,7 @@ export async function openKernel({ dataDir, models, registry, settings } = {}) {
       models,
       registry,
       ...(settings ? { settings } : {}),
+      ...(env ? { env } : {}),
     }, context);
     watchHarnessClosed(harness);
     let closed = false;

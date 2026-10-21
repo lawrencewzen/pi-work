@@ -1,198 +1,135 @@
 // Workspace tools for the Pi Durable kernel.
-// The Harness schedules tool tasks. This module only registers the six existing
-// workspace tools, locks cwd to the conversation workspace, and lets the host
-// record a diff after a successful write. It does not schedule, retry, or checkpoint.
-import { spawn } from 'node:child_process';
+// read/write/edit/bash are official Pi Durable tools. ls and grep use the
+// conversation ExecutionEnv. Path checks live only in workspace-env.mjs.
+import path from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, hook, ToolTask } from '@earendil-works/pi-durable';
+import { FileError, getOrThrow } from '@earendil-works/pi-durable/env';
+import {
+  createBashTool,
+  createEditTool,
+  createReadTool,
+  createWriteTool,
+} from '@earendil-works/pi-durable/tools';
 import { diffStats, splitLines } from '../core/diff.mjs';
-import { bash, edit, grep, ls, read, write } from '../tools/workspace.mjs';
 
-const OUTPUT_CAP = 1024 * 1024;
 const DETAIL_CAP = 1024 * 1024;
-const TRUNCATE_MARKER = '\n[truncated: output exceeded 1 MiB]\n';
-
 const WORKSPACE_TOOL_NAMES = ['read', 'write', 'edit', 'ls', 'grep', 'bash'];
+const SKIP_DIR_NAMES = new Set(['.git', 'node_modules']);
 
-function asText(output) {
-  return typeof output === 'string' ? output : JSON.stringify(output);
+function withReplay(tool, replay) {
+  return { ...tool, replay };
 }
 
-function errorResult(code, message) {
+/** Map the previous `{ old, new }` shape onto the official edit schema. */
+function withLegacyEditArgs(tool) {
+  const prepare = tool.prepareArguments;
   return {
-    output: [{ type: 'text', text: `${code}: ${message}` }],
-    isError: true,
+    ...tool,
+    prepareArguments(input) {
+      let next = input;
+      if (next && typeof next === 'object' && !Array.isArray(next)) {
+        const mapped = { ...next };
+        if (typeof mapped.old === 'string' && mapped.oldText === undefined) mapped.oldText = mapped.old;
+        if (typeof mapped.new === 'string' && mapped.newText === undefined) mapped.newText = mapped.new;
+        next = mapped;
+      }
+      return prepare ? prepare(next) : next;
+    },
   };
 }
 
 /**
- * Windows has no /bin/sh. cmd.exe is the interpreter COMSPEC always provides.
- * /d skips AutoRun, /s /c runs one command string and exits. PowerShell can be
- * stopped by execution policy and loads profiles, so it is a worse default.
- * cwd is the conversation workspace. HOME, USERPROFILE, TEMP, and TMP point at
- * that same directory, matching the unix tool's HOME lock. The product bash in
- * src/tools/workspace.mjs is unchanged and still uses /bin/sh.
- *
- * cmd.exe /s strips one leading quote and the last quote of the /c string.
- * Node's default spawn quoting then eats the quotes around an executable path
- * that contains spaces (for example "C:\Program Files\nodejs\node.exe").
- * windowsVerbatimArguments skips that quoting, and the extra quote pair around
- * the whole command is what /s removes, so inner quotes survive.
+ * Official write/edit details have no before/after. Capture them here because
+ * afterTool's HookApi has no env. afterTool then applies the 1 MB cap.
  */
-function bashWindows({ command, timeout }, workspacePath, signal) {
-  const limit = timeout ?? 60_000;
-  const comspec = process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
-  const env = {
-    PATH: process.env.PATH || '',
-    SYSTEMROOT: process.env.SYSTEMROOT || process.env.SystemRoot || '',
-    COMSPEC: comspec,
-    PATHEXT: process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
-    HOME: workspacePath,
-    USERPROFILE: workspacePath,
-    TEMP: workspacePath,
-    TMP: workspacePath,
-    LANG: 'C.UTF-8',
-  };
-  return new Promise((resolve, reject) => {
-    const child = spawn(comspec, ['/d', '/s', '/c', `"${command}"`], {
-      cwd: workspacePath,
-      env,
-      windowsHide: true,
-      windowsVerbatimArguments: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let combined = 0;
-    let truncated = false;
-    let settled = false;
-    const take = (buf) => {
-      const text = String(buf);
-      if (combined >= OUTPUT_CAP) {
-        truncated = true;
-        return '';
+function withFileChangeDetails(tool) {
+  const execute = tool.execute;
+  return {
+    ...tool,
+    async execute(args, api, context) {
+      const env = api.env;
+      const filePath = typeof args?.path === 'string' ? args.path : '';
+      let before = '';
+      if (env && filePath) {
+        const previous = await env.readTextFile(filePath, context);
+        before = previous.ok ? previous.value : '';
       }
-      const room = OUTPUT_CAP - combined;
-      if (text.length > room) {
-        truncated = true;
-        combined = OUTPUT_CAP;
-        return text.slice(0, room);
-      }
-      combined += text.length;
-      return text;
-    };
-    const finish = (value, err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      if (truncated && value) value.stdout += TRUNCATE_MARKER;
-      if (err) reject(err);
-      else resolve(value);
-    };
-    const stop = () => {
-      if (!child.pid) return;
-      spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    };
-    const timer = setTimeout(() => {
-      stop();
-      const err = new Error('bash timeout');
-      err.code = 'ETIMEDOUT';
-      finish(null, err);
-    }, limit);
-    const onAbort = () => {
-      stop();
-      const err = new Error('aborted');
-      err.code = 'E_ABORTED';
-      err.name = 'AbortError';
-      finish(null, err);
-    };
-    if (signal?.aborted) onAbort();
-    else signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout.on('data', (buf) => { stdout += take(buf); });
-    child.stderr.on('data', (buf) => { stderr += take(buf); });
-    child.on('error', (err) => finish(null, err));
-    child.on('close', (code) => finish({ stdout, stderr, code }));
-  }).then((output) => ({
-    name: 'bash',
-    output: asText(output),
-    stdout: output.stdout,
-    stderr: output.stderr,
-    code: output.code,
-    status: 'completed',
-  }));
-}
-
-async function runWorkspace(name, args, workspacePath, signal) {
-  if (!workspacePath) {
-    const err = new Error('conversation cwd is not set');
-    err.code = 'E_SANDBOX';
-    throw err;
-  }
-  if (name === 'bash' && process.platform === 'win32') {
-    return bashWindows(args, workspacePath, signal);
-  }
-  const fns = { read, write, edit, ls, grep, bash };
-  return fns[name](args, { workspacePath, signal, timeout: args?.timeout });
-}
-
-function workspaceTool({ name, description, parameters, replay = 'unsafe' }) {
-  return defineTool({
-    name,
-    description,
-    parameters,
-    replay,
-    execute: async (args, api, context) => {
-      const agent = await api.agent(context);
-      const workspacePath = agent?.cwd;
-      if (!workspacePath) return errorResult('E_SANDBOX', 'conversation cwd is not set');
-      try {
-        const result = await runWorkspace(name, args, workspacePath, context.abortSignal);
-        const output = [{ type: 'text', text: asText(result.output) }];
-        if ((name === 'write' || name === 'edit') && result.path != null && result.status !== 'error') {
-          return {
-            output,
-            details: {
-              path: String(result.path),
-              before: result.before ?? '',
-              after: result.after ?? '',
-            },
-          };
-        }
-        return { output };
-      } catch (err) {
-        return errorResult(err?.code || 'E_TOOL', err?.message || String(err));
-      }
+      const result = await execute(args, api, context);
+      if (!env || !filePath || result?.isError) return result;
+      const next = await env.readTextFile(filePath, context);
+      const after = next.ok
+        ? next.value
+        : (typeof args.content === 'string' ? args.content : '');
+      const details = result?.details && typeof result.details === 'object' ? result.details : {};
+      return {
+        ...result,
+        details: { ...details, path: filePath, before, after },
+      };
     },
-  });
+  };
 }
 
-const workspaceToolList = [
-  workspaceTool({
-    name: 'read',
-    description: 'Read a UTF-8 file inside this conversation\'s workspace.',
-    parameters: Type.Object({ path: Type.String() }),
-    replay: 'safe',
-  }),
-  workspaceTool({
-    name: 'write',
-    description: 'Write a UTF-8 file inside this conversation\'s workspace.',
-    parameters: Type.Object({ path: Type.String(), content: Type.String() }),
-    replay: 'unsafe',
-  }),
-  workspaceTool({
-    name: 'edit',
-    description: 'Replace the first occurrence of old text in a workspace file.',
-    parameters: Type.Object({ path: Type.String(), old: Type.String(), new: Type.String() }),
-    replay: 'unsafe',
-  }),
-  workspaceTool({
+function requireEnv(api) {
+  if (!api?.env) throw new FileError('invalid', 'E_SANDBOX: conversation cwd is not set');
+  return api.env;
+}
+
+function displayPath(cwd, filePath) {
+  const rel = path.relative(cwd, filePath);
+  const text = (!rel || rel.startsWith('..') || path.isAbsolute(rel)) ? filePath : rel;
+  return String(text).replaceAll('\\', '/');
+}
+
+function matchGlob(file, glob) {
+  if (!glob) return true;
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '::DS::').replace(/\*/g, '[^/]*').replace(/::DS::/g, '.*');
+  return new RegExp(`^${escaped}$`).test(file) || new RegExp(`${escaped}$`).test(file);
+}
+
+async function collectFiles(env, start, context, acc) {
+  const info = getOrThrow(await env.fileInfo(start, context));
+  if (info.kind === 'directory') {
+    const listing = getOrThrow(await env.listDir(start, context));
+    for (const entry of listing) {
+      if (SKIP_DIR_NAMES.has(entry.name)) continue;
+      const child = await env.joinPath([start, entry.name], context);
+      if (!child.ok) continue;
+      try {
+        await collectFiles(env, child.value, context, acc);
+      } catch {
+        continue;
+      }
+    }
+    return;
+  }
+  acc.push(start);
+}
+
+function createLsTool() {
+  return defineTool({
     name: 'ls',
     description: 'List a directory inside this conversation\'s workspace.',
     parameters: Type.Object({ path: Type.Optional(Type.String()) }),
     replay: 'safe',
-  }),
-  workspaceTool({
+    async execute(args, api, context) {
+      const env = requireEnv(api);
+      const rel = args.path || '.';
+      const info = getOrThrow(await env.fileInfo(rel, context));
+      if (info.kind !== 'directory') {
+        return { output: [{ type: 'text', text: info.name }] };
+      }
+      const entries = getOrThrow(await env.listDir(rel, context));
+      const lines = entries
+        .map((entry) => `${entry.kind === 'directory' ? 'd' : 'f'} ${entry.name}`)
+        .join('\n');
+      return { output: [{ type: 'text', text: lines }] };
+    },
+  });
+}
+
+function createGrepTool() {
+  return defineTool({
     name: 'grep',
     description: 'Search file contents inside this conversation\'s workspace.',
     parameters: Type.Object({
@@ -201,16 +138,40 @@ const workspaceToolList = [
       glob: Type.Optional(Type.String()),
     }),
     replay: 'safe',
-  }),
-  workspaceTool({
-    name: 'bash',
-    description: 'Run a shell command with its working directory locked to this conversation\'s workspace.',
-    parameters: Type.Object({
-      command: Type.String(),
-      timeout: Type.Optional(Type.Number()),
-    }),
-    replay: 'unsafe',
-  }),
+    async execute(args, api, context) {
+      const env = requireEnv(api);
+      const rel = args.path || '.';
+      const files = [];
+      await collectFiles(env, rel, context, files);
+      let re;
+      try {
+        re = new RegExp(args.pattern);
+      } catch {
+        re = new RegExp(String(args.pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      }
+      const hits = [];
+      for (const file of files) {
+        const shown = displayPath(env.cwd, file);
+        if (args.glob && !matchGlob(shown, args.glob) && !matchGlob(path.basename(file), args.glob)) continue;
+        const text = await env.readTextFile(file, context);
+        if (!text.ok) continue;
+        const lines = text.value.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (re.test(lines[i])) hits.push(`${shown}:${i + 1}:${lines[i]}`);
+        }
+      }
+      return { output: [{ type: 'text', text: hits.join('\n') }] };
+    },
+  });
+}
+
+const workspaceToolList = [
+  withReplay(createReadTool(), 'safe'),
+  withReplay(withFileChangeDetails(createWriteTool()), 'unsafe'),
+  withReplay(withFileChangeDetails(withLegacyEditArgs(createEditTool())), 'unsafe'),
+  createLsTool(),
+  createGrepTool(),
+  withReplay(createBashTool(), 'unsafe'),
 ];
 
 export function workspaceTools() {
@@ -249,8 +210,8 @@ export function fileChangeDetails({ path: filePath, before, after }) {
 }
 
 /**
- * Host hook: after write/edit succeeds, the result keeps its diff details.
- * The changes list is read back from those entries. Unsafe replay stays the kernel default.
+ * Host hook: after write/edit succeeds, keep official details and the diff
+ * snapshot the right-hand changes list reads back.
  */
 export function createWorkspaceExtension() {
   return defineExtension({
@@ -265,17 +226,18 @@ export function createWorkspaceExtension() {
             && (call.name === 'write' || call.name === 'edit')
             && typeof details.path === 'string';
           if (!tracked) return undefined;
+          const change = fileChangeDetails({
+            path: details.path,
+            before: details.before ?? '',
+            after: details.after ?? '',
+          });
+          const { before: _before, after: _after, ...rest } = details;
           return {
             ...result,
-            details: fileChangeDetails({
-              path: details.path,
-              before: details.before ?? '',
-              after: details.after ?? '',
-            }),
+            details: { ...rest, ...change },
           };
         },
       }),
     ],
   });
 }
-
