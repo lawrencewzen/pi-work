@@ -1,6 +1,11 @@
 /** Consecutive tool-call grouping and summary text. No DOM. */
 
 const KINDS = new Set(['read', 'write', 'edit', 'ls', 'grep', 'bash']);
+const COUNT_KINDS = new Set(['read', 'ls', 'grep', 'other']);
+const CHANGE_KINDS = new Set(['write', 'edit']);
+
+export const TOOL_GROUP_PREVIEW = 8;
+export const TOOL_ERROR_PREVIEW_LINES = 8;
 
 export function toolKind(name) {
   const key = String(name || '').toLowerCase();
@@ -20,6 +25,13 @@ export function oneLine(value, max = 72) {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
   if (text.length <= max) return text;
   return `${text.slice(0, Math.max(1, max - 1))}…`;
+}
+
+export function toolFileLabel(pathLike) {
+  const s = String(pathLike || '').replaceAll('\\', '/').replace(/\/+$/, '');
+  if (!s || s === '.' || s === './') return '';
+  const parts = s.split('/').filter(Boolean);
+  return parts.pop() || s;
 }
 
 /**
@@ -92,6 +104,12 @@ function targetOf(tool) {
   return toolFocus(tool).text;
 }
 
+function shortFocus(tool) {
+  const focus = toolFocus(tool);
+  if (focus.mode === 'path') return toolFileLabel(focus.text);
+  return oneLine(focus.text, 32);
+}
+
 function singlePhrase(tool, t) {
   const kind = toolKind(tool?.name);
   const target = targetOf(tool);
@@ -118,6 +136,82 @@ function runningPhrase(tool, t) {
   return t(`tool_run_${kind}`, { target });
 }
 
+function actionLabel(tool, t) {
+  const kind = toolKind(tool?.name);
+  if (kind === 'other') return tool?.name || 'tool';
+  return t(`tool_act_${kind}`);
+}
+
+function failedPhrase(tool, t) {
+  const action = actionLabel(tool, t);
+  const target = shortFocus(tool);
+  if (!target) return t('tool_fail_bare', { action });
+  return t('tool_fail_named', { action, target });
+}
+
+function changedClause(tools, t) {
+  const names = [];
+  const seen = new Set();
+  for (const tool of tools) {
+    if (toolStatusBucket(tool.status) === 'failed') continue;
+    if (!CHANGE_KINDS.has(toolKind(tool?.name))) continue;
+    const path = targetOf(tool);
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    names.push(toolFileLabel(path) || path);
+  }
+  if (!names.length) return '';
+  const shown = names.slice(0, 3);
+  const extra = names.length - shown.length;
+  const joined = shown.join(t('tool_sum_names_join'));
+  if (extra > 0) return t('tool_sum_changed_more', { names: joined, n: extra });
+  return t('tool_sum_changed', { names: joined });
+}
+
+function failedClause(tools, t) {
+  const failed = tools.filter((tool) => toolStatusBucket(tool.status) === 'failed');
+  if (!failed.length) return '';
+  return failed.slice(0, 2).map((tool) => failedPhrase(tool, t)).join(t('tool_sum_names_join'));
+}
+
+function commandClause(tools, t) {
+  const cmds = [];
+  for (const tool of tools) {
+    if (toolStatusBucket(tool.status) === 'failed') continue;
+    if (toolKind(tool?.name) !== 'bash') continue;
+    const text = targetOf(tool);
+    if (!text) continue;
+    cmds.push(oneLine(text, 40));
+  }
+  if (!cmds.length) return '';
+  const shown = cmds.slice(0, 2);
+  return t('tool_sum_ran', { names: shown.join(t('tool_sum_names_join')) });
+}
+
+function countOnlyClause(tools, t) {
+  const rest = tools.filter((tool) => {
+    if (toolStatusBucket(tool.status) === 'failed') return false;
+    return COUNT_KINDS.has(toolKind(tool?.name));
+  });
+  if (!rest.length) return '';
+  return countPhrase(rest, t);
+}
+
+function richSummary(list, t) {
+  if (list.length === 1) {
+    const tool = list[0];
+    if (toolStatusBucket(tool.status) === 'failed') return failedPhrase(tool, t);
+    const kind = toolKind(tool?.name);
+    if (CHANGE_KINDS.has(kind)) return changedClause(list, t) || singlePhrase(tool, t);
+    if (kind === 'bash') return commandClause(list, t) || singlePhrase(tool, t);
+    return singlePhrase(tool, t);
+  }
+  const clauses = [changedClause(list, t), failedClause(list, t), commandClause(list, t), countOnlyClause(list, t)]
+    .filter(Boolean);
+  if (!clauses.length) return countPhrase(list, t);
+  return clauses.join(t('tool_sum_join'));
+}
+
 export function summarizeToolGroup(tools, t) {
   const list = (Array.isArray(tools) ? tools : []).filter(Boolean);
   const failed = list.filter((tool) => toolStatusBucket(tool.status) === 'failed').length;
@@ -130,13 +224,105 @@ export function summarizeToolGroup(tools, t) {
   }
   let text = '';
   if (runningTool) text = runningPhrase(runningTool, t);
-  else if (list.length === 1) text = singlePhrase(list[0], t);
-  else if (list.length > 1) text = countPhrase(list, t);
+  else if (list.length) text = richSummary(list, t);
   return {
     text: presentSummary(text),
     failed,
     running: Boolean(runningTool),
   };
+}
+
+export function toolGroupPreview(tools, showAll = false, limit = TOOL_GROUP_PREVIEW) {
+  const list = (Array.isArray(tools) ? tools : []).filter(Boolean);
+  if (showAll || list.length <= limit) return { tools: list, hidden: 0 };
+  return {
+    tools: list.slice(-limit),
+    hidden: list.length - limit,
+  };
+}
+
+function nonemptyLines(text) {
+  const raw = String(text ?? '');
+  if (!raw) return [];
+  return raw.split(/\r?\n/).filter((line) => line.length > 0);
+}
+
+export function outputLineCount(text) {
+  const raw = String(text ?? '');
+  if (!raw) return 0;
+  const lines = raw.split(/\r?\n/);
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines.length;
+}
+
+export function parseToolOutput(output) {
+  if (output == null || output === '') return { text: '', json: null };
+  if (typeof output === 'object') {
+    return { text: JSON.stringify(output), json: output };
+  }
+  const text = String(output);
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const json = JSON.parse(trimmed);
+      if (json && typeof json === 'object') return { text, json };
+    } catch {
+      /* keep as text */
+    }
+  }
+  return { text, json: null };
+}
+
+function firstLine(text, max = 72) {
+  const line = String(text ?? '').split(/\r?\n/).find((item) => item.trim()) || '';
+  return oneLine(line, max);
+}
+
+function bashStreams(tool) {
+  const parsed = parseToolOutput(tool?.output);
+  const json = parsed.json && typeof parsed.json === 'object' ? parsed.json : null;
+  const stdout = json && json.stdout != null ? String(json.stdout) : '';
+  const stderr = json && json.stderr != null ? String(json.stderr) : '';
+  const code = json && json.code != null
+    ? json.code
+    : (tool?.code != null ? tool.code : null);
+  return { parsed, json, stdout, stderr, code };
+}
+
+/** Short result hint shown on a row without expanding it. */
+export function toolResultHint(tool, t) {
+  if (!tool) return { text: '', failed: false };
+  const bucket = toolStatusBucket(tool.status);
+  const parsed = parseToolOutput(tool.output);
+  const json = parsed.json && typeof parsed.json === 'object' ? parsed.json : null;
+  const failText = json
+    ? String(json.stderr || json.message || json.error || json.stdout || parsed.text || '')
+    : parsed.text;
+
+  if (bucket === 'failed') {
+    return { text: firstLine(failText || parsed.text, 64), failed: true };
+  }
+  if (bucket === 'running') return { text: '', failed: false };
+
+  const kind = toolKind(tool?.name);
+  if (kind === 'read') {
+    return { text: t('tool_hint_lines', { n: outputLineCount(parsed.text) }), failed: false };
+  }
+  if (kind === 'ls') {
+    return { text: t('tool_hint_items', { n: nonemptyLines(parsed.text).length }), failed: false };
+  }
+  if (kind === 'grep') {
+    return { text: t('tool_hint_matches', { n: nonemptyLines(parsed.text).length }), failed: false };
+  }
+  if (kind === 'bash') {
+    const { stdout, stderr, code } = bashStreams(tool);
+    if (code != null && code !== '') {
+      return { text: t('tool_hint_exit', { code }), failed: Number(code) !== 0 };
+    }
+    const line = firstLine(stdout || stderr || parsed.text, 48);
+    return { text: line, failed: false };
+  }
+  return { text: '', failed: false };
 }
 
 /** Keep the first `limit` lines unless the caller asked for the full text. */
