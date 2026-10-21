@@ -57,6 +57,26 @@ export function toolFocus(tool) {
   return { mode: 'path', text: file };
 }
 
+/** One-line intent from `input.description`, or empty when the model omitted it. */
+export function toolIntent(tool) {
+  const input = tool?.input && typeof tool.input === 'object' && !Array.isArray(tool.input)
+    ? tool.input
+    : {};
+  if (typeof input.description !== 'string') return '';
+  return oneLine(input.description);
+}
+
+/**
+ * Expanded-row heading. Prefer the intent as the title and keep the command or
+ * path as secondary detail so the actual call is still visible.
+ */
+export function toolRowHeading(tool) {
+  const intent = toolIntent(tool);
+  const focus = toolFocus(tool);
+  if (intent) return { title: intent, detail: focus.text, intent: true };
+  return { title: focus.text, detail: '', intent: false };
+}
+
 export function toolGroupKey(tools) {
   const list = Array.isArray(tools) ? tools : [];
   const first = list.find((tool) => tool && tool.id != null && String(tool.id) !== '');
@@ -111,6 +131,8 @@ function shortFocus(tool) {
 }
 
 function singlePhrase(tool, t) {
+  const intent = toolIntent(tool);
+  if (intent) return intent;
   const kind = toolKind(tool?.name);
   const target = targetOf(tool);
   if (kind === 'other') {
@@ -124,6 +146,8 @@ function singlePhrase(tool, t) {
 }
 
 function runningPhrase(tool, t) {
+  const intent = toolIntent(tool);
+  if (intent) return intent;
   const kind = toolKind(tool?.name);
   const target = targetOf(tool);
   if (kind === 'other') {
@@ -201,6 +225,8 @@ function richSummary(list, t) {
   if (list.length === 1) {
     const tool = list[0];
     if (toolStatusBucket(tool.status) === 'failed') return failedPhrase(tool, t);
+    const intent = toolIntent(tool);
+    if (intent) return intent;
     const kind = toolKind(tool?.name);
     if (CHANGE_KINDS.has(kind)) return changedClause(list, t) || singlePhrase(tool, t);
     if (kind === 'bash') return commandClause(list, t) || singlePhrase(tool, t);
@@ -273,6 +299,35 @@ export function parseToolOutput(output) {
   return { text, json: null };
 }
 
+const HARNESS_TAG = /^<\/?harness>$/;
+const HARNESS_SEVERITY = /^\[(error|warn|warning|info)\]\s+/i;
+
+/**
+ * Pi Durable appends diagnostics as:
+ *   <harness>
+ *   [error] ENOENT: ...
+ *   </harness>
+ * Drop the wrapper lines and the severity prefix. Text without that wrapper is unchanged.
+ */
+export function unwrapHarnessDiagnostics(text) {
+  const raw = text == null ? '' : String(text);
+  const lines = raw.split(/\r?\n/);
+  if (!lines.some((line) => line.trim() === '<harness>')) return raw;
+  const out = [];
+  let inside = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (HARNESS_TAG.test(trimmed)) {
+      inside = trimmed === '<harness>';
+      continue;
+    }
+    out.push(inside ? line.replace(HARNESS_SEVERITY, '') : line);
+  }
+  while (out.length && out[0] === '') out.shift();
+  while (out.length && out[out.length - 1] === '') out.pop();
+  return out.join('\n');
+}
+
 function firstLine(text, max = 72) {
   const line = String(text ?? '').split(/\r?\n/).find((item) => item.trim()) || '';
   return oneLine(line, max);
@@ -300,7 +355,7 @@ export function toolResultHint(tool, t) {
     : parsed.text;
 
   if (bucket === 'failed') {
-    return { text: firstLine(failText || parsed.text, 64), failed: true };
+    return { text: firstLine(unwrapHarnessDiagnostics(failText || parsed.text), 64), failed: true };
   }
   if (bucket === 'running') return { text: '', failed: false };
 

@@ -7,7 +7,9 @@ import {
   toolGroupKey,
   toolKind,
   toolResultHint,
+  toolRowHeading,
   toolStatusBucket,
+  unwrapHarnessDiagnostics,
   TOOL_ERROR_PREVIEW_LINES,
   toolGroupPreview,
 } from './tool-groups.js';
@@ -2030,11 +2032,18 @@ function toolActionLabel(name) {
   return t(`tool_act_${kind}`);
 }
 
-function toolRowDisplay(tool) {
+function toolRowOriginal(tool) {
   const focus = toolFocus(tool);
   if (focus.mode === 'text') return truncateCommand(focus.text);
   const raw = tool?.path || tool?.input?.path || focus.text || '';
   return truncatePath(raw);
+}
+
+function toolRowDisplay(tool) {
+  const heading = toolRowHeading(tool);
+  const original = toolRowOriginal(tool);
+  if (heading.intent) return { title: heading.title, detail: original, intent: true };
+  return { title: original, detail: '', intent: false };
 }
 
 function truncateCommand(text, max = 64) {
@@ -2062,6 +2071,10 @@ export function renderToolRowHtml(tool) {
   const toolName = tool.name || 'tool';
   const rawPath = tool.path || tool.input?.path || '';
   const display = toolRowDisplay(tool);
+  const pathClass = display.intent ? 'tool-path is-intent' : 'tool-path';
+  const origHtml = display.detail
+    ? `<span class="tool-path-orig" data-testid="tool-row-orig">${escapeHtml(display.detail)}</span>`
+    : '';
   const diff = toolDiffCounts(tool);
   const showDiff = (toolName === 'write' || toolName === 'edit') && (diff.added != null || diff.removed != null);
   const added = diff.added != null ? `+${diff.added}` : '';
@@ -2078,7 +2091,7 @@ export function renderToolRowHtml(tool) {
     ? `<span class="tool-row-status is-${bucket}" data-testid="tool-row-status">${escapeHtml(localizeToolStatus(tool.status))}</span>`
     : '';
   const preview = pluginResultPreview(tool);
-  const outputText = toolOutputSource(tool.output);
+  const outputText = unwrapHarnessDiagnostics(toolOutputSource(tool.output));
   const showAllOutput = state.expandedToolOutputs.has(tool.id);
   const clipLimit = bucket === 'failed' && !showAllOutput ? TOOL_ERROR_PREVIEW_LINES : 20;
   const clipped = clipOutputText(outputText, showAllOutput, clipLimit);
@@ -2098,7 +2111,8 @@ export function renderToolRowHtml(tool) {
     `<div class="tool-main">` +
     toolIconSvg(toolName) +
     `<span class="tool-action">${escapeHtml(toolActionLabel(toolName))}</span>` +
-    `<span class="tool-path" data-testid="tool-row-path">${escapeHtml(display)}</span>` +
+    `<span class="${pathClass}" data-testid="tool-row-path">${escapeHtml(display.title)}</span>` +
+    origHtml +
     hintHtml +
     diffBadge +
     `</div>` +

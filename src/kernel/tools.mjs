@@ -21,6 +21,54 @@ function withReplay(tool, replay) {
   return { ...tool, replay };
 }
 
+const INTENT_DESCRIPTION = '可选。用不超过 15 个字说明这一步要干什么，例如『跑单元测试』『看登录逻辑』。';
+
+function omitIntent(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  if (!Object.hasOwn(input, 'description')) return input;
+  const { description: _description, ...rest } = input;
+  return rest;
+}
+
+function readIntent(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  return typeof input.description === 'string' ? input.description : undefined;
+}
+
+/**
+ * Add optional `description` so the model can name the step. Pi Durable validates
+ * the value returned by prepareArguments, then stores that same object on the
+ * live checkpoint (`tool_execution_start.args`). The inner tool therefore sees
+ * arguments without `description`; the UI still receives it.
+ */
+export function withIntent(tool) {
+  const prepare = tool.prepareArguments;
+  const execute = tool.execute;
+  const properties = tool.parameters?.properties && typeof tool.parameters.properties === 'object'
+    ? tool.parameters.properties
+    : {};
+  return {
+    ...tool,
+    parameters: Type.Object({
+      ...properties,
+      description: Type.Optional(Type.String({ description: INTENT_DESCRIPTION })),
+    }),
+    prepareArguments(input) {
+      const description = readIntent(input);
+      let next = omitIntent(input);
+      next = prepare ? prepare(next) : next;
+      if (description === undefined) return next;
+      if (next && typeof next === 'object' && !Array.isArray(next)) {
+        return { ...next, description };
+      }
+      return next;
+    },
+    async execute(args, api, context) {
+      return execute(omitIntent(args), api, context);
+    },
+  };
+}
+
 /** Map the previous `{ old, new }` shape onto the official edit schema. */
 function withLegacyEditArgs(tool) {
   const prepare = tool.prepareArguments;
@@ -166,12 +214,12 @@ function createGrepTool() {
 }
 
 const workspaceToolList = [
-  withReplay(createReadTool(), 'safe'),
-  withReplay(withFileChangeDetails(createWriteTool()), 'unsafe'),
-  withReplay(withFileChangeDetails(withLegacyEditArgs(createEditTool())), 'unsafe'),
-  createLsTool(),
-  createGrepTool(),
-  withReplay(createBashTool(), 'unsafe'),
+  withIntent(withReplay(createReadTool(), 'safe')),
+  withIntent(withReplay(withFileChangeDetails(createWriteTool()), 'unsafe')),
+  withIntent(withReplay(withFileChangeDetails(withLegacyEditArgs(createEditTool())), 'unsafe')),
+  withIntent(createLsTool()),
+  withIntent(createGrepTool()),
+  withIntent(withReplay(createBashTool(), 'unsafe')),
 ];
 
 export function workspaceTools() {

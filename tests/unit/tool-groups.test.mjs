@@ -9,6 +9,8 @@ import {
   toolGroupKey,
   toolGroupPreview,
   toolResultHint,
+  toolRowHeading,
+  unwrapHarnessDiagnostics,
 } from '../../public/tool-groups.js';
 
 const zh = {
@@ -169,6 +171,56 @@ test('a single call names the file or command', () => {
   assert.equal(summarizeToolGroup([tool('ls', { path: '.' })], t).text, '列出 1 个目录');
 });
 
+test('a description is the single-call summary, running action, and row title', () => {
+  const bash = tool('bash', { input: { command: 'npm test', description: '跑单元测试' } });
+  assert.equal(summarizeToolGroup([bash], t).text, '跑单元测试');
+  assert.equal(
+    summarizeToolGroup([tool('bash', { id: 'b1', input: bash.input, status: 'running' })], t).text,
+    '跑单元测试',
+  );
+  assert.deepEqual(toolRowHeading(bash), { title: '跑单元测试', detail: 'npm test', intent: true });
+  assert.equal(
+    summarizeToolGroup([tool('read', { path: 'src/login.js', input: { path: 'src/login.js', description: '看登录逻辑' } })], t).text,
+    '看登录逻辑',
+  );
+  assert.deepEqual(
+    toolRowHeading(tool('read', { path: 'src/login.js', input: { path: 'src/login.js', description: '看登录逻辑' } })),
+    { title: '看登录逻辑', detail: 'src/login.js', intent: true },
+  );
+  const runningGroup = summarizeToolGroup([
+    tool('read', { id: 'r1', path: 'a.js' }),
+    tool('bash', { id: 'b1', input: { command: 'npm test', description: '跑单元测试' }, status: 'running' }),
+  ], t);
+  assert.equal(runningGroup.text, '跑单元测试');
+  assert.equal(runningGroup.running, true);
+});
+
+test('without a description, summaries and row titles stay on the command or path', () => {
+  const bash = tool('bash', { input: { command: 'npm test' } });
+  assert.equal(summarizeToolGroup([bash], t).text, '运行 npm test');
+  assert.equal(
+    summarizeToolGroup([tool('bash', { input: { command: 'npm test' }, status: 'running' })], t).text,
+    '正在运行 `npm test`…',
+  );
+  assert.deepEqual(toolRowHeading(bash), { title: 'npm test', detail: '', intent: false });
+  assert.deepEqual(
+    toolRowHeading(tool('read', { path: 'app.js' })),
+    { title: 'app.js', detail: '', intent: false },
+  );
+  assert.equal(
+    summarizeToolGroup([tool('bash', { input: { command: 'npm test', description: '  ' } })], t).text,
+    '运行 npm test',
+  );
+});
+
+test('a group of several calls does not concatenate descriptions', () => {
+  const summary = summarizeToolGroup([
+    tool('bash', { id: 'b1', input: { command: 'npm test', description: '跑单元测试' } }),
+    tool('bash', { id: 'b2', input: { command: 'npm run check', description: '做语法检查' } }),
+  ], t);
+  assert.equal(summary.text, '运行 npm test、npm run check');
+});
+
 test('a running call names the current step with ticks; failures stay counted', () => {
   const tools = [
     tool('read', { id: 'r1', path: 'a.js', status: 'completed' }),
@@ -262,6 +314,29 @@ test('row hints report lines, items, matches, exit code, first output line, and 
   assert.equal(failed.text, 'ENOENT: no such file or directory, open \'prompts\'');
   assert.equal(outputLineCount('a\nb\nc\n'), 3);
   assert.equal(toolFileLabel('src/api/auth.ts'), 'auth.ts');
+});
+
+test('harness diagnostic wrapping is stripped from failed hints; plain output is unchanged', () => {
+  const wrapped = '<harness>\n[error] ENOENT: no such file or directory, open \'missing.txt\'\n</harness>';
+  const failed = toolResultHint(tool('read', { status: 'error', output: wrapped }), t);
+  assert.equal(failed.failed, true);
+  assert.equal(failed.text, 'ENOENT: no such file or directory, open \'missing.txt\'');
+  assert.equal(
+    unwrapHarnessDiagnostics(wrapped),
+    'ENOENT: no such file or directory, open \'missing.txt\'',
+  );
+  assert.equal(
+    unwrapHarnessDiagnostics('<harness>\n[warning] timed out\n[info] spilled to /tmp/out\n</harness>'),
+    'timed out\nspilled to /tmp/out',
+  );
+  const plain = 'ENOENT: no such file or directory, open \'prompts\'\nmore';
+  assert.equal(unwrapHarnessDiagnostics(plain), plain);
+  assert.equal(
+    unwrapHarnessDiagnostics('keep [error] in the body\n[error] this stays'),
+    'keep [error] in the body\n[error] this stays',
+  );
+  const unwrappedFail = toolResultHint(tool('read', { status: 'error', output: plain }), t);
+  assert.equal(unwrappedFail.text, 'ENOENT: no such file or directory, open \'prompts\'');
 });
 
 test('long groups keep the last eight rows and hide the rest', () => {
