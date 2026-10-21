@@ -339,6 +339,7 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 .tool-group-summary:hover { color: var(--ink); }
 .tool-group-summary:focus-visible { outline: 1px solid var(--faint); outline-offset: 2px; border-radius: 4px; }
 .tool-group-summary::before { content: '✓'; color: var(--ok); width: 12px; flex-shrink: 0; text-align: center; }
+.tool-group.is-failed .tool-group-summary::before { content: '!'; color: var(--fail); }
 .tool-group.is-running .tool-group-summary::before { display: none; }
 .tool-group-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-group-fail { flex-shrink: 0; color: var(--fail); }

@@ -36,7 +36,7 @@ test('seven tool calls collapse to one summary, then a row, then the output', as
     await send(page, '看看');
     const summary = page.getByTestId('tool-group-summary');
     await expect(summary).toBeVisible({ timeout: 20000 });
-    await expect(page.getByTestId('tool-group-text')).toHaveText('读了 6 个文件 · 列出 1 个目录');
+    await expect(page.getByTestId('tool-group-text')).toHaveText('读了 a.txt、b.txt 等 6 个文件 · 列出 1 个目录');
     await expect(page.getByTestId('message').filter({ hasText: '看完了，一共这些。' })).toBeVisible();
     const rows = page.locator('[data-testid=tool-row]');
     await expect(rows).toHaveCount(7);
@@ -64,9 +64,35 @@ test('seven tool calls collapse to one summary, then a row, then the output', as
     await expect(detail).toContainText('L30');
 
     await switchLanguage(page, 'en');
-    await expect(page.getByTestId('tool-group-text')).toHaveText('Read 6 files · listed 1 directory');
+    await expect(page.getByTestId('tool-group-text')).toHaveText('Read a.txt, b.txt and 6 files · listed 1 directory');
     await expect(detail).toBeVisible();
     await expect(detail).toContainText('L30');
+  } finally {
+    await srv.kill();
+  }
+});
+
+test('a probing read stays gray, collapsed, and out of the red failure count', async ({ page }) => {
+  const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
+  await fs.writeFile(path.join(ws, 'a.txt'), 'ok\n');
+  const srv = await startServer({ script: 'tool-probe.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  try {
+    await openApp(page, srv);
+    await createWorkspace(page, 'demo', ws);
+    await newConversation(page);
+    await send(page, '看看');
+    await expect(page.getByTestId('tool-group-text')).toHaveText('读了 a.txt', { timeout: 20000 });
+    await expect(page.getByTestId('tool-group-fail')).toHaveCount(0);
+    await expect(page.getByTestId('tool-group-text')).not.toContainText('失败');
+    await expect(page.locator('[data-testid=tool-group].is-failed')).toHaveCount(0);
+    await expect(page.locator('[data-testid=tool-row][data-path="missing.txt"]')).toBeHidden();
+    await page.getByTestId('tool-group-summary').click();
+    const probe = page.locator('[data-testid=tool-row][data-path="missing.txt"]');
+    await expect(probe).toBeVisible();
+    await expect(probe).not.toHaveClass(/is-failed/);
+    await expect(probe.getByTestId('tool-row-detail')).toBeHidden();
+    await expect(probe.getByTestId('tool-row-hint')).toHaveText('不存在');
+    await expect(page.locator('[data-testid=tool-row][data-path="a.txt"]')).toBeVisible();
   } finally {
     await srv.kill();
   }
@@ -87,9 +113,9 @@ test('a failed call keeps the summary collapsed and shows the failure count', as
     const row = page.locator('[data-testid=tool-row][data-tool=read]');
     await expect(row).toBeVisible();
     await expect(row.getByTestId('tool-row-status')).toHaveText('失败');
-    await expect(row.getByTestId('tool-row-hint')).toContainText(/ENOENT|missing\.txt|no such file/i);
+    await expect(row.getByTestId('tool-row-hint')).toHaveText('不存在');
     await expect(row.getByTestId('tool-row-detail')).toBeVisible();
-    await expect(row.getByTestId('tool-row-detail')).toContainText(/ENOENT|missing\.txt|no such file/i);
+    await expect(row.getByTestId('tool-row-detail')).toContainText(/ENOENT|missing\.txt|no such file|不存在/i);
   } finally {
     await srv.kill();
   }
@@ -123,7 +149,7 @@ test('a long group hides earlier calls until clicked; failed rows start expanded
     await createWorkspace(page, 'demo', ws);
     await newConversation(page);
     await send(page, '看看');
-    await expect(page.getByTestId('tool-group-text')).toHaveText('读取 prompts 失败 · 读了 9 个文件', { timeout: 20000 });
+    await expect(page.getByTestId('tool-group-text')).toHaveText('读取 prompts 失败 · 读了 t0.txt、t1.txt 等 9 个文件', { timeout: 20000 });
     await expect(page.getByTestId('tool-group-fail')).toHaveText('1 个失败');
     await page.getByTestId('tool-group-summary').click();
     const rows = page.locator('[data-testid=tool-row]');
@@ -133,7 +159,7 @@ test('a long group hides earlier calls until clicked; failed rows start expanded
     const failed = page.locator('[data-testid=tool-row][data-path="prompts"]');
     await expect(failed).toBeVisible();
     await expect(failed.getByTestId('tool-row-detail')).toBeVisible();
-    await expect(failed.getByTestId('tool-row-hint')).toContainText(/ENOENT|prompts|no such file/i);
+    await expect(failed.getByTestId('tool-row-hint')).toHaveText('不存在');
 
     const thread = page.locator('#center-thread');
     await thread.evaluate((el) => { el.scrollTop = 40; });
