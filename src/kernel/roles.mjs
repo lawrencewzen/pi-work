@@ -6,6 +6,7 @@ import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable';
 import { agentEventData, mapConvStatusToAgent } from '../core/agents.mjs';
 import { TOOLS } from '../core/config.mjs';
+import { resolveConversationModelPatch } from '../core/model-sources.mjs';
 import { createPluginHost } from './plugins.mjs';
 import { toolsForRole } from './tools.mjs';
 
@@ -213,6 +214,8 @@ export function createRoleHost({
     return {
       id: next.id,
       roleId: next.roleId || null,
+      modelSourceId: next.modelSourceId || null,
+      modelId: next.modelId || null,
       status: next.status,
       agents,
     };
@@ -222,18 +225,25 @@ export function createRoleHost({
     const conv = await store.getConversation(cid);
     if (!conv) return { status: 404, body: { error: 'conversation not found' } };
     const status = await liveStatus(conv);
-    if (status === 'running') {
-      return { status: 409, body: { error: 'err_role_busy', status } };
-    }
     const patch = {};
     const input = body && typeof body === 'object' ? body : {};
-    if (Object.prototype.hasOwnProperty.call(input, 'roleId')) {
+    const wantsRole = Object.prototype.hasOwnProperty.call(input, 'roleId');
+    if (status === 'running' && wantsRole) {
+      return { status: 409, body: { error: 'err_role_busy', status } };
+    }
+    if (wantsRole) {
       if (input.roleId == null || input.roleId === '' || input.roleId === 'default') patch.roleId = null;
       else {
         const role = await store.getRole(String(input.roleId));
         if (!role) return { status: 400, body: { errors: ['unknown role'] } };
         patch.roleId = role.id;
       }
+    }
+    const modelChoice = resolveConversationModelPatch(await store.getSettings(), input);
+    if (modelChoice.present) {
+      if (!modelChoice.ok) return { status: 400, body: { errors: modelChoice.errors } };
+      patch.modelSourceId = modelChoice.value.modelSourceId;
+      patch.modelId = modelChoice.value.modelId;
     }
     if (!Object.keys(patch).length) {
       // pipelineId is ignored if still sent.
@@ -244,7 +254,9 @@ export function createRoleHost({
     }
     const next = await store.updateConversation(cid, patch);
     remember(next);
-    await configure(next, await loadEffectiveRole(next));
+    // Role changes stay idle-only. A model change while running is stored and
+    // picked up on the next submit via modelFor.
+    if (status !== 'running') await configure(next, await loadEffectiveRole(next));
     return { status: 200, body: await patchBody(next) };
   }
 

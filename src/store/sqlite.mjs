@@ -76,6 +76,8 @@ function convFromRow(row) {
     usage: usageFromSql(row.usage_json),
     harnessId: row.harness_id == null ? null : Number(row.harness_id),
     lastSubmissionId: row.last_submission_id == null ? null : Number(row.last_submission_id),
+    modelSourceId: row.model_source_id || null,
+    modelId: row.model_id || null,
   };
 }
 
@@ -123,7 +125,9 @@ export function createSqliteStore(dir) {
       original_text TEXT,
       harness_id INTEGER,
       host_mark TEXT,
-      last_submission_id INTEGER
+      last_submission_id INTEGER,
+      model_source_id TEXT,
+      model_id TEXT
     );
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
@@ -213,6 +217,8 @@ export function createSqliteStore(dir) {
     if (!convCols.has('harness_id')) db.exec('ALTER TABLE conversations ADD COLUMN harness_id INTEGER');
     if (!convCols.has('host_mark')) db.exec('ALTER TABLE conversations ADD COLUMN host_mark TEXT');
     if (!convCols.has('last_submission_id')) db.exec('ALTER TABLE conversations ADD COLUMN last_submission_id INTEGER');
+    if (!convCols.has('model_source_id')) db.exec('ALTER TABLE conversations ADD COLUMN model_source_id TEXT');
+    if (!convCols.has('model_id')) db.exec('ALTER TABLE conversations ADD COLUMN model_id TEXT');
   }
 
   {
@@ -253,15 +259,15 @@ export function createSqliteStore(dir) {
       id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
       current_step, updated_at, created_at, role_id,
       workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark,
-      last_submission_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+      last_submission_id, model_source_id, model_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
     getConv: db.prepare('SELECT * FROM conversations WHERE id = ?'),
     listRecoverable: db.prepare("SELECT * FROM conversations WHERE status IN ('running','recovering') AND harness_id IS NULL"),
     listKernel: db.prepare('SELECT * FROM conversations WHERE harness_id IS NOT NULL'),
     updConv: db.prepare(`UPDATE conversations SET
       workspace_id=?, title=?, updated_at=?, role_id=?,
       workspace_path=?, last_progress_at=?, original_text=?, usage_json=?, harness_id=?,
-      last_submission_id=?
+      last_submission_id=?, model_source_id=?, model_id=?
       WHERE id=?`),
     listConv: db.prepare('SELECT * FROM conversations WHERE workspace_id = ? AND harness_id IS NOT NULL ORDER BY updated_at DESC'),
     insRole: db.prepare(`INSERT OR REPLACE INTO roles (
@@ -395,7 +401,7 @@ export function createSqliteStore(dir) {
     },
 
     async createConversation({
-      id, workspaceId, title, roleId, workspacePath,
+      id, workspaceId, title, roleId, workspacePath, modelSourceId, modelId,
     } = {}) {
       const now = Date.now();
       const conv = {
@@ -410,12 +416,15 @@ export function createSqliteStore(dir) {
         originalText: null,
         usage: null,
         harnessId: null,
+        modelSourceId: modelSourceId ?? null,
+        modelId: modelId ?? null,
       };
       q.insConv.run(
         conv.id, conv.workspaceId, conv.title, null, null, null,
         null, null, conv.updatedAt, conv.createdAt,
         conv.roleId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
         usageToSql(conv.usage), conv.harnessId, null, null,
+        conv.modelSourceId, conv.modelId,
       );
       return conv;
     },
@@ -452,19 +461,23 @@ export function createSqliteStore(dir) {
           originalText: null,
           usage: null,
           harnessId: null,
+          modelSourceId: null,
+          modelId: null,
         };
         q.insConv.run(
           conv.id, conv.workspaceId, conv.title, null, null, null,
           null, null, conv.updatedAt, conv.createdAt,
           conv.roleId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
           usageToSql(conv.usage), null, null, patch.lastSubmissionId ?? null,
+          conv.modelSourceId, conv.modelId,
         );
       }
       const next = { ...conv, ...patch, updatedAt: Date.now() };
       q.updConv.run(
         next.workspaceId, next.title, next.updatedAt, next.roleId,
         next.workspacePath, next.lastProgressAt, next.originalText, usageToSql(next.usage),
-        next.harnessId ?? null, next.lastSubmissionId ?? null, id,
+        next.harnessId ?? null, next.lastSubmissionId ?? null,
+        next.modelSourceId ?? null, next.modelId ?? null, id,
       );
       return next;
     },

@@ -13,6 +13,7 @@ import {
   publicSource,
   migrateLegacySettings,
   resolveRoleTarget,
+  resolveConversationModelPatch,
   effectiveModelFor,
   planRoleModelMigration,
   hasAvailableSource,
@@ -976,14 +977,27 @@ async function routeApi(req, res, url) {
       const role = await store.getRole(body.roleId);
       if (!role) { sendJson(res, 400, { errors: ['unknown role'] }); return; }
     }
+    const modelChoice = resolveConversationModelPatch(await store.getSettings(), body);
+    if (modelChoice.present && !modelChoice.ok) {
+      sendJson(res, 400, { errors: modelChoice.errors });
+      return;
+    }
     const conv = await kernelApi.createConversation({
       workspaceId: wid,
       workspacePath: ws.path,
       title: body.title || 'New conversation',
       roleId: body.roleId,
       status: 'idle',
+      ...(modelChoice.present ? modelChoice.value : {}),
     });
-    sendJson(res, 201, { id: conv.id, workspaceId: conv.workspaceId, title: conv.title, status: 'idle' });
+    sendJson(res, 201, {
+      id: conv.id,
+      workspaceId: conv.workspaceId,
+      title: conv.title,
+      status: 'idle',
+      modelSourceId: conv.modelSourceId || null,
+      modelId: conv.modelId || null,
+    });
     return;
   }
   if (match && m === 'GET') {
@@ -1075,6 +1089,8 @@ async function routeApi(req, res, url) {
       title: live.title,
       status: live.status,
       roleId: live.roleId || null,
+      modelSourceId: live.modelSourceId || null,
+      modelId: live.modelId || null,
       messages,
       agents,
       usage: context.usage,

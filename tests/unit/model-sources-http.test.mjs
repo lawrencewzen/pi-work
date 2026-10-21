@@ -160,6 +160,91 @@ test('default and coder turns hit their own sources with their own keys', async 
   }
 });
 
+test('conversation model is saved, validated, and used instead of the role binding', async () => {
+  const [alpha, beta] = await Promise.all([startFake('alpha'), startFake('beta')]);
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  try {
+    const sourceA = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'A',
+      baseUrl: alpha.baseUrl,
+      apiKey: 'key-alpha-secret',
+      models: ['alpha'],
+    });
+    const sourceB = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'B',
+      baseUrl: beta.baseUrl,
+      apiKey: 'key-beta-secret',
+      models: ['beta'],
+    });
+    assert.equal(sourceA.status, 201);
+    assert.equal(sourceB.status, 201);
+    const bound = await request(srv.base, 'PUT', '/api/settings', {
+      models: { default: { sourceId: sourceA.body.id, model: 'alpha' } },
+    });
+    assert.equal(bound.status, 200);
+
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'pinned' });
+    assert.equal(ws.status, 201);
+    const unknownSource = await request(
+      srv.base,
+      'POST',
+      `/api/workspaces/${ws.body.id}/conversations`,
+      { title: 'bad-source', modelSourceId: 'missing', modelId: 'alpha' },
+    );
+    assert.equal(unknownSource.status, 400);
+    assert.deepEqual(unknownSource.body.errors, ['unknown model source']);
+    const unknownModel = await request(
+      srv.base,
+      'POST',
+      `/api/workspaces/${ws.body.id}/conversations`,
+      { title: 'bad-model', modelSourceId: sourceA.body.id, modelId: 'beta' },
+    );
+    assert.equal(unknownModel.status, 400);
+    assert.deepEqual(unknownModel.body.errors, ['unknown model']);
+
+    const created = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, {
+      title: 'pinned',
+      modelSourceId: sourceB.body.id,
+      modelId: 'beta',
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.modelSourceId, sourceB.body.id);
+    assert.equal(created.body.modelId, 'beta');
+    const got = await request(srv.base, 'GET', `/api/conversations/${created.body.id}`);
+    assert.equal(got.status, 200);
+    assert.equal(got.body.modelSourceId, sourceB.body.id);
+    assert.equal(got.body.modelId, 'beta');
+
+    const sent = await request(srv.base, 'POST', `/api/conversations/${created.body.id}/messages`, { text: 'use pinned' });
+    assert.equal(sent.status, 202);
+    const done = await waitFinished(srv.base, created.body.id);
+    assert.equal(done.status, 'done');
+    assert.equal(done.messages.some((message) => message.role === 'assistant' && message.text === 'reply-beta'), true);
+    assert.equal(chatHits(beta).length, 1);
+    assert.equal(chatHits(alpha).length, 0);
+    assert.equal(JSON.parse(chatHits(beta)[0].body).model, 'beta');
+
+    const cleared = await request(srv.base, 'PATCH', `/api/conversations/${created.body.id}`, {
+      modelSourceId: null,
+      modelId: null,
+    });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.modelSourceId, null);
+    assert.equal(cleared.body.modelId, null);
+    const patchedUnknown = await request(srv.base, 'PATCH', `/api/conversations/${created.body.id}`, {
+      modelSourceId: sourceB.body.id,
+      modelId: 'alpha',
+    });
+    assert.equal(patchedUnknown.status, 400);
+    assert.deepEqual(patchedUnknown.body.errors, ['unknown model']);
+  } finally {
+    await stopServer(srv);
+    await Promise.all([alpha.close(), beta.close()]);
+  }
+});
+
 test('settings ignore legacy fields and source tests keep unsaved origin rules', async () => {
   const [alpha, beta] = await Promise.all([startFake('alpha'), startFake('beta')]);
   const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });

@@ -360,6 +360,39 @@ function bindingTarget(sources, binding, options) {
  * A role-template model string prefers a source that lists it, otherwise the
  * resolved source keeps that name.
  */
+function textOrNull(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+/**
+ * Optional conversation-level model from a create/PATCH body.
+ * Missing keys mean the request does not touch the stored pair. Both empty
+ * or null means follow the default role binding. A source+model pair must
+ * exist on settings.sources (availability is checked later by modelFor).
+ */
+export function resolveConversationModelPatch(settings, body = {}) {
+  if (!body || typeof body !== 'object') return { present: false };
+  const hasSource = Object.prototype.hasOwnProperty.call(body, 'modelSourceId');
+  const hasModel = Object.prototype.hasOwnProperty.call(body, 'modelId');
+  if (!hasSource && !hasModel) return { present: false };
+  const sourceId = hasSource ? textOrNull(body.modelSourceId) : null;
+  const modelId = hasModel ? textOrNull(body.modelId) : null;
+  if (!sourceId && !modelId) {
+    return { present: true, ok: true, value: { modelSourceId: null, modelId: null } };
+  }
+  if (!sourceId || !modelId) {
+    return { present: true, ok: false, errors: ['model source and model are required together'] };
+  }
+  const sources = normalizeSources(settings?.sources);
+  const source = sources.find((item) => item.id === sourceId);
+  if (!source) return { present: true, ok: false, errors: ['unknown model source'] };
+  const names = Array.isArray(source.models) ? source.models : [];
+  if (!names.includes(modelId)) return { present: true, ok: false, errors: ['unknown model'] };
+  return { present: true, ok: true, value: { modelSourceId: source.id, modelId } };
+}
+
 export function resolveRoleTarget(settings, { roleId, model, grokSignedIn = false } = {}) {
   const sources = normalizeSources(settings?.sources);
   const bindings = normalizeRoleModels(settings?.models);
