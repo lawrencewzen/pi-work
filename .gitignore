@@ -1,7 +1,9 @@
 node_modules/
 public/vendor/
+# Playwright / CI e2e outputs at repo root (also keep tests/ copies ignored)
 /test-results/
 /playwright-report/
+/e2e-shots/
 /tests/test-results/
 /tests/playwright-report/
 data/

@@ -29,8 +29,14 @@ pi-work 是基于 Pi Durable（`@earendil-works/pi-durable`，作为库嵌入）
 
 模型调用优先复用本机 Grok Build 会话 `~/.grok/auth.json`（与 `grok login` 相同的 access / refresh）。设置 → 模型里的「用 Grok 登录」走 `grok login --device-auth` 同款设备码：页面显示网址和用户码，服务端轮询完成后把令牌写回该文件（0600）。会话有效时请求发往订阅代理 `https://cli-chat-proxy.grok.com/v1/responses`，模型默认 `grok-build`，不走按量的 `api.x.ai`。API Key 仍是没有会话时的回退，会话有效时密钥框收起。退出登录只删除 OIDC 会话，保留 `xai::api_key`。不要把 `auth.json` 提交进仓库。只有显式要求时才走本地剧本：`PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT`，界面要标出「演示模型」。未显式要求时，有 Grok 会话、API Key 或 Base URL 才调用真实模型；都没有则拒绝回复，不能回落到剧本。
 
+## 验证
+- `npm run check`：语法检查。
+- `npm test`：`tests/unit` 单元测试。Linux CI 的 `test` job 和 Windows 的 `kernel-unit` 跑这一套。
+- `npm run test:e2e`：Playwright 自动化子集（`tests/e2e/*.spec.mjs`），配置 `tests/playwright.config.mjs`。先装浏览器：`npx playwright install chromium`；CI 用 `npx playwright install --with-deps chromium`。用例自己起服务，走演示模型（`PI_WORK_LLM=faux`）。系统 Chrome 可设 `PI_WORK_CHROME`（例如 `/usr/bin/google-chrome`）。部分用例把截图写到 `PI_WORK_SHOTS`（默认 `/opt/cursor/artifacts/screenshots`）。Linux CI 的 `e2e` job 跑这一套；Windows job 不跑 e2e。手工验收清单仍是 `tests/e2e/*.md`。
+
 ## 约束
 - 只改任务范围内的文件；新增依赖需说明理由。保持原生 ESM。
 - 不读取、不打印 `.env` 和密钥；不访问未授权的远程服务器。
 - 交付前运行 `npm run check`、`npm test` 及适用的本地验证；交付时列出改了哪些文件、怎么验证的、哪些没验证。
 - UI 风格：简洁、低饱和；效果图一律 4K。
+

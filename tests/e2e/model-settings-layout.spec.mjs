@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startServer, tmpdir, api } from './helpers/server.mjs';
-import { login } from './helpers/ui.mjs';
+import { login, waitForStableLayout } from './helpers/ui.mjs';
 
 let srv;
 
@@ -51,6 +51,7 @@ async function expectCompactRows(page) {
   await expect(rows).toHaveCount(2);
   await expect(rows.filter({ hasText: 'Grok 订阅' })).toBeVisible();
   await expect(rows.filter({ hasText: 'OpenAI' })).toBeVisible();
+  await waitForStableLayout(page, rows.first().locator('.ms-src-main'));
   const count = await rows.count();
   for (let i = 0; i < count; i += 1) {
     const row = rows.nth(i);
@@ -77,6 +78,7 @@ for (const viewport of [
     await page.locator('[data-action=open-settings]').click();
     await page.locator('[data-tab=models]').click();
     await expect(page.getByTestId('models-page')).toBeVisible();
+    await waitForStableLayout(page, page.locator('.sm'));
     await expectCompactRows(page);
   });
 }

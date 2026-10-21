@@ -35,3 +35,26 @@ export async function send(page, text) {
   await page.getByTestId('chat-send').click();
 }
 export const statusText = (page) => page.getByTestId('status-text');
+
+/**
+ * Settings rebuilds `.sm` with innerHTML on every open/tab change. boundingBox()
+ * can see a 0-size or uncentered frame, and CJK fallback fonts can still be
+ * loading. Wait for fonts and two matching layout reads before measuring.
+ */
+export async function waitForStableLayout(page, locator) {
+  await expect(locator).toBeVisible();
+  await page.evaluate(async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
+  });
+  await expect.poll(async () => {
+    const read = async () => {
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+      const box = await locator.boundingBox();
+      if (!box || box.width < 2 || box.height < 2) return '';
+      return [Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)].join(',');
+    };
+    const first = await read();
+    const second = await read();
+    return first && first === second ? first : '';
+  }).not.toBe('');
+}

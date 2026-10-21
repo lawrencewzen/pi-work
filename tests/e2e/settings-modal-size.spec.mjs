@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { startServer } from './helpers/server.mjs';
-import { login } from './helpers/ui.mjs';
+import { login, waitForStableLayout } from './helpers/ui.mjs';
 
 const TABS = ['general', 'models', 'git', 'agents', 'plugins', 'skills', 'about'];
 
@@ -23,7 +23,7 @@ for (const viewport of [
     for (const tab of TABS) {
       await page.locator(`.sm-nav [data-action=set-settings-tab][data-tab=${tab}]`).click();
       await expect(page.locator('.sm-nav div.on')).toHaveAttribute('data-tab', tab);
-      await expect(modal).toBeVisible();
+      await waitForStableLayout(page, modal);
       const box = await modal.boundingBox();
       expect(box).toBeTruthy();
       const size = {
