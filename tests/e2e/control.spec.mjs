@@ -76,7 +76,7 @@ test('running status lives in an assistant pending bubble', async ({ page }) => 
   await expect(page.locator('[data-testid=chat-send][data-state=stop]')).toHaveCount(0);
 });
 
-test('main thread omits default sender and shows a switched role', async ({ page }) => {
+test('main thread omits default sender and does not show 主 Agent', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['role']);
   srv = await startServer({ script: 'basic.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
   await openApp(page, srv);
@@ -86,13 +86,6 @@ test('main thread omits default sender and shows a switched role', async ({ page
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
   await expect(page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-sender]')).toHaveCount(0);
   await expect(page.locator('#center-thread')).not.toContainText('主 Agent');
-
-  await newConversation(page);
-  await page.getByTestId('composer-agent').click();
-  await page.locator('[data-action=pick-dispatch][data-role-id=coder]').click();
-  await send(page, 'coder role');
-  await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
-  await expect(page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-sender]').first()).toHaveText('编码');
 });
 
 test('stream cut retries and finishes', async ({ page }) => {

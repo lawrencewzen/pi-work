@@ -134,6 +134,13 @@ test('kernel path: PATCH while busy is 409 err_role_busy', { timeout: 30000 }, a
     assert.equal(patched.status, 409);
     assert.equal(patched.body.error, 'err_role_busy');
     assert.equal(patched.body.status, 'running');
+    const modelPatch = await request(srv.base, 'PATCH', `/api/conversations/${conv.body.id}`, {
+      modelSourceId: null,
+      modelId: null,
+    });
+    assert.equal(modelPatch.status, 200);
+    assert.equal(modelPatch.body.modelSourceId, null);
+    assert.equal(modelPatch.body.modelId, null);
   } finally {
     killChild(srv.proc);
     await new Promise((resolve) => srv.proc.once('exit', resolve));

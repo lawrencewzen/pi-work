@@ -48,11 +48,11 @@
 |---|---|---|
 | `POST /workspaces` | `{name, path}` | `201 {id,name,path}`；path 不存在 → 400 |
 | `GET /workspaces` | | `[{id,name,path}]` |
-| `POST /workspaces/:wid/conversations` | `{title?, roleId?}` | `201 {id, workspaceId, title, status:'idle'}`。若仍带 `pipelineId` 则忽略、不报错 |
+| `POST /workspaces/:wid/conversations` | `{title?, roleId?, modelSourceId?, modelId?}` | `201 {id, workspaceId, title, status:'idle', modelSourceId, modelId}`。`modelSourceId`/`modelId` 成对可选；都缺或都为 `null` 表示跟随默认角色绑定。来源不存在、或该来源模型列表里没有这个模型 → 400 `{errors}`。若仍带 `pipelineId` 则忽略、不报错 |
 | `GET /workspaces/:wid/conversations?q=` | | 列表，按更新时间倒序 |
-| `GET /conversations/:cid` | | `{id,title,status,roleId,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
+| `GET /conversations/:cid` | | `{id,title,status,roleId,modelSourceId,modelId,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
 | `POST /conversations/:cid/messages` | `{text}` | `202 {runId, status:'running'}`。对话忙时用 `whenBusy:'steer'` 插入当前运行，不返回 409 |
-| `PATCH /conversations/:cid` | `{roleId?}` | `200 {id, roleId, status, agents}`。`agents` 是切换后的侧栏角色列表，客户端应立刻用它刷新，不必整页刷新。空 `roleId` 表示默认 Agent。若仍带 `pipelineId` 则忽略、不报错。`running` 时 409 `{error:'err_role_busy'}`。未知角色 400 |
+| `PATCH /conversations/:cid` | `{roleId?, modelSourceId?, modelId?}` | `200 {id, roleId, modelSourceId, modelId, status, agents}`。`agents` 是切换后的侧栏角色列表，客户端应立刻用它刷新，不必整页刷新。空 `roleId` 表示默认 Agent。`modelSourceId`/`modelId` 为 `null` 表示跟随默认绑定。来源不存在或模型不在该来源列表里 → 400 `{errors}`。若仍带 `pipelineId` 则忽略、不报错。改 `roleId` 且 `running` 时 409 `{error:'err_role_busy'}`。只改模型时运行中也可改，下一轮生效。未知角色 400 |
 | `POST /conversations/:cid/stop` | | `200 {status:'stopped'}`。中止当前运行，并停掉后台子 Agent |
 | `GET /conversations/:cid/changes` | | `[{path, added, removed, toolCallId}]`（按文件聚合）。基线是该路径第一次 `write`/`edit` 的 `before`，对比工作区里该文件的当前内容。单份 before/after 或当前文件超过 1 MB 时该项带 `error:'文件过大'` |
 | `GET /workspaces/:wid/files?path=` | | `{path, content}`；越界 → 403 `{error:'E_SANDBOX'}` |
@@ -102,7 +102,7 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...
 | `status-dot` (+`data-status`) | 会话状态点 |
 | `chat-input` / `chat-send` | 输入与发送 |
 | `composer-context` | 作曲栏上下文用量（`—` 或 `1.2k / 128k`） |
-| `composer-agent` / `composer-agent-menu` | 作曲栏当前模型；点击列出角色并可切换 |
+| `composer-agent` / `composer-agent-menu` | 作曲栏当前模型；点击按来源列出模型，可选「默认」跟随设置绑定 |
 | `message` (+`data-role`) / `message-body` | 消息与渲染体（Markdown → HTML） |
 | `tool-row` (+`data-tool`,`data-path`) / `tool-row-path` / `tool-row-added` / `tool-row-removed` / `tool-row-detail` | 工具行（点击展开 detail） |
 | `status-bar` / `status-text` / `btn-stop` | 状态条。运行中输入框保持可用 |

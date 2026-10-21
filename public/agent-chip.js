@@ -1,5 +1,5 @@
-// Composer dispatch chip. Model ids come only from the role, settings, or the
-// signed-in session default the server actually uses. Nothing here invents one.
+// Composer model chip. Ids come from the conversation override, the role
+// binding, or the first usable source. Nothing here invents one.
 
 function trimmed(value) {
   if (typeof value !== 'string') return '';
@@ -143,24 +143,14 @@ export function needsFreshKey({ previousUrl = '', nextUrl = '', apiKey = '', mas
   return isMaskedOrEmptyKey(apiKey, maskedKey);
 }
 
-/** Role that the next turn will dispatch. */
-export function activeDispatchTarget({ conv, roles } = {}) {
-  const list = Array.isArray(roles) ? roles : [];
-  if (!conv) return { roleId: '', role: null };
-  const roleId = trimmed(conv.roleId);
-  const role = list.find((r) => r && r.id === roleId) || null;
-  return { roleId, role };
-}
-
-/** Visible chip text: `编码 · grok-build`, or `Agent · grok-build` for the default role. */
-export function composerAgentText({ agentName = 'Agent', model = '', roleLabel = '' } = {}) {
-  const name = trimmed(agentName) || 'Agent';
-  const id = trimmed(model);
-  const role = trimmed(roleLabel);
-  const head = role && role !== name ? role : name;
-  if (id) return `${head} · ${id}`;
-  if (role && role !== name) return `${name} · ${role}`;
-  return name;
+/** Conversation override when that source is still usable; otherwise null. */
+export function resolveConversationModel({ conv, sources, grokSignedIn = false } = {}) {
+  const sourceId = trimmed(conv?.modelSourceId);
+  const model = trimmed(conv?.modelId);
+  if (!sourceId || !model) return null;
+  const source = sourceList(sources).find((item) => item.id === sourceId);
+  if (!source || !sourceUsable(source, { grokSignedIn })) return null;
+  return { source, model };
 }
 
 export function composerAgentPresentation({
@@ -169,20 +159,23 @@ export function composerAgentPresentation({
   models,
   sources,
   grokSignedIn = false,
-  agentName = 'Agent',
-  roleLabel = '',
 } = {}) {
-  const target = activeDispatchTarget({ conv, roles });
-  const model = resolveDispatchModel({
-    role: target.role,
-    roleId: target.roleId,
+  const pinned = resolveConversationModel({ conv, sources, grokSignedIn });
+  const list = Array.isArray(roles) ? roles : [];
+  const roleId = trimmed(conv?.roleId);
+  const role = list.find((item) => item && item.id === roleId) || null;
+  const fallback = resolveDispatchModel({
+    role,
+    roleId,
     models,
     sources,
     grokSignedIn,
   });
+  const model = pinned?.model || fallback;
   return {
-    text: composerAgentText({ agentName, model, roleLabel }),
+    text: model,
     model,
-    roleId: target.roleId,
+    followingDefault: !pinned,
+    sourceId: pinned?.source?.id || '',
   };
 }

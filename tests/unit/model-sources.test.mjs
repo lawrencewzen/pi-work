@@ -8,6 +8,7 @@ const settings = await load('src/core/settings.mjs');
 const {
   migrateLegacySettings,
   resolveRoleTarget,
+  resolveConversationModelPatch,
   applySourcePatch,
   validateRoleModels,
   publicSource,
@@ -438,4 +439,32 @@ test('stored lastTest keeps probe code and status and still redacts the error', 
     error: 'timeout',
     code: 'timeout',
   });
+});
+
+test('conversation model patch accepts a listed pair and rejects unknown source or model', () => {
+  const settings = {
+    sources: [apiSource({ id: 'src1', models: ['gpt-4o', 'gpt-4.1'] })],
+  };
+  assert.deepEqual(resolveConversationModelPatch(settings, {}), { present: false });
+  assert.deepEqual(resolveConversationModelPatch(settings, { modelSourceId: null, modelId: null }), {
+    present: true,
+    ok: true,
+    value: { modelSourceId: null, modelId: null },
+  });
+  assert.deepEqual(resolveConversationModelPatch(settings, { modelSourceId: 'src1', modelId: 'gpt-4.1' }), {
+    present: true,
+    ok: true,
+    value: { modelSourceId: 'src1', modelId: 'gpt-4.1' },
+  });
+  assert.deepEqual(resolveConversationModelPatch(settings, { modelSourceId: 'missing', modelId: 'gpt-4o' }), {
+    present: true,
+    ok: false,
+    errors: ['unknown model source'],
+  });
+  assert.deepEqual(resolveConversationModelPatch(settings, { modelSourceId: 'src1', modelId: 'nope' }), {
+    present: true,
+    ok: false,
+    errors: ['unknown model'],
+  });
+  assert.equal(resolveConversationModelPatch(settings, { modelSourceId: 'src1' }).ok, false);
 });

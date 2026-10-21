@@ -303,7 +303,16 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
       const settings = await getSettings();
       const grokSignedIn = await signedIn();
       const roleId = conv?.roleId || undefined;
-      let target = resolveRoleTarget(settings, { roleId, grokSignedIn });
+      const sourceId = typeof conv?.modelSourceId === 'string' ? conv.modelSourceId.trim() : '';
+      const modelId = typeof conv?.modelId === 'string' ? conv.modelId.trim() : '';
+      let target = null;
+      if (sourceId && modelId) {
+        const source = normalizeSources(settings?.sources).find((item) => item.id === sourceId);
+        if (source && sourceAvailable(source, { grokSignedIn })) {
+          target = { source, model: modelId };
+        }
+      }
+      if (!target) target = resolveRoleTarget(settings, { roleId, grokSignedIn });
       if (target?.source?.kind === 'grok' && !(await tokenReady())) {
         target = resolveRoleTarget(settings, { roleId, grokSignedIn: false });
         if (target?.source?.kind === 'grok') target = null;

@@ -85,20 +85,20 @@ test('context chip shows reported usage over the configured window', async ({ pa
 
   await page.reload();
   await expect(page.getByTestId('composer-context')).toHaveText('16.4k / 200k');
-  await expect(chip(page)).toHaveText('Agent');
+  await expect(chip(page)).toHaveText(/未配置模型|No model configured/);
 });
 
 test('context chip stays an em dash when the model reports no usage', async ({ page }) => {
   const { ws, token } = await boot({ script: 'no-usage.json' });
   await openApp(page, token);
-  await expect(chip(page)).toHaveText('Agent');
+  await expect(chip(page)).toHaveText(/未配置模型|No model configured/);
 
   await createWorkspace(page, 'plain', ws);
   await createConversation(page);
   await send(page, 'hello');
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
   await expect(page.getByTestId('composer-context')).toHaveText(EM);
-  await expect(chip(page)).toHaveText('Agent');
+  await expect(chip(page)).toHaveText(/未配置模型|No model configured/);
 
   const cid = await conversationId(page);
   const conv = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
@@ -107,16 +107,16 @@ test('context chip stays an em dash when the model reports no usage', async ({ p
 
   await page.reload();
   await expect(page.getByTestId('composer-context')).toHaveText(EM);
-  await expect(chip(page)).toHaveText('Agent');
+  await expect(chip(page)).toHaveText(/未配置模型|No model configured/);
 });
 
-test('agent chip lists configured roles and switches the conversation target', async ({ page }) => {
-  const { ws, token } = await boot({
+test('agent chip lists models by source and switches the conversation model', async ({ page }) => {
+  const { ws, token, sourceId } = await boot({
     script: 'no-usage.json',
     models: { default: { model: 'grok-4.6' }, coder: { model: 'grok-4' } },
   });
   await openApp(page, token);
-  await expect(chip(page)).toHaveText('Agent · grok-4.6');
+  await expect(chip(page)).toHaveText('grok-4.6');
   await expect(page.getByTestId('composer-agent')).toHaveAttribute('aria-expanded', 'false');
 
   await page.getByTestId('composer-agent').click();
@@ -125,42 +125,84 @@ test('agent chip lists configured roles and switches the conversation target', a
 
   await createWorkspace(page, 'dispatch', ws);
   await createConversation(page);
-  await expect(chip(page)).toHaveText('Agent · grok-4.6');
+  await expect(chip(page)).toHaveText('grok-4.6');
   await expect(page.getByTestId('composer-context')).toHaveText(EM);
 
   await page.getByTestId('composer-agent').click();
   await expect(menu(page)).toBeVisible();
   await expect(page.getByTestId('composer-agent')).toHaveAttribute('aria-expanded', 'true');
+  await expect(menu(page)).toContainText(/默认（grok-4\.6）|Default \(grok-4\.6\)/);
+  await expect(menu(page)).toContainText('Chip');
   await expect(menu(page)).toContainText('grok-4.6');
   await expect(menu(page)).toContainText('grok-4');
-  await expect(menu(page)).toContainText(/选择角色|Choose role/);
+  await expect(menu(page).locator('[data-action=pick-dispatch]')).toHaveCount(0);
+  await expect(menu(page).locator('[data-role-id]')).toHaveCount(0);
 
-  await menu(page).locator('[data-role-id="coder"]').click();
+  await menu(page).locator('[data-action=pick-model][data-model="grok-4"]').click();
   await expect(menu(page)).toBeHidden();
-  await expect(chip(page)).toHaveText('编码 · grok-4');
+  await expect(chip(page)).toHaveText('grok-4');
   await expect(page.getByTestId('composer-agent')).toHaveAttribute('title', /grok-4/);
 
   await send(page, 'hello');
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
-  await expect(chip(page)).toHaveText('编码 · grok-4');
+  await expect(chip(page)).toHaveText('grok-4');
 
   const cid = await conversationId(page);
-  const coder = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
-  expect(coder.body.roleId).toBe('coder');
+  const pinned = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
+  expect(pinned.body.modelSourceId).toBe(sourceId);
+  expect(pinned.body.modelId).toBe('grok-4');
 
   await page.getByTestId('composer-agent').click();
   await expect(menu(page).locator('[data-pipeline-id]')).toHaveCount(0);
-  await menu(page).locator('[data-action="pick-dispatch"][data-role-id=""]').click();
-  await expect(chip(page)).toHaveText('Agent · grok-4.6');
+  await menu(page).locator('[data-action=pick-model][data-follow-default="1"]').click();
+  await expect(chip(page)).toHaveText('grok-4.6');
   const cleared = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
-  expect(cleared.body.roleId).toBeNull();
+  expect(cleared.body.modelSourceId).toBeNull();
+  expect(cleared.body.modelId).toBeNull();
 
   await page.reload();
-  await expect(chip(page)).toHaveText('Agent · grok-4.6');
+  await expect(chip(page)).toHaveText('grok-4.6');
   await expect(page.getByTestId('composer-context')).toHaveText(EM);
 });
 
-test('agent chip does not open while a run is busy', async ({ page }) => {
+test('draft model choice is saved on the conversation and can return to default', async ({ page }) => {
+  const { ws, token, sourceId } = await boot({
+    script: 'no-usage.json',
+    models: { default: { model: 'grok-4.6' }, coder: { model: 'grok-4' } },
+  });
+  await openApp(page, token);
+  await createWorkspace(page, 'draft-model', ws);
+  await createConversation(page);
+  await expect(chip(page)).toHaveText('grok-4.6');
+
+  await page.getByTestId('composer-agent').click();
+  await menu(page).locator('[data-action=pick-model][data-model="grok-4"]').click();
+  await expect(chip(page)).toHaveText('grok-4');
+
+  await send(page, 'hello');
+  await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
+  await expect(chip(page)).toHaveText('grok-4');
+
+  const cid = await conversationId(page);
+  const created = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
+  expect(created.body.modelSourceId).toBe(sourceId);
+  expect(created.body.modelId).toBe('grok-4');
+
+  await page.reload();
+  await expect(chip(page)).toHaveText('grok-4');
+
+  await page.getByTestId('composer-agent').click();
+  await menu(page).locator('[data-action=pick-model][data-follow-default="1"]').click();
+  await expect(chip(page)).toHaveText('grok-4.6');
+  const cleared = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
+  expect(cleared.body.modelSourceId).toBeNull();
+  expect(cleared.body.modelId).toBeNull();
+
+  await page.reload();
+  await expect(chip(page)).toHaveText('grok-4.6');
+});
+
+test('agent chip stays usable while a run is busy', async ({ page }) => {
   const { ws, token } = await boot({
     script: 'slow.json',
     models: { default: { model: 'grok-4.6' }, coder: { model: 'grok-4' } },
@@ -172,11 +214,12 @@ test('agent chip does not open while a run is busy', async ({ page }) => {
   await expect(statusText(page)).toContainText(/running|运行/i);
 
   await page.getByTestId('composer-agent').click();
-  await expect(page.locator('.toast-msg')).toHaveText(/运行中无法切换角色|Cannot switch role while running/);
-  await expect(menu(page)).toBeHidden();
-  await expect(chip(page)).toHaveText('Agent · grok-4.6');
+  await expect(menu(page)).toBeVisible();
+  await expect(page.locator('.toast-msg')).toHaveCount(0);
+  await menu(page).locator('[data-action=pick-model][data-model="grok-4"]').click();
+  await expect(chip(page)).toHaveText('grok-4');
 
   const cid = await conversationId(page);
   const conv = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
-  expect(conv.body.roleId).toBeNull();
+  expect(conv.body.modelId).toBe('grok-4');
 });

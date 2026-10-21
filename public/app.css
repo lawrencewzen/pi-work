@@ -463,6 +463,7 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
   border: none; background: transparent; cursor: pointer; font-size: 13px; color: var(--ink); text-align: left;
 }
 .chip-menu-item:hover { background: var(--hover); }
+.chip-menu-item:disabled { cursor: not-allowed; opacity: .5; }
 .chip-menu-item[aria-selected="true"]::after { content: '✓'; color: var(--mute); }
 .chip-menu-model { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
 .composer-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }

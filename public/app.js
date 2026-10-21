@@ -14,7 +14,7 @@ import {
   toolGroupPreview,
 } from './tool-groups.js';
 import { composerContextText } from './usage.js';
-import { composerAgentPresentation, resolveDispatchModel } from './agent-chip.js';
+import { composerAgentPresentation, resolveDispatchModel, sourceUsable } from './agent-chip.js';
 import {
   renderModelsPane,
   renderModelPop,
@@ -65,8 +65,8 @@ const state = {
   conversations: [],
   activeConversationId: null,
   activeConversationData: null,
-  // 尚未创建的新对话（草稿）选好的角色，发出第一条消息时随创建请求带上
-  draft: { roleId: '' },
+  // 尚未创建的新对话（草稿）选好的模型，发出第一条消息时随创建请求带上
+  draft: { modelSourceId: '', modelId: '' },
   activeRightTab: 'diff', // 'diff' | 'file' | 'markdown' | 'editor'
   changes: [],
   activeFilePath: null,
@@ -855,6 +855,8 @@ export async function refreshConversationMeta(cid) {
     if (conv.usage) state.activeConversationData.usage = conv.usage;
     if (conv.contextWindow != null) state.activeConversationData.contextWindow = conv.contextWindow;
     if ('roleId' in conv) state.activeConversationData.roleId = conv.roleId || null;
+    if ('modelSourceId' in conv) state.activeConversationData.modelSourceId = conv.modelSourceId || null;
+    if ('modelId' in conv) state.activeConversationData.modelId = conv.modelId || null;
     if (conv.agents) state.activeConversationData.agents = conv.agents;
     if (Array.isArray(conv.messages)) {
       const local = state.activeConversationData.messages || [];
@@ -1120,8 +1122,8 @@ export async function sendMessage(text) {
   if (!text || !text.trim()) return;
   if (!state.activeConversationId) {
     // 没有选中的对话时，直接发送即新建一个对话；失败则把内容放回输入框
-    const { roleId } = state.draft;
-    const conv = await createNewConversation({ roleId });
+    const { modelSourceId, modelId } = state.draft;
+    const conv = await createNewConversation({ modelSourceId, modelId });
     if (!conv?.id) {
       const composer = document.querySelector('[data-testid="chat-input"]');
       if (composer && !composer.value.trim()) composer.value = text;
@@ -1193,10 +1195,14 @@ export async function createNewConversation(opts = {}) {
   }
   const body = { title: opts.title || '' };
   if (opts.roleId) body.roleId = opts.roleId;
+  if (opts.modelSourceId && opts.modelId) {
+    body.modelSourceId = opts.modelSourceId;
+    body.modelId = opts.modelId;
+  }
   try {
     const conv = await api(`/api/workspaces/${encodeURIComponent(state.activeWorkspaceId)}/conversations`, 'POST', body);
     await loadConversations(state.activeWorkspaceId);
-    state.draft = { roleId: '' };
+    state.draft = { modelSourceId: '', modelId: '' };
     if (conv.id) await selectConversation(conv.id);
     return conv;
   } catch (err) {
@@ -1496,8 +1502,6 @@ function renderComposerContext() {
   el.textContent = composerContextText(state.activeConversationData);
 }
 
-const DISPATCH_BUSY = new Set(['running']);
-
 function dispatchContext() {
   return {
     conv: state.activeConversationId ? state.activeConversationData : state.draft,
@@ -1505,7 +1509,6 @@ function dispatchContext() {
     models: state.settings?.models || {},
     sources: state.settings?.sources || [],
     grokSignedIn: Boolean(state.settings?.grok?.signedIn),
-    agentName: t('agent_name'),
   };
 }
 
@@ -1513,16 +1516,10 @@ function renderComposerAgent() {
   const label = document.getElementById('composer-agent-chip');
   const btn = document.getElementById('composer-agent-chip-btn');
   if (!label) return;
-  const ctx = dispatchContext();
-  const base = composerAgentPresentation(ctx);
-  const roleLabel = base.roleId && base.roleId !== 'default' ? localizeRoleLabel(base.roleId) : '';
-  const view = composerAgentPresentation({ ...ctx, roleLabel });
-  label.textContent = view.text;
+  const view = composerAgentPresentation(dispatchContext());
+  label.textContent = view.model || t('chip_no_model');
   if (btn) {
-    const detail = view.model
-      ? (roleLabel ? `${roleLabel} · ${view.model}` : view.model)
-      : roleLabel;
-    btn.title = detail ? `${t('chip_agent_title')}: ${detail}` : t('chip_agent_title');
+    btn.title = view.model ? `${t('chip_agent_title')}: ${view.model}` : t('chip_no_model');
   }
 }
 
@@ -1543,26 +1540,39 @@ function agentMenuItem({ label, model, selected, attrs }) {
     `</button>`;
 }
 
+function listedComposerSources() {
+  const sources = Array.isArray(state.settings?.sources) ? state.settings.sources : [];
+  return sources.filter((source) => source && Array.isArray(source.models) && source.models.some((name) => typeof name === 'string' && name.trim()));
+}
+
 function renderAgentMenuHtml() {
   const conv = (state.activeConversationId ? state.activeConversationData : state.draft) || {};
-  const activeRole = (conv.roleId && conv.roleId !== 'default') ? conv.roleId : '';
-  const roles = (state.roles || []).filter((r) => r && r.id && r.id !== 'default');
+  const grokSignedIn = Boolean(state.settings?.grok?.signedIn);
+  const defaultModel = modelForDispatchRole((state.roles || []).find((role) => role?.id === 'default') || null);
+  const followDefault = !String(conv.modelSourceId || '').trim() || !String(conv.modelId || '').trim();
+  const selectedSourceId = followDefault ? '' : String(conv.modelSourceId || '');
+  const selectedModel = followDefault ? '' : String(conv.modelId || '');
+  const defaultLabel = defaultModel ? t('chip_follow_default', { model: defaultModel }) : t('chip_follow_default_none');
   const rows = [
     agentMenuItem({
-      label: t('conv_default_agent'),
-      model: modelForDispatchRole(null),
-      selected: !activeRole,
-      attrs: 'data-action="pick-dispatch" data-role-id=""',
+      label: defaultLabel,
+      selected: followDefault,
+      attrs: 'data-action="pick-model" data-follow-default="1" data-source-id="" data-model=""',
     }),
   ];
-  if (roles.length) {
-    rows.push(`<div class="chip-menu-label">${escapeHtml(t('chip_pick_role'))}</div>`);
-    for (const role of roles) {
+  for (const source of listedComposerSources()) {
+    const title = source.name || source.id || '';
+    rows.push(`<div class="chip-menu-label">${escapeHtml(title)}</div>`);
+    for (const raw of source.models || []) {
+      const name = typeof raw === 'string' ? raw.trim() : '';
+      if (!name) continue;
+      const selected = !followDefault && selectedSourceId === source.id && selectedModel === name;
+      const usable = sourceUsable(source, { grokSignedIn });
+      const disabled = usable ? '' : ' disabled';
       rows.push(agentMenuItem({
-        label: localizeRoleLabel(role.id || role.name),
-        model: modelForDispatchRole(role),
-        selected: activeRole === role.id,
-        attrs: `data-action="pick-dispatch" data-role-id="${escapeHtml(role.id)}"`,
+        label: name,
+        selected,
+        attrs: `data-action="pick-model" data-source-id="${escapeHtml(source.id)}" data-model="${escapeHtml(name)}"${disabled}`,
       }));
     }
   }
@@ -1585,9 +1595,9 @@ function toggleAgentMenu() {
     showToast('err_select_workspace');
     return;
   }
-  const status = state.activeConversationId ? (state.activeConversationData?.status || 'idle') : 'idle';
-  if (DISPATCH_BUSY.has(status)) {
-    showToast('err_role_busy');
+  if (!listedComposerSources().length) {
+    closeAgentMenu();
+    openSettings('models');
     return;
   }
   menu.innerHTML = renderAgentMenuHtml();
@@ -1595,33 +1605,33 @@ function toggleAgentMenu() {
   document.getElementById('composer-agent-chip-btn')?.setAttribute('aria-expanded', 'true');
 }
 
-export async function pickDispatchTarget(el) {
+export async function pickComposerModel(el) {
   if (!el) return;
+  const follow = el.getAttribute('data-follow-default') === '1';
+  const modelSourceId = follow ? null : (el.getAttribute('data-source-id') || null);
+  const modelId = follow ? null : (el.getAttribute('data-model') || null);
   const cid = state.activeConversationId;
   if (!cid) {
-    // 草稿对话：只记在本地，创建时带上
-    state.draft = { roleId: el.getAttribute('data-role-id') || '' };
+    state.draft = { modelSourceId: modelSourceId || '', modelId: modelId || '' };
     closeAgentMenu();
     renderStatusBar();
     return;
   }
-  const patch = { roleId: el.getAttribute('data-role-id') || null };
   try {
-    const res = await api(`/api/conversations/${encodeURIComponent(cid)}`, 'PATCH', patch);
+    const res = await api(`/api/conversations/${encodeURIComponent(cid)}`, 'PATCH', { modelSourceId, modelId });
     if (state.activeConversationId === cid && state.activeConversationData) {
-      state.activeConversationData.roleId = res.roleId;
-      if (Array.isArray(res.agents)) state.activeConversationData.agents = res.agents;
+      state.activeConversationData.modelSourceId = res.modelSourceId ?? null;
+      state.activeConversationData.modelId = res.modelId ?? null;
     }
     const item = state.conversations.find((c) => c.id === cid);
     if (item) {
-      item.roleId = res.roleId;
-      if (Array.isArray(res.agents)) item.agents = res.agents;
+      item.modelSourceId = res.modelSourceId ?? null;
+      item.modelId = res.modelId ?? null;
     }
     closeAgentMenu();
     renderStatusBar();
-    renderConversations();
   } catch (err) {
-    showToast(isToastKey(err.message) ? err.message : (err.message || 'err_role_switch'));
+    showToast(isToastKey(err.message) ? err.message : (err.message || 'err_model_switch'));
   }
 }
 
@@ -3312,7 +3322,7 @@ export async function startNewConversation(wid) {
     showToast('err_select_workspace');
     return;
   }
-  state.draft = { roleId: '' };
+  state.draft = { modelSourceId: '', modelId: '' };
   if (state.activeWorkspaceId !== target) {
     await selectWorkspace(target, { draft: true });
   } else if (state.activeConversationId) {
@@ -4271,8 +4281,8 @@ document.addEventListener('click', (e) => {
     case 'toggle-agent-picker':
       toggleAgentMenu();
       break;
-    case 'pick-dispatch':
-      pickDispatchTarget(actionEl);
+    case 'pick-model':
+      pickComposerModel(actionEl);
       break;
     default:
       if (action === 'toggle-model-pick' || (action && action.startsWith('ms-'))) {

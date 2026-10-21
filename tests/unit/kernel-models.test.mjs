@@ -96,6 +96,75 @@ test('role routing follows bindings and refreshes providers when a source change
   assert.equal(models.getModel(main.provider, main.modelId), undefined);
 });
 
+test('modelFor prefers a conversation model, falls back when that source is down, and leaves subagents on the role binding', async () => {
+  const models = createModels();
+  let settings = {
+    version: 2,
+    sources: [
+      {
+        id: 'srcdefault',
+        kind: 'api',
+        vendor: 'custom',
+        name: 'Default',
+        baseUrl: 'http://127.0.0.1:4101/v1',
+        apiKey: KEY_DEFAULT,
+        models: ['model-default'],
+      },
+      {
+        id: 'srccoder',
+        kind: 'api',
+        vendor: 'custom',
+        name: 'Coder',
+        baseUrl: 'http://127.0.0.1:4102/v1',
+        apiKey: KEY_CODER,
+        models: ['model-coder'],
+      },
+    ],
+    models: {
+      default: { sourceId: 'srcdefault', model: 'model-default' },
+      coder: { sourceId: 'srccoder', model: 'model-coder' },
+    },
+  };
+  const routes = createKernelModels({
+    models,
+    getSettings: async () => settings,
+    env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
+  });
+
+  const pinned = await routes.modelFor({
+    roleId: 'coder',
+    modelSourceId: 'srcdefault',
+    modelId: 'model-default',
+  });
+  assert.equal(pinned.modelId, 'model-default');
+  const main = await routes.modelFor({ roleId: null });
+  assert.equal(pinned.provider, main.provider);
+
+  const child = await routes.modelFor({ roleId: 'coder' });
+  assert.equal(child.modelId, 'model-coder');
+  assert.notEqual(child.provider, pinned.provider);
+
+  const missing = await routes.modelFor({
+    roleId: 'coder',
+    modelSourceId: 'missing',
+    modelId: 'ghost',
+  });
+  assert.equal(missing.modelId, 'model-coder');
+
+  settings = {
+    ...settings,
+    sources: settings.sources.map((source) => (
+      source.id === 'srcdefault' ? { ...source, apiKey: '' } : source
+    )),
+  };
+  const fallback = await routes.modelFor({
+    roleId: null,
+    modelSourceId: 'srcdefault',
+    modelId: 'model-default',
+  });
+  assert.equal(fallback.modelId, 'model-coder');
+});
+
 function scrub(text) {
   let out = String(text ?? '');
   for (const secret of SECRETS) {
