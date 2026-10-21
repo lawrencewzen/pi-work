@@ -33,7 +33,6 @@ import {
   gitImportSource,
   closeGitImportPops,
 } from './git-import-ui.js';
-import { renderWorkflowTab, handleWorkflowAction, filterWorkflow, pipelineTitle, captureWorkflowDraft } from './workflow-settings.js';
 import {
   renderAgentsPane,
   renderAgentSkillsPop,
@@ -60,8 +59,8 @@ const state = {
   conversations: [],
   activeConversationId: null,
   activeConversationData: null,
-  // 尚未创建的新对话（草稿）选好的角色 / 流水线，发出第一条消息时随创建请求带上
-  draft: { roleId: '', pipelineId: '' },
+  // 尚未创建的新对话（草稿）选好的角色，发出第一条消息时随创建请求带上
+  draft: { roleId: '' },
   activeRightTab: 'diff', // 'diff' | 'file' | 'markdown' | 'editor'
   changes: [],
   activeFilePath: null,
@@ -70,7 +69,6 @@ const state = {
   userPickedFile: false,
   settings: {},
   roles: [],
-  pipelines: [],
   plugins: [],
   skills: [],
   pluginQuery: '',
@@ -84,13 +82,9 @@ const state = {
   appearance: localStorage.getItem('piwork_appearance') || 'light',
   fontSize: localStorage.getItem('piwork_font_size') || 'md',
   activeSettingsTab: 'general',
-  workflowSection: 'pipelines',
-  workflowEditor: null,
-  workflowQuery: '',
   expandedTools: new Set(),
   expandedToolGroups: new Set(),
   expandedToolOutputs: new Set(),
-  expandedSubagents: new Set(),
   viewingAgentId: null,
   viewingAgent: null,
   workspaceTree: [],
@@ -701,7 +695,6 @@ export async function loadInitialData() {
   applyI18n();
 
   try { state.roles = await api('/api/roles'); } catch { state.roles = []; }
-  try { state.pipelines = await api('/api/pipelines'); } catch { state.pipelines = []; }
   try { state.plugins = await api('/api/plugins'); } catch { state.plugins = []; }
   try { state.skills = await api('/api/skills'); } catch { state.skills = []; }
   try { state.about = await api('/api/about'); } catch { state.about = {}; }
@@ -902,7 +895,7 @@ function toolWritesWorkspace(tool) {
 }
 
 // write/edit/bash land files before the next paint. Step and run events cover
-// bash-created paths and pipeline handoff, including when the tool row was missed.
+// bash-created paths, including when the tool row was missed.
 function scheduleWorkspaceTreeRefresh() {
   const wid = state.activeWorkspaceId;
   if (!wid) return;
@@ -1025,8 +1018,6 @@ export async function refreshConversationMeta(cid) {
     if (conv.usage) state.activeConversationData.usage = conv.usage;
     if (conv.contextWindow != null) state.activeConversationData.contextWindow = conv.contextWindow;
     if ('roleId' in conv) state.activeConversationData.roleId = conv.roleId || null;
-    if ('pipelineId' in conv) state.activeConversationData.pipelineId = conv.pipelineId || null;
-    if (conv.pipelineStep != null) state.activeConversationData.pipelineStep = conv.pipelineStep;
     if (conv.agents) state.activeConversationData.agents = conv.agents;
     if (Array.isArray(conv.messages)) {
       const local = state.activeConversationData.messages || [];
@@ -1292,8 +1283,8 @@ export async function sendMessage(text) {
   if (!text || !text.trim()) return;
   if (!state.activeConversationId) {
     // 没有选中的对话时，直接发送即新建一个对话；失败则把内容放回输入框
-    const { roleId, pipelineId } = state.draft;
-    const conv = await createNewConversation(pipelineId ? { pipelineId } : { roleId });
+    const { roleId } = state.draft;
+    const conv = await createNewConversation({ roleId });
     if (!conv?.id) {
       const composer = document.querySelector('[data-testid="chat-input"]');
       if (composer && !composer.value.trim()) composer.value = text;
@@ -1364,11 +1355,10 @@ export async function createNewConversation(opts = {}) {
   }
   const body = { title: opts.title || '' };
   if (opts.roleId) body.roleId = opts.roleId;
-  if (opts.pipelineId) body.pipelineId = opts.pipelineId;
   try {
     const conv = await api(`/api/workspaces/${encodeURIComponent(state.activeWorkspaceId)}/conversations`, 'POST', body);
     await loadConversations(state.activeWorkspaceId);
-    state.draft = { roleId: '', pipelineId: '' };
+    state.draft = { roleId: '' };
     if (conv.id) await selectConversation(conv.id);
     return conv;
   } catch (err) {
@@ -1674,7 +1664,6 @@ function dispatchContext() {
   return {
     conv: state.activeConversationId ? state.activeConversationData : state.draft,
     roles: state.roles,
-    pipelines: state.pipelines,
     models: state.settings?.models || {},
     sources: state.settings?.sources || [],
     grokSignedIn: Boolean(state.settings?.grok?.signedIn),
@@ -1718,15 +1707,13 @@ function agentMenuItem({ label, model, selected, attrs }) {
 
 function renderAgentMenuHtml() {
   const conv = (state.activeConversationId ? state.activeConversationData : state.draft) || {};
-  const activePipe = conv.pipelineId || '';
-  const activeRole = activePipe ? '' : ((conv.roleId && conv.roleId !== 'default') ? conv.roleId : '');
+  const activeRole = (conv.roleId && conv.roleId !== 'default') ? conv.roleId : '';
   const roles = (state.roles || []).filter((r) => r && r.id && r.id !== 'default');
-  const pipes = state.pipelines || [];
   const rows = [
     agentMenuItem({
       label: t('conv_default_agent'),
       model: modelForDispatchRole(null),
-      selected: !activePipe && !activeRole,
+      selected: !activeRole,
       attrs: 'data-action="pick-dispatch" data-role-id=""',
     }),
   ];
@@ -1736,21 +1723,8 @@ function renderAgentMenuHtml() {
       rows.push(agentMenuItem({
         label: localizeRoleLabel(role.id || role.name),
         model: modelForDispatchRole(role),
-        selected: !activePipe && activeRole === role.id,
+        selected: activeRole === role.id,
         attrs: `data-action="pick-dispatch" data-role-id="${escapeHtml(role.id)}"`,
-      }));
-    }
-  }
-  if (pipes.length) {
-    rows.push(`<div class="chip-menu-label">${escapeHtml(t('chip_pick_pipeline'))}</div>`);
-    for (const pipe of pipes) {
-      const first = pipe.steps?.[0]?.role || '';
-      const role = (state.roles || []).find((r) => r.id === first) || null;
-      rows.push(agentMenuItem({
-        label: pipelineOptionLabel(pipe),
-        model: modelForDispatchRole(role),
-        selected: activePipe === pipe.id,
-        attrs: `data-action="pick-dispatch" data-pipeline-id="${escapeHtml(pipe.id)}" data-role-id="${escapeHtml(first)}"`,
       }));
     }
   }
@@ -1788,33 +1762,21 @@ export async function pickDispatchTarget(el) {
   const cid = state.activeConversationId;
   if (!cid) {
     // 草稿对话：只记在本地，创建时带上
-    const pipelineId = el.getAttribute('data-pipeline-id') || '';
-    state.draft = { pipelineId, roleId: el.getAttribute('data-role-id') || '' };
+    state.draft = { roleId: el.getAttribute('data-role-id') || '' };
     closeAgentMenu();
     renderStatusBar();
     return;
   }
-  const patch = {};
-  if (el.hasAttribute('data-pipeline-id')) {
-    patch.pipelineId = el.getAttribute('data-pipeline-id') || null;
-    const roleId = el.getAttribute('data-role-id');
-    if (roleId) patch.roleId = roleId;
-  } else {
-    patch.roleId = el.getAttribute('data-role-id') || null;
-    patch.pipelineId = null;
-  }
+  const patch = { roleId: el.getAttribute('data-role-id') || null };
   try {
     const res = await api(`/api/conversations/${encodeURIComponent(cid)}`, 'PATCH', patch);
     if (state.activeConversationId === cid && state.activeConversationData) {
       state.activeConversationData.roleId = res.roleId;
-      state.activeConversationData.pipelineId = res.pipelineId;
-      state.activeConversationData.pipelineStep = res.pipelineStep;
       if (Array.isArray(res.agents)) state.activeConversationData.agents = res.agents;
     }
     const item = state.conversations.find((c) => c.id === cid);
     if (item) {
       item.roleId = res.roleId;
-      item.pipelineId = res.pipelineId;
       if (Array.isArray(res.agents)) item.agents = res.agents;
     }
     closeAgentMenu();
@@ -2002,82 +1964,6 @@ export function syncComposerLock() {
   }
 }
 
-export function renderSubagentCardHtml(sa) {
-  if (!sa) return '';
-  const isExpanded = state.expandedSubagents.has(sa.id);
-  const status = sa.status || 'waiting';
-  const statusText = t(`status_${status}`) || status;
-  const progressStr = (sa.totalSteps != null && sa.totalSteps > 0)
-    ? `${sa.step || 0}/${sa.totalSteps}`
-    : `${sa.step || 0} ${t('step_unit')}`;
-  const name = localizeRoleLabel(sa.roleId || sa.name || '');
-
-  let body = '';
-  if (isExpanded) {
-    let toolCallsHtml = '';
-    if (Array.isArray(sa.toolCalls) && sa.toolCalls.length > 0) {
-      toolCallsHtml = `
-        <div style="margin-top:6px;">
-          <strong style="font-size:11px;color:var(--text-muted);">${escapeHtml(t('tool_output'))}:</strong>
-          <div class="tools-feed" style="margin-top:4px;">
-            ${renderToolCallListHtml(sa.toolCalls)}
-          </div>
-        </div>
-      `;
-    } else if (typeof sa.toolCalls === 'number' && sa.toolCalls > 0) {
-      toolCallsHtml = `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${escapeHtml(t('tool_calls_count', { n: sa.toolCalls }))}</div>`;
-    }
-
-    let lastTextHtml = '';
-    if (sa.lastText) {
-      lastTextHtml = `
-        <div class="subagent-task-desc" style="margin-top:6px;">
-          ${renderMarkdown(sa.lastText)}
-        </div>
-      `;
-    }
-
-    body = `
-      <div class="subagent-card-body">
-        <div style="font-size:11.5px;display:flex;gap:12px;color:var(--text-secondary);">
-          <span><strong>${escapeHtml(t('tool_status_label'))}:</strong> ${escapeHtml(statusText)}</span>
-          <span><strong>${escapeHtml(t('step_label'))}:</strong> ${escapeHtml(progressStr)}</span>
-        </div>
-        ${lastTextHtml}
-        ${toolCallsHtml}
-      </div>
-    `;
-  }
-
-  return (
-    `<div class="subagent-card ${isExpanded ? 'subagent-card-expanded' : 'subagent-card-compact'}" data-testid="subagent-card" data-agent-id="${escapeHtml(sa.id)}">` +
-    `<div class="subagent-card-header" data-action="toggle-subagent" data-agent-id="${escapeHtml(sa.id)}">` +
-    `<div class="subagent-card-title">` +
-    `<span class="subagent-role-pill">${escapeHtml(t('subagent_dispatched'))}</span>` +
-    `<span class="status-dot dot-${escapeHtml(status)}"></span>` +
-    `<span class="subagent-card-name">${escapeHtml(name)}</span>` +
-    `<span class="subagent-progress-badge">${escapeHtml(progressStr)}</span>` +
-    `</div>` +
-    `<div class="subagent-card-right">` +
-    `<span class="status-text-${escapeHtml(status)}">${escapeHtml(statusText)}</span>` +
-    `<svg class="chevron-icon icon" viewBox="0 0 24 24" style="transform:${isExpanded ? 'rotate(180deg)' : 'none'}"><polyline points="6 9 12 15 18 9"></polyline></svg>` +
-    `</div>` +
-    `</div>` +
-    body +
-    `</div>`
-  );
-}
-
-export function toggleSubagent(agentId) {
-  if (!agentId) return;
-  if (state.expandedSubagents.has(agentId)) {
-    state.expandedSubagents.delete(agentId);
-  } else {
-    state.expandedSubagents.add(agentId);
-  }
-  renderChatThread();
-}
-
 const DELEGATE_TOOLS = new Set(['delegate', 'subagent']);
 
 function realSubagentRowHtml(agent) {
@@ -2184,8 +2070,6 @@ export function renderChatThread() {
   const msgs = dedupeMessages(conv.messages);
   const allAgents = conv.agents || [];
   const realAgents = allAgents.filter((ag) => isRealSubagent(ag));
-  const cardAgents = allAgents.filter((ag) => !isRealSubagent(ag));
-  const steps = cardAgents.length > 1 ? cardAgents : [];
   let agentsPlaced = false;
 
   const rendered = threadBlocksHtml(msgs, {
@@ -2197,10 +2081,6 @@ export function renderChatThread() {
     },
   });
 
-  if (steps.length) {
-    const firstUser = rendered.findIndex((html) => html.includes('data-role="user"'));
-    rendered.splice(firstUser + 1, 0, ...steps.map((sa) => renderSubagentCardHtml(sa)));
-  }
   if (!agentsPlaced && realAgents.length) rendered.push(agentsCardHtml(realAgents));
 
   const errHtml = llmErrorHtml(conv);
@@ -2412,17 +2292,6 @@ function localizeToolStatus(status) {
     waiting: 'tool_status_pending',
   }[String(status || '').toLowerCase()];
   return key ? t(key) : (status || '');
-}
-
-function pipelineOptionLabel(pipe) {
-  const steps = Array.isArray(pipe?.steps) ? pipe.steps : [];
-  const chain = steps.map((s) => localizeRoleLabel(s?.role || '')).filter(Boolean).join(' → ');
-  const title = pipelineTitle(pipe, { t, localizeRoleLabel });
-  return chain ? `${title} (${chain})` : title;
-}
-
-function workflowCtx() {
-  return { state, t, escapeHtml, api, showToast, localizeRoleLabel, render: renderSettingsModal, confirm: confirmDialog };
 }
 
 function pluginSourceLabel(src) {
@@ -2955,7 +2824,6 @@ export function openSettings(tab = 'general') {
 }
 
 export function closeSettings() {
-  state.workflowEditor = null;
   closeModelPop(state);
   const ui = state.modelsUi;
   if (ui?.tick) {
@@ -2979,7 +2847,6 @@ function gitImportCtx() {
 }
 
 export function renderSettingsModal() {
-  captureWorkflowDraft(workflowCtx());
   captureAgentDraft(agentCtx());
   let ov = document.getElementById('settings-overlay');
   if (!ov) {
@@ -3013,7 +2880,6 @@ export function renderSettingsModal() {
         <div class="${tTab === 'agents' ? 'on' : ''}" data-action="set-settings-tab" data-tab="agents" data-testid="settings-tab-agents">${escapeHtml(t('settings_tab_agents'))}<span class="sm-nav-new">${escapeHtml(t('settings_tab_new'))}</span></div>
         <div class="${tTab === 'plugins' ? 'on' : ''}" data-action="set-settings-tab" data-tab="plugins">${escapeHtml(t('settings_tab_plugins'))}</div>
         <div class="${tTab === 'skills' ? 'on' : ''}" data-action="set-settings-tab" data-tab="skills">${escapeHtml(t('settings_tab_skills'))}</div>
-        <div class="${tTab === 'workflow' ? 'on' : ''}" data-action="set-settings-tab" data-tab="workflow" data-testid="settings-tab-workflow">${escapeHtml(t('settings_tab_workflow'))}</div>
         <div class="${tTab === 'about' ? 'on' : ''}" data-action="set-settings-tab" data-tab="about">${escapeHtml(t('settings_tab_about'))}</div>
       </div>
       ${pane}
@@ -3105,10 +2971,6 @@ function renderSettingsTabContent(tab) {
         ${renderSkillsListHtml(list, Boolean(catalogQuery(query)))}
       </div>
     `;
-  }
-
-  if (tab === 'workflow') {
-    return renderWorkflowTab(workflowCtx());
   }
 
   if (tab === 'about') {
@@ -3210,23 +3072,20 @@ export function setSettingsTab(tab) {
   state.activeSettingsTab = tab;
   renderSettingsModal();
   if (tab === 'models') refreshGrokStatus();
-  if (tab === 'workflow') refreshWorkflowLists();
   if (tab === 'agents') refreshAgentLists();
 }
 
 async function refreshAgentLists() {
   const stamp = (state.agentRefresh = (state.agentRefresh || 0) + 1);
   try {
-    const [roles, pipelines, skills, plugins, settings] = await Promise.all([
+    const [roles, skills, plugins, settings] = await Promise.all([
       api('/api/roles'),
-      api('/api/pipelines'),
       api('/api/skills'),
       api('/api/plugins'),
       api('/api/settings'),
     ]);
     if (stamp !== state.agentRefresh) return;
     state.roles = roles;
-    state.pipelines = pipelines;
     state.skills = skills;
     state.plugins = plugins;
     state.settings = settings;
@@ -3237,18 +3096,6 @@ async function refreshAgentLists() {
   const active = document.activeElement;
   const typing = active && ['ag-name', 'ag-desc', 'ag-prompt', 'ag-search', 'ag-skill-search'].includes(active.id);
   if (!typing) renderSettingsModal();
-}
-
-async function refreshWorkflowLists() {
-  const stamp = (state.workflowRefresh = (state.workflowRefresh || 0) + 1);
-  try {
-    const [roles, pipelines] = await Promise.all([api('/api/roles'), api('/api/pipelines')]);
-    if (stamp !== state.workflowRefresh) return;
-    state.roles = roles;
-    state.pipelines = pipelines;
-  } catch { /* keep existing lists */ }
-  if (stamp !== state.workflowRefresh) return;
-  if (state.activeSettingsTab === 'workflow' && !state.workflowEditor) renderSettingsModal();
 }
 
 function applyChromeLabels() {
@@ -3516,7 +3363,7 @@ export async function startNewConversation(wid) {
     showToast('err_select_workspace');
     return;
   }
-  state.draft = { roleId: '', pipelineId: '' };
+  state.draft = { roleId: '' };
   if (state.activeWorkspaceId !== target) {
     await selectWorkspace(target, { draft: true });
   } else if (state.activeConversationId) {
@@ -4242,7 +4089,6 @@ window.__app = {
   submitNewSkill,
   closeModal,
   toggleToolDetail,
-  toggleSubagent,
   handleUnauthorized,
 };
 
@@ -4463,9 +4309,6 @@ document.addEventListener('click', (e) => {
     case 'confirm-ok':
       finishConfirm(true);
       break;
-    case 'toggle-subagent':
-      toggleSubagent(actionEl.getAttribute('data-agent-id'));
-      break;
     case 'open-subagent':
       openSubagent(actionEl.getAttribute('data-agent-id'));
       break;
@@ -4491,13 +4334,8 @@ document.addEventListener('click', (e) => {
         });
         break;
       }
-      handleWorkflowAction(action, actionEl, workflowCtx());
       break;
   }
-});
-
-document.addEventListener('submit', (e) => {
-  if (e.target?.id === 'workflow-form') e.preventDefault();
 });
 
 document.addEventListener('input', (e) => {
@@ -4505,8 +4343,6 @@ document.addEventListener('input', (e) => {
     filterPlugins(e.target.value);
   } else if (e.target.id === 'skill-search-input') {
     filterSkills(e.target.value);
-  } else if (e.target.id === 'workflow-search-input') {
-    filterWorkflow(e.target.value, workflowCtx());
   } else if (e.target.id === 'ms-name' || e.target.id === 'ms-url' || e.target.id === 'ms-key' || e.target.id === 'ms-manual' || e.target.id === 'ms-grok-name' || e.target.id === 'ms-search') {
     onModelsField(e.target, modelsCtx());
   } else if (e.target.id === 'ag-search') {

@@ -135,7 +135,7 @@ test('agent chip lists configured roles and switches the conversation target', a
   await expect(menu(page)).toContainText('grok-4');
   await expect(menu(page)).toContainText(/选择角色|Choose role/);
 
-  await menu(page).locator('[data-role-id="coder"]:not([data-pipeline-id])').click();
+  await menu(page).locator('[data-role-id="coder"]').click();
   await expect(menu(page)).toBeHidden();
   await expect(chip(page)).toHaveText('编码 · grok-4');
   await expect(page.getByTestId('composer-agent')).toHaveAttribute('title', /grok-4/);
@@ -147,22 +147,13 @@ test('agent chip lists configured roles and switches the conversation target', a
   const cid = await conversationId(page);
   const coder = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
   expect(coder.body.roleId).toBe('coder');
-  expect(coder.body.pipelineId).toBeNull();
 
   await page.getByTestId('composer-agent').click();
-  await menu(page).locator('[data-pipeline-id="demo"]').click();
-  await expect(chip(page)).toHaveText('编码 · grok-4');
-  const piped = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
-  expect(piped.body.pipelineId).toBe('demo');
-  expect(piped.body.roleId).toBe('coder');
-  expect(piped.body.pipelineStep).toBe(0);
-
-  await page.getByTestId('composer-agent').click();
+  await expect(menu(page).locator('[data-pipeline-id]')).toHaveCount(0);
   await menu(page).locator('[data-action="pick-dispatch"][data-role-id=""]').click();
   await expect(chip(page)).toHaveText('Agent · grok-4.6');
   const cleared = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
   expect(cleared.body.roleId).toBeNull();
-  expect(cleared.body.pipelineId).toBeNull();
 
   await page.reload();
   await expect(chip(page)).toHaveText('Agent · grok-4.6');

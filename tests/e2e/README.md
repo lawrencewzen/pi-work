@@ -32,7 +32,6 @@
 | [plugins.md](plugins.md) | Echo 列表、开关、调用工具、空导入被拒绝、导入 word-count、重启后仍在、无效插件报错 |
 | [agents.md](agents.md) | Agent 页：主 Agent / 子 Agent 的新建、编辑、复制、恢复默认、删除、模型、Skills；侧栏里的真实子 Agent |
 | [archive.md](archive.md) | 切换内核前的对话只读归档，并用这段历史开新对话 |
-| [workflow.md](workflow.md) | 流水线：新建、编辑、删除、功能交付 |
 | [appearance.md](appearance.md) | 语言与主题 |
 
 ## 记录
