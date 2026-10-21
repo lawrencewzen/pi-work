@@ -1,8 +1,8 @@
 # pi-work
 
-网页版多 Agent 编码工作台：断点恢复、自动续跑、多角色并行、流水线编排。
+网页版多 Agent 编码工作台：对话断点恢复由 Pi Durable 负责，多角色并行。
 
-对话运行时是 **Pi Durable Harness**（`src/kernel/`，`@earendil-works/pi-durable`）。工作区、角色、流水线和变更记录在应用库 `src/store/sqlite.mjs`。耐久性设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，安全修复见 [SECURITY.md](SECURITY.md)。
+对话运行时是 **Pi Durable Harness**（`src/kernel/`，`@earendil-works/pi-durable`）。工作区、角色和变更记录在应用库 `src/store/sqlite.mjs`。耐久性设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，安全修复见 [SECURITY.md](SECURITY.md)。
 
 启动：`node server.mjs`（Node >= 22.19）。进程只监听 `127.0.0.1`。浏览器打开启动日志里的 `PI_WORK_READY` 地址（`http://127.0.0.1:<端口>/`）即可使用，默认不需要登录链接。需要限制本机其他程序访问时，设置 `PI_WORK_TOKEN`，再用 `/login?token=` 或 `Authorization: Bearer`。不设令牌时，`Host` 白名单、跨域 `Origin` 和写请求必须是 JSON 这几项仍然生效；若同时设置了 `PI_WORK_ALLOWED_HOSTS`，启动会警告服务对这些主机开放且没有鉴权。
 
@@ -18,7 +18,7 @@
 
 ## 目标
 - 三栏界面：工作区与会话、对话（Markdown + 折叠工具行）、Diff / 文件 / Markdown 编辑器
-- 多个 Agent 并行，角色（提示词 / 工具 / 模型）和流水线（如 测试 → 编码 → 审计）可配置
+- 多个 Agent 并行，角色（提示词 / 工具 / 模型）可配置；多角色协作由主 Agent 用 delegate / subagent 把活派给角色模板定义的子 Agent
 - 监控：卡住检测、模型中断自动续跑与重试，SQLite 检查点
 - 工作区内的 read / write / edit / grep / bash 工具，自动记录 diff
 - 任意 OpenAI 兼容模型接口（xAI、DeepSeek、内网）
