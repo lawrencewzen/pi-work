@@ -127,7 +127,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_GROK_CLIENT_VERSION: '1.0.50',
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '5',
-    PI_WORK_STALL_MS: '5000',
     ...extra,
   };
 }

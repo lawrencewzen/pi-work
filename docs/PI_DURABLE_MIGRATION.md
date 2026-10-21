@@ -1,5 +1,7 @@
 # T5-0：把运行时换回 Pi Durable 内核
 
+历史迁移稿，暂停 / recovering / 409 等语义已在 T12-2 移除，当前行为以 docs/ARCHITECTURE.md 为准。
+
 本文是可执行的迁移方案。原型在分支 [`spike/pi-durable-kernel`](https://github.com/lawrencewzen/pi-work/tree/spike/pi-durable-kernel)（提交 `7b7ab38`），不合并。真正换内核按文末分批另派。
 
 API 以已安装的 `@earendil-works/pi-durable@1.1.0`、`@earendil-works/pi-ai@1.1.0` 的 `dist/**/*.d.ts` 和 `node_modules/@earendil-works/pi-durable/README.md` 为准。GitHub `earendil-works/pi` 上 `main` 的示例 22/23 比 1.1.0 新：示例返回 `{ output }`，已发布的 `ToolExecutionResult` 和 README 用 `content`。原型按已发布包写。
@@ -225,7 +227,7 @@ T5-11 之后这只开关已经去掉：启动始终打开 Harness，不再读取
 
 Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
 
-演示模型仍只在 `PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`。显式剧本（`PI_WORK_FAUX_SCRIPT`）按已提交的助手条数取下一拍；`PI_WORK_FAUX_DRAIN=1` 时，一段说明文字后面如果还有工具或 `{end:true}`，会再提交一次「继续」，用来播放原来一口气跑完的夹具。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。未设置 `PI_WORK_FAUX_TEXT` 时演示回复是空字符串，不会冒出一行 `ok`。`PI_WORK_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `PI_WORK_FAUX_HOLD_READY` 写出一个就绪文件。
+演示模型仍只在 `PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`。显式剧本（`PI_WORK_FAUX_SCRIPT`）按已提交的助手条数取下一拍。一段文字紧跟工具调用时合成一条助手消息，由 Harness 跑完工具回合；一段文字后面没有工具调用时这一轮结束。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。未设置 `PI_WORK_FAUX_TEXT` 时演示回复是空字符串，不会冒出一行 `ok`。`PI_WORK_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `PI_WORK_FAUX_HOLD_READY` 写出一个就绪文件。
 
 ## 2f. 风险和要拍板的决定
 

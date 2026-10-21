@@ -39,7 +39,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '5',
-    PI_WORK_STALL_MS: '5000',
     ...extra,
   };
 }
@@ -284,6 +283,11 @@ test('kernel path: path escape is E_SANDBOX and bash stays in the workspace', { 
     const { ws, conv } = await openConversation(srv.base, { title: 'sandbox' });
     const outside = path.join(ws.path, '..', 'outside.txt');
     await writeFile(outside, 'secret');
+    const pendingEvents = collectSse(srv.base, conv.id, {
+      ready: (list) => list.some((ev) => ev.event === 'tool.end' && ev.data?.tool?.id === 'escape-read')
+        && list.some((ev) => ev.event === 'tool.start' && ev.data?.tool?.id === 'bash-1')
+        && list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
+    });
     const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'check' });
     assert.equal(sent.status, 202);
     const done = await waitFinished(srv.base, conv.id);
@@ -294,9 +298,7 @@ test('kernel path: path escape is E_SANDBOX and bash stays in the workspace', { 
     assert.equal(done.messages.some((message) => message.role === 'assistant' && message.text === 'sandbox-done'), true);
     assert.equal(await readFile(outside, 'utf8'), 'secret');
     assert.equal((await readFile(path.join(ws.path, 'sand.txt'), 'utf8')).includes('bash-ok'), true);
-    const events = await collectSse(srv.base, conv.id, {
-      ready: (list) => list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
-    });
+    const events = await pendingEvents;
     const escape = events.find((ev) => ev.event === 'tool.end' && ev.data?.tool?.id === 'escape-read');
     assert.equal(escape?.data?.tool?.path, '../outside.txt');
     assert.equal(escape?.data?.tool?.status, 'error');
@@ -367,9 +369,13 @@ test('kernel path: two conversations write into their own workspaces', { timeout
 });
 
 test('kernel path: write plus edit records the diff and tool events', { timeout: 60_000 }, async () => {
-  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: BASIC, PI_WORK_FAUX_DRAIN: '1' });
+  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: BASIC });
   try {
     const { conv } = await openConversation(srv.base, { title: 'diff' });
+    const pendingEvents = collectSse(srv.base, conv.id, {
+      ready: (list) => list.some((ev) => ev.event === 'tool.end' && ev.data?.tool?.name === 'edit')
+        && list.some((ev) => ev.event === 'status' && ev.data?.status === 'done'),
+    });
     const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'please' });
     assert.equal(sent.status, 202, JSON.stringify(sent.body));
     const done = await waitFinished(srv.base, conv.id);
@@ -386,9 +392,7 @@ test('kernel path: write plus edit records the diff and tool events', { timeout:
     assert.equal(diff.body.added > 0, true);
     assert.equal(typeof changes.body[0]?.toolCallId, 'string');
     assert.equal(changes.body[0].toolCallId.length > 0, true);
-    const events = await collectSse(srv.base, conv.id, {
-      ready: (list) => list.some((ev) => ev.event === 'tool.end' && ev.data?.tool?.name === 'edit'),
-    });
+    const events = await pendingEvents;
     const ends = events.filter((ev) => ev.event === 'tool.end' && (ev.data?.tool?.name === 'write' || ev.data?.tool?.name === 'edit'));
     assert.equal(ends.length, 2, JSON.stringify(events.map((ev) => ev.event)));
     for (const ev of ends) {

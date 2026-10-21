@@ -8,7 +8,7 @@ let srv;
 test.afterEach(async () => { await srv?.kill(); });
 const exists = (p) => fs.access(p).then(() => true, () => false);
 
-test('pause / continue / stop', async ({ page }) => {
+test('interrupt while running, then stop', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ctl']);
   srv = await startServer({ script: 'slow.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
   await openApp(page, srv);
@@ -16,11 +16,12 @@ test('pause / continue / stop', async ({ page }) => {
   await newConversation(page);
   await send(page, 'run');
   await expect(statusText(page)).toContainText(/running|运行/i);
-  await page.getByTestId('btn-pause').click();
-  await expect(statusText(page)).toContainText(/paused|暂停/i);
-  await page.waitForTimeout(3500);
-  expect(await exists(path.join(ws, 'b.txt'))).toBe(false); // no progress while paused
-  await page.getByTestId('btn-resume').click();
+  const input = page.getByTestId('chat-input');
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveAttribute('placeholder', /补充说明/);
+  await input.fill('插一句');
+  await page.getByTestId('chat-send').click();
+  await expect(page.getByTestId('message').filter({ hasText: '插一句' })).toBeVisible();
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
   expect(await exists(path.join(ws, 'b.txt'))).toBe(true);
 
@@ -51,7 +52,7 @@ test('two agents run in parallel', async ({ page }) => {
   expect(Date.now() - t0).toBeLessThan(9000); // serial would be ~2x slow.json duration
 });
 
-test('stream cut -> auto retry, autocontinue counter shown', async ({ page }) => {
+test('stream cut retries and finishes', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['cut']);
   srv = await startServer({ script: 'crash.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
   await openApp(page, srv);
@@ -59,6 +60,6 @@ test('stream cut -> auto retry, autocontinue counter shown', async ({ page }) =>
   await newConversation(page);
   await send(page, 'go');
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 30000 });
-  await expect(page.getByTestId('autocontinue-count')).toHaveText(/[1-9]/);
+  await expect(page.getByTestId('autocontinue-count')).toHaveCount(0);
   expect(await fs.readFile(path.join(ws, 'final.txt'), 'utf8')).toBe('ok\n');
 });

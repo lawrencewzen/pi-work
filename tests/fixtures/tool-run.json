@@ -1,5 +1,4 @@
 { "turns": [
-  { "text": "跑一下。" },
-  { "tool": "bash", "args": { "command": "sleep 3" } },
+  { "text": "跑一下。", "tool": "bash", "args": { "command": "sleep 3" } },
   { "text": "跑完了。" }
 ] }

@@ -57,7 +57,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '2',
-    PI_WORK_STALL_MS: '5000',
     ...extra,
   };
 }
@@ -405,6 +404,10 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
     assert.equal(ws.status, 201);
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'fg' });
     assert.equal(conv.status, 201);
+    const pendingEvents = collectSse(srv.base, conv.body.id, {
+      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.roleId === 'scout' && ev.data?.lastText?.includes('CHILD_MODEL_OK')),
+      timeout: 30000,
+    });
     const sent = await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'dispatch scout' });
     assert.equal(sent.status, 202);
     const done = await waitFor(srv.base, conv.body.id, (body) => (
@@ -442,9 +445,7 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
     const missing = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/missing/messages`);
     assert.equal(missing.status, 404);
     assert.equal(missing.body.error, 'agent not found');
-    const events = await collectSse(srv.base, conv.body.id, {
-      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.roleId === 'scout'),
-    });
+    const events = await pendingEvents;
     const deltas = events.filter((ev) => ev.event === 'message.delta').map((ev) => ev.data?.text || '').join('');
     assert.equal(deltas.includes('CHILD_MODEL_OK'), false);
     const agentEvent = events.find((ev) => ev.event === 'agent' && ev.data?.roleId === 'scout' && ev.data?.lastText?.includes('CHILD_MODEL_OK'));
@@ -488,6 +489,10 @@ test('background spawn, send, wait, list, stop, and the concurrency cap', { time
     await bindScout(srv.base, fake);
     const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'bg' });
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'bg' });
+    const pendingEvents = collectSse(srv.base, conv.body.id, {
+      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.mode === 'background' && ev.data?.status === 'stopped'),
+      timeout: 30000,
+    });
     assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'run background' })).status, 202);
     const done = await waitFor(srv.base, conv.body.id, (body) => toolTexts(body).some((text) => text.includes('Stopped a.')));
     assert.equal(done.status === 'done' || done.status === 'running', true, `${done?.status}\n${srv.logs()}`);
@@ -507,9 +512,7 @@ test('background spawn, send, wait, list, stop, and the concurrency cap', { time
     assert.equal(child.body.mode, 'background');
     assert.ok(child.body.messages.some((message) => message.role === 'user' && message.text === 'ping-a'));
     assert.ok(child.body.messages.some((message) => message.role === 'assistant' && message.text === 'SCOUT_PONG'));
-    const events = await collectSse(srv.base, conv.body.id, {
-      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.id === scout.id && ev.data?.mode === 'background'),
-    });
+    const events = await pendingEvents;
     const agentEvent = events.find((ev) => ev.event === 'agent' && ev.data?.id === scout.id);
     assert.equal(agentEvent?.data?.mode, 'background');
     console.log(`KERNEL_SUBAGENTS_BACKGROUND ${JSON.stringify({ tools: toolTexts(done), status: scout.status })}`);
@@ -626,9 +629,9 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
     assert.equal(stopped.body.status, 'stopped');
     const after = await waitFor(srv.base, conv.body.id, (body) => {
       const sleeper = subagentsOf(body).find((agent) => agent.name === 'sleeper');
-      return body.status === 'stopped' && sleeper?.status === 'stopped';
+      return sleeper?.status === 'stopped';
     });
-    assert.equal(after.status, 'stopped', JSON.stringify(after.agents));
+    assert.equal(after.status, 'done', JSON.stringify(after.agents));
     assert.equal(subagentsOf(after).find((agent) => agent.name === 'sleeper')?.status, 'stopped');
     const started = Date.now();
     while (fake.closed() < 1 && Date.now() - started < 8000) {
@@ -770,7 +773,6 @@ test('a killed foreground subagent writes the file once after restart', { timeou
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
     PI_WORK_FAUX_HOLD_READY: ready,
-    PI_WORK_STALL_MS: '30000',
   };
   let proc = null;
   let wsPath;

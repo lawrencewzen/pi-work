@@ -41,10 +41,8 @@ export async function startServer({ script = 'basic.json', dataDir, port = 0, ex
     PI_WORK_DATA_DIR: dataDir,
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: path.join(FIXTURES, script),
-    PI_WORK_FAUX_DRAIN: '1',
     PI_WORK_RETRY_BASE_MS: '50',
     PI_WORK_RETRY_MAX: '5',
-    PI_WORK_STALL_MS: '2000',
     ...extraEnv,
   };
   if (!Object.prototype.hasOwnProperty.call(extraEnv, 'PI_WORK_TOKEN')) delete env.PI_WORK_TOKEN;

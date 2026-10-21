@@ -5,10 +5,11 @@
 import { spawn } from 'node:child_process';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, hook, ToolTask } from '@earendil-works/pi-durable';
-import { diffStats } from '../core/diff.mjs';
+import { diffStats, splitLines } from '../core/diff.mjs';
 import { bash, edit, grep, ls, read, write } from '../tools/workspace.mjs';
 
 const OUTPUT_CAP = 1024 * 1024;
+const DETAIL_CAP = 1024 * 1024;
 const TRUNCATE_MARKER = '\n[truncated: output exceeded 1 MiB]\n';
 
 const WORKSPACE_TOOL_NAMES = ['read', 'write', 'edit', 'ls', 'grep', 'bash'];
@@ -225,40 +226,53 @@ export function toolsForRole(role) {
   return allowed.map((name) => byName.get(name)).filter(Boolean);
 }
 
+function byteLength(text) {
+  return Buffer.byteLength(String(text ?? ''), 'utf8');
+}
+
+/** Keep path, before, after, and line stats on the tool result. Over 1 MB, line stats only. */
+export function fileChangeDetails({ path: filePath, before, after }) {
+  const oldText = before ?? '';
+  const newText = after ?? '';
+  const { added, removed } = diffStats(oldText, newText);
+  if (byteLength(oldText) > DETAIL_CAP || byteLength(newText) > DETAIL_CAP) {
+    return {
+      path: filePath,
+      added,
+      removed,
+      linesBefore: splitLines(oldText).length,
+      linesAfter: splitLines(newText).length,
+      oversized: true,
+    };
+  }
+  return { path: filePath, before: oldText, after: newText, added, removed };
+}
+
 /**
- * Host hook: after write/edit succeeds, diffStats records the baseline and toolCallId.
- * Details stay off the transcript. Unsafe replay stays the kernel default.
+ * Host hook: after write/edit succeeds, the result keeps its diff details.
+ * The changes list is read back from those entries. Unsafe replay stays the kernel default.
  */
-export function createWorkspaceExtension({ onWrote } = {}) {
+export function createWorkspaceExtension() {
   return defineExtension({
     name: 'pi-work-workspace',
     tools: workspaceToolList,
     hooks: [
       hook(ToolTask, {
-        async afterTool(call, result, api) {
+        async afterTool(call, result) {
           const details = result?.details;
           const tracked = details
             && !result.isError
             && (call.name === 'write' || call.name === 'edit')
             && typeof details.path === 'string';
           if (!tracked) return undefined;
-          const before = details.before ?? '';
-          const after = details.after ?? '';
-          const { added, removed } = diffStats(before, after);
-          if (typeof onWrote === 'function') {
-            await onWrote({
-              harnessId: api.conversationId,
-              toolCallId: call.id,
+          return {
+            ...result,
+            details: fileChangeDetails({
               path: details.path,
-              before,
-              after,
-              added,
-              removed,
-            });
-          }
-          const next = { ...result };
-          delete next.details;
-          return next;
+              before: details.before ?? '',
+              after: details.after ?? '',
+            }),
+          };
         },
       }),
     ],

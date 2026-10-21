@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { validateRole, validatePipeline, allocateRoleId, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
-import { diffStats, liveDiff } from './src/core/diff.mjs';
+import { diffStats } from './src/core/diff.mjs';
 import { publicSettings, isMaskedOrEmptyApiKey } from './src/core/settings.mjs';
 import {
   VENDOR_PRESETS,
@@ -70,7 +70,6 @@ import { resolveAllowedWorkspacePath, defaultWorkspaceRoot, listBrowsableDirs } 
 import { acquireDataDirLock } from './src/core/lock.mjs';
 import { presentContext } from './src/core/usage.mjs';
 import { openConversationKernel } from './src/kernel/conversations.mjs';
-import { archivedMutation, isArchivedConversation } from './src/kernel/archive.mjs';
 import fs from 'node:fs/promises';
 
 // 内置 fetch 默认不读 HTTP(S)_PROXY；配置了代理时让模型请求也走它（遵守 NO_PROXY）
@@ -232,20 +231,6 @@ function lastTestFrom(result) {
   return lastTest;
 }
 
-async function lastLlmError(cid, status) {
-  if (status !== 'failed') return null;
-  const events = await store.getEvents(cid);
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const ev = events[i];
-    if (ev?.event !== 'error') continue;
-    const message = String(ev.data?.message || '').trim();
-    const code = String(ev.data?.code || '').trim();
-    if (!message && !code) continue;
-    return { code: code || 'E_LLM', message };
-  }
-  return null;
-}
-
 function sendGrokError(res, err) {
   const code = err instanceof GrokAuthError ? err.code : 'login_failed';
   const status = code === 'no_login' ? 404 : 502;
@@ -256,7 +241,11 @@ function publicConversation(conv) {
   if (!conv) return conv;
   const out = { ...conv };
   delete out.harnessId;
-  delete out.hostMark;
+  delete out.lastSubmissionId;
+  delete out.autoContinues;
+  delete out.retries;
+  delete out.lastCheckpointAt;
+  delete out.currentStep;
   return out;
 }
 
@@ -265,29 +254,6 @@ async function agentsFor(conv, messages) {
   const roles = await store.listRoles();
   const role = (conv.roleId && await store.getRole(conv.roleId)) || await store.getRole('default');
   return buildAgents({ conv, pipeline, role, roles, messages });
-}
-
-async function diskTextFor(workspacePath, filePath) {
-  if (!workspacePath) return undefined;
-  try {
-    const abs = await resolveInWorkspace(workspacePath, filePath);
-    return await fs.readFile(abs, 'utf8');
-  } catch (err) {
-    if (err.code === 'ENOENT') return '';
-    if (err.code === 'E_SANDBOX') throw err;
-    return undefined;
-  }
-}
-
-async function liveChange(cid, filePath, ch) {
-  const conv = await store.getConversation(cid);
-  const diskText = await diskTextFor(conv?.workspacePath, filePath);
-  return liveDiff({
-    path: filePath,
-    before: ch?.before ?? '',
-    storedAfter: ch?.after ?? '',
-    diskText,
-  });
 }
 
 function serveStatic(req, res, url) {
@@ -987,7 +953,7 @@ async function routeApi(req, res, url) {
       const busy = [];
       for (const item of await store.listConversations(wid)) {
         const live = await kernelApi.present(item);
-        if (['running', 'recovering', 'paused'].includes(live.status)) busy.push(live.id);
+        if (live.status === 'running') busy.push(live.id);
       }
       if (busy.length) {
         sendJson(res, 409, { error: 'workspace has active conversations', code: 'E_WS_BUSY', conversations: busy });
@@ -1110,15 +1076,10 @@ async function routeApi(req, res, url) {
       ...(await kernelApi.listSubagents(live)),
     ];
     const context = presentContext(live.usage);
-    const llmError = await lastLlmError(cid, live.status);
     sendJson(res, 200, {
       id: live.id,
       title: live.title,
       status: live.status,
-      autoContinues: live.autoContinues,
-      retries: live.retries,
-      lastCheckpointAt: live.lastCheckpointAt,
-      currentStep: live.currentStep,
       roleId: live.roleId || null,
       pipelineId: live.pipelineId || null,
       pipelineStep: live.pipelineStep || 0,
@@ -1127,8 +1088,7 @@ async function routeApi(req, res, url) {
       usage: context.usage,
       contextWindow: context.contextWindow,
       contextLabel: context.contextLabel,
-      ...(live.archived ? { archived: true } : {}),
-      ...(llmError ? { llmError } : {}),
+      ...(live.llmError ? { llmError: live.llmError } : {}),
     });
     return;
   }
@@ -1139,17 +1099,6 @@ async function routeApi(req, res, url) {
     const body = await readBody(req);
     const patched = await kernelApi.patchConversation(cid, body);
     sendJson(res, patched.status, patched.body);
-    return;
-  }
-
-  match = p.match(/^\/api\/conversations\/([^/]+)\/from-history$/);
-  if (match && m === 'POST') {
-    const cid = decodeURIComponent(match[1]);
-    const conv = await store.getConversation(cid);
-    if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
-    const body = await readBody(req);
-    const opened = await kernelApi.continueFromHistory(conv, { title: body.title });
-    sendJson(res, opened.status, opened.body);
     return;
   }
 
@@ -1164,47 +1113,25 @@ async function routeApi(req, res, url) {
     return;
   }
 
-  match = p.match(/^\/api\/conversations\/([^/]+)\/(pause|resume|stop)$/);
+  match = p.match(/^\/api\/conversations\/([^/]+)\/stop$/);
   if (match && m === 'POST') {
     const cid = decodeURIComponent(match[1]);
-    const action = match[2];
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
-    if (isArchivedConversation(conv)) {
-      const blocked = archivedMutation();
-      sendJson(res, blocked.status, blocked.body);
-      return;
-    }
-    if (action === 'stop') {
-      const stopped = await kernelApi.stopConversation(cid);
-      sendJson(res, stopped.status, stopped.body);
-      return;
-    }
-    const result = await kernelApi[action](cid);
-    if (result?.body) {
-      sendJson(res, result.status || 200, result.body);
-      return;
-    }
-    sendJson(res, 200, { status: result?.status || 'stopped' });
+    const stopped = await kernelApi.stopConversation(cid);
+    sendJson(res, stopped.status, stopped.body);
     return;
   }
 
   match = p.match(/^\/api\/conversations\/([^/]+)\/changes$/);
   if (match && m === 'GET') {
     const cid = decodeURIComponent(match[1]);
-    const rows = await store.getChanges(cid);
-    const live = [];
-    for (const row of rows) {
-      const ch = await store.getChangeForPath(cid, row.path);
-      try {
-        const diff = await liveChange(cid, row.path, ch);
-        live.push({ path: row.path, added: diff.added, removed: diff.removed, toolCallId: row.toolCallId });
-      } catch (err) {
-        if (err.code === 'E_SANDBOX') { sendJson(res, 403, { error: 'E_SANDBOX' }); return; }
-        throw err;
-      }
+    try {
+      sendJson(res, 200, await kernelApi.changes(cid));
+    } catch (err) {
+      if (err.code === 'E_SANDBOX') { sendJson(res, 403, { error: 'E_SANDBOX' }); return; }
+      throw err;
     }
-    sendJson(res, 200, live);
     return;
   }
 
@@ -1212,10 +1139,9 @@ async function routeApi(req, res, url) {
   if (match && m === 'GET') {
     const cid = decodeURIComponent(match[1]);
     const filePath = url.searchParams.get('path') || '';
-    const ch = await store.getChangeForPath(cid, filePath);
-    if (!ch) { sendJson(res, 404, { error: 'no diff' }); return; }
     try {
-      sendJson(res, 200, await liveChange(cid, filePath, ch));
+      const result = await kernelApi.diff(cid, filePath);
+      sendJson(res, result.status, result.body);
     } catch (err) {
       if (err.code === 'E_SANDBOX') { sendJson(res, 403, { error: 'E_SANDBOX' }); return; }
       throw err;

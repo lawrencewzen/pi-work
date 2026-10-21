@@ -2,6 +2,18 @@
 
 本页基于 `.env.example` 和 `compose.yaml` 的当前主分支实现。请先按 [快速开始](GETTING_STARTED.md) 使用 `faux` 确认项目可正常启动，再填写真实凭据。
 
+## 对话运行（Pi Durable）
+
+对话层把下面的变量交给 Harness，不再自写看门狗或自动续跑。应用库的 `last_submission_id` 只保存最近一次 `submit` 的 id；状态用 `harness.submission(id).status()` 读，不扫描 Harness 的库文件。
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PI_WORK_RETRY_MAX` | `5` | 一次模型调用的尝试次数，含第一次。Harness 的 `maxRetries` 是这个数减 1 |
+| `PI_WORK_RETRY_BASE_MS` | `200` | 重试退避的起始毫秒。上限沿用 Pi Durable 的 `maxAgentDelayMs`（60000） |
+| `PI_WORK_STREAM_TIMEOUT_MS` | `120000` | 传给模型流的 `stream.timeoutMs`。超时后按上面的 retry 重试 |
+
+演示模型只在显式设置 `PI_WORK_LLM=faux`、`LLM_API=faux` 或 `PI_WORK_FAUX_SCRIPT` 时启用。剧本里一段文字紧跟工具调用时合成一条助手消息；一段文字后面没有工具调用时这一轮结束。`PI_WORK_FAUX_HOLD=1` 让这次调用等到流超时或被中止。
+
 ## 环境变量
 
 | 变量 | 默认 / 示例 | 说明 |

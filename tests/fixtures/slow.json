@@ -1,6 +1,5 @@
-{ "perConversation": true, "turns": [
-  { "text": "step 1" }, { "delayMs": 1500 },
-  { "tool": "write", "args": { "path": "a.txt", "content": "a\n" } }, { "delayMs": 1500 },
-  { "tool": "write", "args": { "path": "b.txt", "content": "b\n" } },
+{ "turns": [
+  { "text": "step 1", "delayMs": 1500, "tool": "write", "args": { "path": "a.txt", "content": "a\n" } },
+  { "delayMs": 1500, "tool": "write", "args": { "path": "b.txt", "content": "b\n" } },
   { "text": "done" }
 ] }

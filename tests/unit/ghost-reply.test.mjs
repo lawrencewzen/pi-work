@@ -5,8 +5,6 @@ import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSSE } from '../../src/core/sse.mjs';
-import { projectTranscript } from '../../src/kernel/control.mjs';
-import { fauxTurnFromScript } from '../../src/kernel/faux-script.mjs';
 import {
   applyMessageDone,
   applyStreamDelta,
@@ -14,6 +12,22 @@ import {
   mergeRefreshedMessages,
 } from '../../public/stream.js';
 import { ROOT } from './_root.mjs';
+
+test('a refresh keeps a local running tool the server has not stored yet', () => {
+  const local = [
+    { id: 'a1', role: 'assistant', text: '跑一下。' },
+    { id: 'tool-call-1', role: 'tool', tool: { id: 'call-1', name: 'bash', status: 'running' } },
+  ];
+  const server = [{ id: 'a1', role: 'assistant', text: '跑一下。' }];
+  const kept = mergeRefreshedMessages(local, server, { keepStreaming: true });
+  assert.equal(kept.some((message) => message.tool?.id === 'call-1' && message.tool.status === 'running'), true);
+  const settled = mergeRefreshedMessages(local, [
+    ...server,
+    { id: 't1', role: 'tool', tool: { id: 'call-1', name: 'bash', status: 'completed' } },
+  ], { keepStreaming: true });
+  assert.equal(settled.filter((message) => message.tool?.id === 'call-1').length, 1);
+  assert.equal(settled.find((message) => message.tool?.id === 'call-1').tool.status, 'completed');
+});
 
 const TOKEN = 'unit-ghost-reply-token';
 const TEXT_A = '这是一个 TypeScript/Node.js 项目，用于开发相关。';
@@ -26,7 +40,6 @@ const STRIP = [
   'PI_WORK_FAUX_HOLD',
   'PI_WORK_FAUX_HOLD_READY',
   'PI_WORK_FAUX_TPS',
-  'PI_WORK_FAUX_DRAIN',
   'PI_WORK_KERNEL',
   'LLM_API',
   'LLM_API_KEY',
@@ -34,10 +47,6 @@ const STRIP = [
   'LLM_MODEL',
   'PI_WORK_GROK_AUTH',
   'GROK_HOME',
-  'PI_WORK_TOOL_NUDGE',
-  'PI_WORK_TOOL_LOOP',
-  'PI_WORK_MAX_TOOL_CALLS',
-  'PI_WORK_EXPLORE_REPEAT',
 ];
 
 function childEnv(dataDir, extra = {}) {
@@ -51,7 +60,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '5',
-    PI_WORK_STALL_MS: '8000',
     ...extra,
   };
 }
@@ -190,19 +198,6 @@ function assistantsOf(messages) {
   return (messages || []).filter((message) => message.role === 'assistant' && message.kind !== 'correction');
 }
 
-function blocked(id, callId, text) {
-  return {
-    id,
-    kind: 'pi.tool-result',
-    model: [{
-      toolCallId: callId,
-      toolName: 'read',
-      isError: true,
-      content: [{ type: 'text', text: `<harness>\n[error] Tool call blocked: ${text}\n</harness>` }],
-    }],
-  };
-}
-
 test('short delta fragments that already occurred are still appended', () => {
   const msgs = [];
   applyStreamDelta(msgs, { messageId: 'live-1', text: '这是一个 TypeScript/Node.js 项目，用于开发相关' });
@@ -289,7 +284,6 @@ test('faux two turns: folded events match the transcript and leave no stream', {
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
     PI_WORK_FAUX_TPS: '4',
-    PI_WORK_EXPLORE_REPEAT: '20',
   });
   try {
     const { ws, conv } = await openConversation(srv.base);
@@ -334,87 +328,3 @@ test('faux two turns: folded events match the transcript and leave no stream', {
   }
 });
 
-test('duplicate corrections under one assistant project to a single note', () => {
-  const note = '请根据已有结果直接回答。本步已经调用了 8 次工具，还没有写出回复。用已经看到的内容回答；如果还缺关键信息，直接说明缺什么，不要继续翻找。';
-  const projected = projectTranscript([
-    {
-      id: 40,
-      kind: 'pi.assistant',
-      model: [{
-        role: 'assistant',
-        content: [
-          { type: 'toolCall', id: 'c1', name: 'read' },
-          { type: 'toolCall', id: 'c2', name: 'read' },
-          { type: 'toolCall', id: 'c3', name: 'read' },
-        ],
-      }],
-    },
-    blocked('47', 'c1', note),
-    blocked('48', 'c2', note),
-    blocked('49', 'c3', note),
-    {
-      id: 60,
-      kind: 'pi.assistant',
-      model: [{
-        role: 'assistant',
-        content: [{ type: 'toolCall', id: 'c4', name: 'read' }],
-      }],
-    },
-    blocked('61', 'c4', note),
-  ]);
-  const corrections = projected.messages.filter((message) => message.kind === 'correction');
-  assert.deepEqual(corrections.map((message) => message.id), ['47', '61']);
-  assert.equal(corrections.every((message) => message.text === note), true);
-  assert.equal(projected.messages.some((message) => message.role === 'tool'), false);
-});
-
-test('three parallel nudges in one assistant message show one correction', { timeout: 45000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ghost-nudge-'));
-  const turns = Array.from({ length: 8 }, (_, index) => ({
-    tool: 'read',
-    args: { path: `n${index}.txt` },
-  }));
-  turns.push({
-    tools: [0, 1, 2].map((index) => ({
-      tool: 'read',
-      args: { path: `p${index}.txt` },
-      id: `par-${index}`,
-    })),
-  });
-  turns.push({ text: '就这些。' });
-  const script = path.join(dataDir, 'parallel.json');
-  await writeFile(script, JSON.stringify({ turns }));
-  const message = fauxTurnFromScript(turns, {
-    messages: Array.from({ length: 8 }, () => ({ role: 'assistant', content: '' })),
-  });
-  assert.equal(message.content.length, 3);
-  const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
-    PI_WORK_EXPLORE_REPEAT: '30',
-    PI_WORK_TOOL_LOOP: '30',
-    PI_WORK_MAX_TOOL_CALLS: '30',
-    PI_WORK_TOOL_NUDGE: '8',
-  });
-  try {
-    const { ws, conv } = await openConversation(srv.base);
-    for (let index = 0; index < 8; index += 1) {
-      await writeFile(path.join(ws.path, `n${index}.txt`), 'ok\n');
-    }
-    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'go' })).status, 202);
-    const done = await waitFor(srv.base, conv.id, (body) => body.status === 'done' || body.status === 'failed', 40000);
-    const corrections = done.messages.filter((message) => message.kind === 'correction');
-    const tools = done.messages.filter((message) => message.role === 'tool');
-    assert.equal(done.status, 'done', `${srv.logs()}\n${JSON.stringify(done.messages)}`);
-    assert.equal(corrections.length, 1, JSON.stringify(done.messages));
-    assert.match(corrections[0].text, /请根据已有结果直接回答/);
-    assert.match(corrections[0].text, /8 次工具/);
-    assert.equal(tools.length, 8, JSON.stringify(done.messages));
-    assert.equal(done.messages.some((message) => message.text === '就这些。'), true);
-  } finally {
-    await stopProcess(srv.proc);
-    await rm(srv.dataDir, { recursive: true, force: true });
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
