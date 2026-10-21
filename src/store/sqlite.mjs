@@ -67,11 +67,9 @@ function convFromRow(row) {
     retries: row.retries,
     lastCheckpointAt: row.last_checkpoint_at,
     currentStep: row.current_step,
-    pipelineStep: row.pipeline_step,
     updatedAt: row.updated_at,
     createdAt: row.created_at,
     roleId: row.role_id,
-    pipelineId: row.pipeline_id,
     workspacePath: row.workspace_path,
     lastProgressAt: row.last_progress_at,
     originalText: row.original_text,
@@ -174,11 +172,6 @@ export function createSqliteStore(dir) {
       skills_json TEXT,
       plugin_tools INTEGER
     );
-    CREATE TABLE IF NOT EXISTS pipelines (
-      id TEXT PRIMARY KEY,
-      name TEXT,
-      steps_json TEXT
-    );
     CREATE TABLE IF NOT EXISTS catalog_tombstones (
       kind TEXT NOT NULL,
       id TEXT NOT NULL,
@@ -236,13 +229,15 @@ export function createSqliteStore(dir) {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
-  // Dialogue state lives in the Harness. These tables only served the old shell
-  // and the pre-harness archive. Export legacy chats before starting this build.
+  // Dialogue state lives in the Harness. These tables only served the old shell,
+  // the pre-harness archive, or the removed pipeline. Export legacy chats before
+  // starting this build.
   db.exec(`
     DROP TABLE IF EXISTS events;
     DROP TABLE IF EXISTS messages;
     DROP TABLE IF EXISTS tool_calls;
     DROP TABLE IF EXISTS changes;
+    DROP TABLE IF EXISTS pipelines;
   `);
 
   const q = {
@@ -256,15 +251,15 @@ export function createSqliteStore(dir) {
     putSettings: db.prepare('INSERT INTO settings (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json'),
     insConv: db.prepare(`INSERT INTO conversations (
       id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
-      current_step, pipeline_step, updated_at, created_at, role_id, pipeline_id,
+      current_step, updated_at, created_at, role_id,
       workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark,
       last_submission_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
     getConv: db.prepare('SELECT * FROM conversations WHERE id = ?'),
     listRecoverable: db.prepare("SELECT * FROM conversations WHERE status IN ('running','recovering') AND harness_id IS NULL"),
     listKernel: db.prepare('SELECT * FROM conversations WHERE harness_id IS NOT NULL'),
     updConv: db.prepare(`UPDATE conversations SET
-      workspace_id=?, title=?, pipeline_step=?, updated_at=?, role_id=?, pipeline_id=?,
+      workspace_id=?, title=?, updated_at=?, role_id=?,
       workspace_path=?, last_progress_at=?, original_text=?, usage_json=?, harness_id=?,
       last_submission_id=?
       WHERE id=?`),
@@ -275,15 +270,10 @@ export function createSqliteStore(dir) {
     listRoles: db.prepare('SELECT * FROM roles'),
     getRole: db.prepare('SELECT * FROM roles WHERE id = ?'),
     delRole: db.prepare('DELETE FROM roles WHERE id = ?'),
-    insPipe: db.prepare('INSERT OR REPLACE INTO pipelines (id, name, steps_json) VALUES (?,?,?)'),
-    listPipes: db.prepare('SELECT * FROM pipelines'),
-    getPipe: db.prepare('SELECT * FROM pipelines WHERE id = ?'),
-    delPipe: db.prepare('DELETE FROM pipelines WHERE id = ?'),
     insTomb: db.prepare('INSERT OR IGNORE INTO catalog_tombstones (kind, id) VALUES (?, ?)'),
     delTomb: db.prepare('DELETE FROM catalog_tombstones WHERE kind = ? AND id = ?'),
     hasTomb: db.prepare('SELECT 1 AS ok FROM catalog_tombstones WHERE kind = ? AND id = ?'),
     countRoleRefs: db.prepare('SELECT COUNT(*) AS n FROM conversations WHERE role_id = ?'),
-    countPipeRefs: db.prepare('SELECT COUNT(*) AS n FROM conversations WHERE pipeline_id = ?'),
   };
 
   if (!q.getRole.get(DEFAULT_ROLE.id)) {
@@ -405,18 +395,16 @@ export function createSqliteStore(dir) {
     },
 
     async createConversation({
-      id, workspaceId, title, roleId, pipelineId, workspacePath,
+      id, workspaceId, title, roleId, workspacePath,
     } = {}) {
       const now = Date.now();
       const conv = {
         id: id || randomUUID(),
         workspaceId: workspaceId ?? null,
         title: title || 'New conversation',
-        pipelineStep: 0,
         updatedAt: now,
         createdAt: now,
         roleId: roleId ?? null,
-        pipelineId: pipelineId ?? null,
         workspacePath: workspacePath ?? null,
         lastProgressAt: now,
         originalText: null,
@@ -425,8 +413,8 @@ export function createSqliteStore(dir) {
       };
       q.insConv.run(
         conv.id, conv.workspaceId, conv.title, null, null, null,
-        null, null, conv.pipelineStep, conv.updatedAt, conv.createdAt,
-        conv.roleId, conv.pipelineId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
+        null, null, conv.updatedAt, conv.createdAt,
+        conv.roleId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
         usageToSql(conv.usage), conv.harnessId, null, null,
       );
       return conv;
@@ -456,11 +444,9 @@ export function createSqliteStore(dir) {
           id,
           workspaceId: null,
           title: 'New conversation',
-          pipelineStep: 0,
           updatedAt: now,
           createdAt: now,
           roleId: null,
-          pipelineId: null,
           workspacePath: null,
           lastProgressAt: now,
           originalText: null,
@@ -469,14 +455,14 @@ export function createSqliteStore(dir) {
         };
         q.insConv.run(
           conv.id, conv.workspaceId, conv.title, null, null, null,
-          null, null, conv.pipelineStep, conv.updatedAt, conv.createdAt,
-          conv.roleId, conv.pipelineId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
+          null, null, conv.updatedAt, conv.createdAt,
+          conv.roleId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
           usageToSql(conv.usage), null, null, patch.lastSubmissionId ?? null,
         );
       }
       const next = { ...conv, ...patch, updatedAt: Date.now() };
       q.updConv.run(
-        next.workspaceId, next.title, next.pipelineStep, next.updatedAt, next.roleId, next.pipelineId,
+        next.workspaceId, next.title, next.updatedAt, next.roleId,
         next.workspacePath, next.lastProgressAt, next.originalText, usageToSql(next.usage),
         next.harnessId ?? null, next.lastSubmissionId ?? null, id,
       );
@@ -503,27 +489,6 @@ export function createSqliteStore(dir) {
       return roleFromRow(q.getRole.get(id));
     },
 
-    async createPipeline(pipeline) {
-      q.insPipe.run(pipeline.id, pipeline.name, j(pipeline.steps));
-      return this.getPipeline(pipeline.id);
-    },
-    async updatePipeline(id, pipeline) {
-      if (!q.getPipe.get(id)) return undefined;
-      q.insPipe.run(id, pipeline.name, j(pipeline.steps));
-      return this.getPipeline(id);
-    },
-    async deletePipeline(id) {
-      q.delPipe.run(id);
-      return !q.getPipe.get(id);
-    },
-    async listPipelines() {
-      return q.listPipes.all().map((r) => ({ id: r.id, name: r.name, steps: p(r.steps_json) }));
-    },
-    async getPipeline(id) {
-      const r = q.getPipe.get(id);
-      return r ? { id: r.id, name: r.name, steps: p(r.steps_json) } : undefined;
-    },
-
     async tombstoneCatalog(kind, id) {
       q.insTomb.run(kind, id);
     },
@@ -533,9 +498,8 @@ export function createSqliteStore(dir) {
     async hasCatalogTombstone(kind, id) {
       return Boolean(q.hasTomb.get(kind, id));
     },
-    async countConversationsReferencing({ roleId, pipelineId } = {}) {
+    async countConversationsReferencing({ roleId } = {}) {
       if (roleId) return Number(q.countRoleRefs.get(roleId)?.n || 0);
-      if (pipelineId) return Number(q.countPipeRefs.get(pipelineId)?.n || 0);
       return 0;
     },
 

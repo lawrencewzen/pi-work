@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateRole, validatePipeline, allocateRoleId, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
+import { validateRole, allocateRoleId, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
 import { diffStats } from './src/core/diff.mjs';
@@ -42,7 +42,7 @@ import { cloneUrlForProject, getGitlabProject, listGitlabBranches, listGitlabPro
 import { createExtensionHost } from './src/core/extensions.mjs';
 import { describePlugins, installPlugin, PLUGIN_ID } from './src/core/plugins.mjs';
 import { listSkills, listSkillRecords, createSkill, updateSkill, deleteSkill, SKILL_ID } from './src/core/skills.mjs';
-import { loadRoleTemplates, loadPipelineTemplates, readRoleTemplateMap, attachBuiltinPrompts, BUILTIN_ROLE_IDS } from './src/core/roles-load.mjs';
+import { loadRoleTemplates, readRoleTemplateMap, attachBuiltinPrompts, BUILTIN_ROLE_IDS } from './src/core/roles-load.mjs';
 import { buildAgents } from './src/core/agents.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
 import {
@@ -246,14 +246,15 @@ function publicConversation(conv) {
   delete out.retries;
   delete out.lastCheckpointAt;
   delete out.currentStep;
+  delete out.pipelineId;
+  delete out.pipelineStep;
   return out;
 }
 
 async function agentsFor(conv, messages) {
-  const pipeline = conv.pipelineId ? await store.getPipeline(conv.pipelineId) : undefined;
   const roles = await store.listRoles();
   const role = (conv.roleId && await store.getRole(conv.roleId)) || await store.getRole('default');
-  return buildAgents({ conv, pipeline, role, roles, messages });
+  return buildAgents({ conv, role, roles, messages });
 }
 
 function serveStatic(req, res, url) {
@@ -326,8 +327,6 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 }
 
 await loadRoleTemplates(store, path.join(ROOT, 'roles'));
-await loadPipelineTemplates(store, path.join(ROOT, 'pipelines'));
-await loadPipelineTemplates(store, path.join(ROOT, 'examples', 'pipelines'));
 
 const grokAuth = createGrokAuth();
 
@@ -977,16 +976,11 @@ async function routeApi(req, res, url) {
       const role = await store.getRole(body.roleId);
       if (!role) { sendJson(res, 400, { errors: ['unknown role'] }); return; }
     }
-    if (body.pipelineId) {
-      const pipe = await store.getPipeline(body.pipelineId);
-      if (!pipe) { sendJson(res, 400, { errors: ['unknown pipeline'] }); return; }
-    }
     const conv = await kernelApi.createConversation({
       workspaceId: wid,
       workspacePath: ws.path,
       title: body.title || 'New conversation',
       roleId: body.roleId,
-      pipelineId: body.pipelineId,
       status: 'idle',
     });
     sendJson(res, 201, { id: conv.id, workspaceId: conv.workspaceId, title: conv.title, status: 'idle' });
@@ -1081,8 +1075,6 @@ async function routeApi(req, res, url) {
       title: live.title,
       status: live.status,
       roleId: live.roleId || null,
-      pipelineId: live.pipelineId || null,
-      pipelineStep: live.pipelineStep || 0,
       messages,
       agents,
       usage: context.usage,
@@ -1206,10 +1198,6 @@ async function routeApi(req, res, url) {
     if (m === 'DELETE') {
       const existing = await store.getRole(id);
       if (!existing) { sendJson(res, 404, { error: 'not_found' }); return; }
-      const usedBy = (await store.listPipelines())
-        .filter((pipe) => (pipe.steps || []).some((step) => step.role === id))
-        .map((pipe) => pipe.id);
-      if (usedBy.length) { sendJson(res, 409, { error: 'role_in_use', pipelines: usedBy }); return; }
       const conversations = await store.countConversationsReferencing({ roleId: id });
       if (conversations > 0) { sendJson(res, 409, { error: 'role_in_conversations', conversations }); return; }
       if (BUILTIN_ROLE_IDS.includes(id)) { sendJson(res, 409, { error: 'protected' }); return; }
@@ -1228,47 +1216,6 @@ async function routeApi(req, res, url) {
     const saved = await store.updateRole(id, v.value);
     const [presented] = await presentRoles([saved]);
     sendJson(res, 200, presented);
-    return;
-  }
-
-  if (p === '/api/pipelines' && m === 'GET') {
-    sendJson(res, 200, await store.listPipelines());
-    return;
-  }
-  if (p === '/api/pipelines' && m === 'POST') {
-    const body = await readBody(req);
-    const roles = await store.listRoles();
-    const v = validatePipeline(body, roles);
-    if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
-    if (await store.getPipeline(v.value.id)) { sendJson(res, 409, { error: 'exists' }); return; }
-    await store.clearCatalogTombstone('pipeline', v.value.id);
-    const pipe = await store.createPipeline(v.value);
-    sendJson(res, 201, pipe);
-    return;
-  }
-
-  match = p.match(/^\/api\/pipelines\/([^/]+)$/);
-  if (match && (m === 'PUT' || m === 'DELETE')) {
-    const id = parseCatalogId(match[1]);
-    if (!id) { sendJson(res, 400, { errors: ['invalid id'] }); return; }
-    if (m === 'DELETE') {
-      const existing = await store.getPipeline(id);
-      if (!existing) { sendJson(res, 404, { error: 'not_found' }); return; }
-      const conversations = await store.countConversationsReferencing({ pipelineId: id });
-      if (conversations > 0) { sendJson(res, 409, { error: 'pipeline_in_use', conversations }); return; }
-      await store.deletePipeline(id);
-      await store.tombstoneCatalog('pipeline', id);
-      sendJson(res, 200, { ok: true, id });
-      return;
-    }
-    const body = await readBody(req);
-    if (body?.id != null && body.id !== id) { sendJson(res, 400, { errors: ['id mismatch'] }); return; }
-    if (!(await store.getPipeline(id))) { sendJson(res, 404, { error: 'not_found' }); return; }
-    const roles = await store.listRoles();
-    const v = validatePipeline({ ...body, id }, roles);
-    if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
-    await store.clearCatalogTombstone('pipeline', id);
-    sendJson(res, 200, await store.updatePipeline(id, v.value));
     return;
   }
 
