@@ -13,6 +13,7 @@ import { FAUX_MODEL, openKernel, registerFaux } from '../../src/kernel/index.mjs
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(here, 'kernel-recover-worker.mjs');
+const closedWorkerPath = path.join(here, 'kernel-closed-worker.mjs');
 
 function catalog() {
   const models = createModels();
@@ -129,6 +130,37 @@ async function waitForFile(file, ms) {
   }
   throw new Error(`timeout waiting for ${file}`);
 }
+
+function spawnClosedWorker(mode) {
+  const child = spawn(process.execPath, [closedWorkerPath], {
+    env: { ...process.env, PI_WORK_KERNEL_MODE: mode },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  const take = (chunk) => { out += chunk; };
+  child.stdout.on('data', take);
+  child.stderr.on('data', take);
+  const exited = new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('exit', (code, signal) => resolve({ code, signal, out }));
+  });
+  return { child, exited };
+}
+
+test('harness.closed with a storage error logs and exits the process', { timeout: 20_000 }, async () => {
+  const failed = spawnClosedWorker('fail');
+  const result = await failed.exited;
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.out, /PI_WORK_HARNESS_CLOSED/);
+  assert.match(result.out, /disk full/);
+});
+
+test('harness.closed after close() does not exit the process', { timeout: 20_000 }, async () => {
+  const closed = spawnClosedWorker('close');
+  const result = await closed.exited;
+  assert.equal(result.code, 0, result.out);
+  assert.equal(result.out.includes('PI_WORK_HARNESS_CLOSED'), false, result.out);
+});
 
 test('kill after submit, then resume finishes the same submission', { timeout: 60_000 }, async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'pi-kernel-recover-'));

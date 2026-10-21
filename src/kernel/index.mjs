@@ -13,6 +13,35 @@ export const FAUX_MODEL = { provider: 'faux', modelId: 'faux-1' };
 // README: one process owns a storage at a time. This process opens one Harness.
 let openSlot = null;
 
+function formatClosedError(error) {
+  if (!(error instanceof Error)) {
+    try {
+      return String(error);
+    } catch {
+      return 'unknown error';
+    }
+  }
+  const parts = [error.message || error.name];
+  if (error.cause instanceof Error && error.cause.message) parts.push(error.cause.message);
+  else if (error.cause != null) {
+    try { parts.push(String(error.cause)); } catch { /* ignore */ }
+  }
+  return parts.join(': ');
+}
+
+/**
+ * Storage errors close the Harness. Log the reason and exit so scripts/dev.sh and Docker restart the process.
+ * Do not retry or reopen here.
+ */
+export function watchHarnessClosed(harness) {
+  if (!harness || typeof harness.closed?.then !== 'function') return;
+  harness.closed.then((end) => {
+    if (end?.reason !== 'failed') return;
+    console.error(`PI_WORK_HARNESS_CLOSED ${formatClosedError(end.error)}`);
+    process.exit(1);
+  });
+}
+
 /**
  * Install pi-ai's faux provider on a Models catalog so tests can call setResponses.
  * This does not read the product's script JSON.
@@ -49,6 +78,7 @@ export async function openKernel({ dataDir, models, registry, settings } = {}) {
       registry,
       ...(settings ? { settings } : {}),
     }, context);
+    watchHarnessClosed(harness);
     let closed = false;
     return {
       harness,

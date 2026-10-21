@@ -114,7 +114,7 @@ function messageText(message) {
 
 function reply(text, extra = {}) {
   return {
-    content: [{ type: 'text', text }],
+    output: [{ type: 'text', text }],
     ...(extra.details ? { details: extra.details } : {}),
     ...(extra.isError ? { isError: true } : {}),
   };

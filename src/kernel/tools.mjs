@@ -20,7 +20,7 @@ function asText(output) {
 
 function errorResult(code, message) {
   return {
-    content: [{ type: 'text', text: `${code}: ${message}` }],
+    output: [{ type: 'text', text: `${code}: ${message}` }],
     isError: true,
   };
 }
@@ -148,10 +148,10 @@ function workspaceTool({ name, description, parameters, replay = 'unsafe' }) {
       if (!workspacePath) return errorResult('E_SANDBOX', 'conversation cwd is not set');
       try {
         const result = await runWorkspace(name, args, workspacePath, context.abortSignal);
-        const content = [{ type: 'text', text: asText(result.output) }];
+        const output = [{ type: 'text', text: asText(result.output) }];
         if ((name === 'write' || name === 'edit') && result.path != null && result.status !== 'error') {
           return {
-            content,
+            output,
             details: {
               path: String(result.path),
               before: result.before ?? '',
@@ -159,7 +159,7 @@ function workspaceTool({ name, description, parameters, replay = 'unsafe' }) {
             },
           };
         }
-        return { content };
+        return { output };
       } catch (err) {
         return errorResult(err?.code || 'E_TOOL', err?.message || String(err));
       }
