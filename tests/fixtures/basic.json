@@ -1,5 +1,5 @@
 { "turns": [
-  { "text": "开始。\n\n## 计划\n\n- 写 **README**\n\n```js\nconsole.log(1)\n```", "tool": "write", "args": { "path": "docs/deep/nested/folder/structure/README.md", "content": "# Hello\n\nline2\n" } },
+  { "text": "开始。\n\n## 计划\n\n- 写 **README**\n\n| 列 | 值 |\n| --- | --- |\n| a | b |\n\n---\n\n> 引用块\n\n```js\nconsole.log(1)\n```\n\n<script>window.__xss=1</script>\n<img src=x onerror=\"window.__xss=1\">\n[bad](javascript:alert(1))", "tool": "write", "args": { "path": "docs/deep/nested/folder/structure/README.md", "content": "# Hello\n\nline2\n" } },
   { "tool": "edit", "args": { "path": "docs/deep/nested/folder/structure/README.md", "edits": [{ "oldText": "line2", "newText": "line two\nline3" }] } },
   { "text": "完成 ✅" }
 ] }
