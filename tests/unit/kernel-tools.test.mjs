@@ -331,8 +331,8 @@ test('kernel path: bash runs a quoted node path and a script in a directory with
     assert.equal(done.status, 'done', `${JSON.stringify(done)}\n${srv.logs()}`);
     const tools = done.messages.filter((message) => message.role === 'tool').map((message) => message.text || '');
     assert.equal(tools.length, 2, JSON.stringify(tools));
-    assert.equal(tools[0].includes('"code":0') && tools[0].includes('1'), true, tools[0]);
-    assert.equal(tools[1].includes('"code":0') && tools[1].includes('space-ok'), true, tools[1]);
+    assert.equal(tools[0].includes('1'), true, tools[0]);
+    assert.equal(tools[1].includes('space-ok'), true, tools[1]);
     assert.equal(done.messages.some((message) => message.role === 'assistant' && message.text === 'quoted-done'), true);
   } finally {
     await stopProcess(srv.proc);

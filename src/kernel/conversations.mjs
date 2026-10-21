@@ -26,6 +26,7 @@ import { createRoleHost, installRoleExtensions } from './roles.mjs';
 import { createSubagentExtension, createSubagentHost } from './subagents.mjs';
 import { createWorkspaceExtension, toolsForRole } from './tools.mjs';
 import { installUsageExtension } from './usage.mjs';
+import { createWorkspaceEnv } from './workspace-env.mjs';
 
 const DETAIL_CAP = 1024 * 1024;
 
@@ -104,7 +105,13 @@ export async function openConversationKernel({
   roleBridge.extraTools = () => subagentExtension.tools || [];
   registry.install(subagentExtension);
   if (String(env.PI_WORK_FAUX_SCRIPT || '').trim()) registry.install(createScriptFloorExtension());
-  const kernel = await openKernel({ dataDir, models, registry, settings });
+  const kernel = await openKernel({
+    dataDir,
+    models,
+    registry,
+    settings,
+    env: async ({ cwd }) => (cwd ? createWorkspaceEnv({ cwd }) : undefined),
+  });
   const { harness, context } = kernel;
 
   function enqueue(cid, fn) {
