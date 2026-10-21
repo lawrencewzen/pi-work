@@ -1,0 +1,5 @@
+{ "turns": [
+  { "tool": "write", "args": { "path": "note.txt", "content": "hello\n" } },
+  { "tool": "edit", "args": { "path": "note.txt", "edits": [{ "oldText": "hello", "newText": "hello world" }] } },
+  { "text": "改好了。" }
+] }

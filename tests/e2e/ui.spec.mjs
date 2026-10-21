@@ -57,10 +57,11 @@ test('tool row collapsed with truncated path and +N -M, expands', async ({ page 
   await expect(row.getByTestId('tool-row-path')).toContainText('…');
   await expect(row.getByTestId('tool-row-added')).toHaveText(/\+3/);
   await expect(row.getByTestId('tool-row-removed')).toHaveText(/−0|-0/);
-  await expect(row.getByTestId('tool-row-detail')).toBeHidden();
+  await expect(row.getByTestId('tool-row-detail')).toHaveCount(0);
   await row.click();
-  await expect(row.getByTestId('tool-row-detail')).toBeVisible();
-  await expect(row.getByTestId('tool-row-detail')).toContainText(FILE);
+  const diff = page.locator(`.change-file[data-path="${FILE}"][data-testid=diff-view]`);
+  await expect(diff).toBeVisible();
+  await expect(diff).toContainText('Hello');
 });
 
 test('click changed file -> diff panel; md editor save persists', async ({ page }) => {

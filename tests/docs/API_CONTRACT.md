@@ -104,7 +104,9 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...
 | `composer-context` | 作曲栏上下文用量（`—` 或 `1.2k / 128k`） |
 | `composer-agent` / `composer-agent-menu` | 作曲栏当前模型；点击按来源列出模型，可选「默认」跟随设置绑定 |
 | `message` (+`data-role`) / `message-body` / `message-sender` / `message-chip` | 消息、渲染体（Markdown → HTML）、发送者小字、该回复实际用的模型标签 |
-| `tool-row` (+`data-tool`,`data-path`) / `tool-row-path` / `tool-row-added` / `tool-row-removed` / `tool-row-detail` | 工具行（点击展开 detail） |
+| `tool-row` (+`data-tool`,`data-path`) / `tool-row-path` / `tool-row-added` / `tool-row-removed` / `tool-row-detail` | 工具行（点击展开输出；write/edit 打开右栏 diff） |
+| `tool-group-elapsed` | 运行中且组在线程末尾时，摘要行右侧的用时 |
+| `assistant-pending` / `assistant-pending-status` / `assistant-pending-elapsed` | 这一轮还没有工具调用时的思考占位 |
 | `status-bar` / `status-text` / `btn-stop` | 状态条。运行中输入框保持可用 |
 | `right-panel` / `diff-view` / `file-view` / `md-editor` / `md-editor-save` / `changed-file` (+`data-path`) | 右栏 |
 | `file-open-editor` | 右栏中打开当前文件（.md→`md-editor`，其他→`file-view`） |

@@ -55,7 +55,6 @@ test('seven tool calls collapse to one summary, then a row, then the output', as
     await expect(detail).toBeHidden();
     await row.click();
     await expect(detail).toBeVisible();
-    await expect(detail).toContainText('long.txt');
     await expect(detail).toContainText('L01');
     await expect(detail).toContainText('L20');
     await expect(detail).not.toContainText('L21');
@@ -131,9 +130,11 @@ test('a running call shows a spinner and the current action without opening the 
     await send(page, '跑');
     await expect(page.getByTestId('tool-group-spinner')).toBeVisible({ timeout: 15000 });
     await expect(page.getByTestId('tool-group-text')).toHaveText('正在运行 `sleep 3`…');
+    await expect(page.getByTestId('assistant-pending')).toHaveCount(0);
     await expect(page.locator('[data-testid=tool-row][data-tool=bash]')).toBeHidden();
     await expect(page.getByTestId('tool-group-text')).toHaveText('运行 sleep 3', { timeout: 15000 });
     await expect(page.getByTestId('tool-group-spinner')).toHaveCount(0);
+    await expect(page.getByTestId('assistant-pending')).toHaveCount(0);
     await expect(page.locator('[data-testid=tool-row][data-tool=bash]')).toBeHidden();
   } finally {
     await srv.kill();
@@ -170,6 +171,58 @@ test('a long group hides earlier calls until clicked; failed rows start expanded
     await expect(page.locator('[data-testid=tool-row][data-path="t0.txt"]')).toBeVisible();
     const after = await thread.evaluate((el) => el.scrollTop);
     if (before > 0) expect(after).toBeGreaterThan(0);
+  } finally {
+    await srv.kill();
+  }
+});
+
+test('a command row shows the last 5 lines until show-all', async ({ page }) => {
+  const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
+  const srv = await startServer({ script: 'tool-bash-lines.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  try {
+    await openApp(page, srv);
+    await createWorkspace(page, 'demo', ws);
+    await newConversation(page);
+    await send(page, '跑');
+    await expect(page.getByTestId('message').filter({ hasText: '打完了。' })).toBeVisible({ timeout: 20000 });
+    await page.getByTestId('tool-group-summary').click();
+    const row = page.locator('[data-testid=tool-row][data-tool=bash]');
+    await expect(row).toBeVisible();
+    const detail = row.getByTestId('tool-row-detail');
+    await expect(detail).toBeHidden();
+    await row.click();
+    await expect(detail).toBeVisible();
+    await expect(detail).toContainText('L26');
+    await expect(detail).toContainText('L30');
+    await expect(detail).not.toContainText('L25');
+    await expect(detail).not.toContainText('L01');
+    await detail.getByTestId('tool-output-more').click();
+    await expect(detail).toContainText('L01');
+    await expect(detail).toContainText('L30');
+  } finally {
+    await srv.kill();
+  }
+});
+
+test('an edit row opens the file diff in the right pane', async ({ page }) => {
+  const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
+  const srv = await startServer({ script: 'tool-edit.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  try {
+    await openApp(page, srv);
+    await createWorkspace(page, 'demo', ws);
+    await newConversation(page);
+    await send(page, '改');
+    await expect(page.getByTestId('message').filter({ hasText: '改好了。' })).toBeVisible({ timeout: 20000 });
+    const summaries = page.getByTestId('tool-group-summary');
+    const n = await summaries.count();
+    for (let i = 0; i < n; i += 1) await summaries.nth(i).click();
+    const row = page.locator('[data-testid=tool-row][data-tool=edit]');
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('tool-row-detail')).toHaveCount(0);
+    await row.click();
+    const diff = page.locator('.change-file[data-path="note.txt"][data-testid=diff-view]');
+    await expect(diff).toBeVisible();
+    await expect(diff).toContainText('hello world');
   } finally {
     await srv.kill();
   }
