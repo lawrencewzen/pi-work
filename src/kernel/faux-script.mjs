@@ -309,9 +309,11 @@ function replayedSections(messages) {
 
 function requestSnapshot(context) {
   const messages = context?.messages || [];
+  const tools = getCurrentTools(messages);
   return {
     sections: replayedSections(messages),
-    tools: getCurrentTools(messages).map((tool) => tool.name),
+    tools: tools.map((tool) => tool.name),
+    toolDescriptions: Object.fromEntries(tools.map((tool) => [tool.name, tool.description || ''])),
     users: messages.filter((message) => message?.role === 'user').map((message) => (
       typeof message.content === 'string' ? message.content : ''
     )),

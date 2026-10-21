@@ -1,8 +1,38 @@
-# Sub-agents and the demo pipeline
+# Sub-agents
 
-Pipeline steps are exposed as sub-agents on each conversation. A conversation without a pipeline has a single agent (the conversation role, or `default`).
+Sub-agents follow Pi Durable's Abort and Subagents section and examples 22 (foreground) and 23 (background). The Harness owns the child conversation, its submission, abort, and restart reuse. pi-work only configures a child from a role template and reads what the tools already committed.
 
-## Demo (faux, watchable)
+A conversation still has role / pipeline chips on `GET /api/conversations/:cid` (`agents` without `mode`). Real sub-agent instances are appended after those chips.
+
+## Tools
+
+The main agent has two tools. Children are configured with this extension removed, so they cannot spawn further sub-agents.
+
+- **`delegate`** (example 22, `replay: 'safe'`): parameters `{ agent, task }`. Creates a child owned by `{ kind: 'task', taskId: api.taskId }`, reuses it on rerun with `tx.scanConversations({ ownerTaskId })`, publishes `api.details({ conversationId, roleId, name })`, submits with `requestId` `subagent:${api.taskId}`, and returns the child's answer. The tool `description` lists available roles (`id`, name, and the role's "when to use" description) so the main agent can pick one.
+- **`subagent`** (example 23, `replay: 'unsafe'`): `action` is `spawn` / `send` / `wait` / `stop` / `list`. Each named child is owned by a background anchor task, so the parent's Esc and idle waits do not stop it. A background reporter delivers the message and posts the answer back to the main conversation as a follow-up. Request IDs keep a restart from sending a message or a report twice. The name → conversation map is the example 23 document, not a separate roster.
+
+`POST /api/conversations/:cid/stop` calls `conversation.abort(context, { background: true })`, which also stops background sub-agents.
+
+## HTTP
+
+```bash
+curl -sS http://127.0.0.1:3000/api/conversations/<cid>
+# → agents: role/pipeline chips, then
+#   {id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}
+#   id is <cid>:sub:<child conversation id>
+#   mode is foreground | background
+
+curl -sS http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/messages
+# → {id, roleId, name, status, mode, messages}
+
+curl -sN -H 'Accept: text/event-stream' \
+  http://127.0.0.1:3000/api/conversations/<cid>/events
+# event: agent   data: same fields as the chip, including mode
+```
+
+The list is rebuilt from the Harness after a process restart: tool-result `details.conversationId`, the ownership index, the background name document, and each child's `viewState`. Child transcript events stay on the child conversation; the parent SSE does not mix in `message.delta` / `tool.*` from the child.
+
+## Demo (faux)
 
 From the repo root, Node 22:
 
@@ -11,48 +41,6 @@ export PATH=$HOME/.local/node22/bin:$PATH
 PORT=3000 PI_WORK_LLM=faux PI_WORK_FAUX_SCRIPT=examples/faux/subagents.json node server.mjs
 ```
 
-Startup seeds the store from JSON templates when that id is not already stored and was not deleted in the UI:
-
-- Roles: `roles/*.json` (`default`, `coder`, `tester`, `auditor`, `planner`, …)
-- Pipelines: `pipelines/*.json`, then `examples/pipelines/*.json`
-
-Shipped pipelines are `feature` (planner → coder → tester → auditor) and `demo` (coder → tester → auditor). A delete records a tombstone, so the template is not copied back on the next start. Edits stay in SQLite and are not written back over the template files. The planner, coder, tester, and auditor prompts in `roles/*.json` are the shipped defaults. Settings can start a new role from one of those prompts, or restore that role's prompt from the file without rewriting the file.
-
-Create a workspace and a conversation that uses that pipeline, then send a message:
-
-```bash
-# workspace path must already exist
-curl -sS -X POST http://127.0.0.1:3000/api/workspaces \
-  -H 'content-type: application/json' \
-  -d '{"name":"demo-ws","path":"/tmp/pi-work-demo"}'
-
-# use the returned workspace id
-curl -sS -X POST http://127.0.0.1:3000/api/workspaces/<wid>/conversations \
-  -H 'content-type: application/json' \
-  -d '{"title":"Pipeline demo","pipelineId":"demo"}'
-
-# use the returned conversation id
-curl -sS -X POST http://127.0.0.1:3000/api/conversations/<cid>/messages \
-  -H 'content-type: application/json' \
-  -d '{"text":"Add a hello helper and cover it."}'
-```
-
-Watch progress:
-
-```bash
-curl -sS http://127.0.0.1:3000/api/conversations/<cid>
-# → agents: [{id, roleId, name, status, step, totalSteps, toolCalls, lastText}, ...]
-# first entry is the conversation's role/default agent (here: coder); then tester, auditor
-
-curl -sN -H 'Accept: text/event-stream' \
-  http://127.0.0.1:3000/api/conversations/<cid>/events
-# event: agent   data: {id, roleId, name, status, step, totalSteps, lastText}
-```
-
-`examples/faux/subagents.json` inserts short delays between turns so the three steps are visible in the event stream. `{ "end": true }` ends the current pipeline agent and hands off to the next (same turn-union shape as `tests/fixtures/*.json`, plus this explicit end).
-
-Reconnect with `Last-Event-ID` to replay persisted `agent` events. `GET /api/conversations/:cid` rebuilds `agents` from stored conversation + pipeline + messages, so the list survives a process restart.
-
-## Title
+Startup seeds roles from `roles/*.json` when that id is not already stored. Create a workspace and a conversation, then send a message that causes the main agent to call `delegate` / `subagent`.
 
 `start()` does not overwrite a title the client already set. The first user message becomes the title only when the current title is empty or `New conversation`.

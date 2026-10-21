@@ -16,7 +16,6 @@
 | `PI_WORK_TOKEN` | 可选登录。不设时 `/api` 与 SSE 不鉴权，不读不写 `auth.token`，`GET /login` 一律 302 `/`，启动不打印 `PI_WORK_LOGIN` / `PI_WORK_TOKEN`。设置后所有 `/api` 需 `Authorization: Bearer` 或 cookie `pi_work_token`；SSE 可用一次性 `?ticket=`；`GET /login?token=` 校验后种 cookie 并 302 `/`，否则 401 | 不设 |
 | `PI_WORK_ALLOWED_HOSTS` | 逗号分隔的额外 Host。不设 `PI_WORK_TOKEN` 且本变量非空时，启动打印一行警告：服务对这些主机开放且没有鉴权 | 不设 |
 | `PI_WORK_KERNEL` | 已废弃，启动不再读取。运行时始终是 Pi Durable Harness | 不设 |
-| `PI_WORK_MAX_SUBAGENTS` | 子 Agent 并发上限。正整数时按它限制；缺省或非法值默认不限。数的是花名册里未停止、未结束的子 Agent（含已经空闲的后台子 Agent）。被停止后释放名额 | 不设 |
 | `PI_WORK_GIT_BIN` | git 可执行文件。缺省 `git`。Windows 上可设为 `git.exe` 的完整路径 | 不设 |
 | `PI_WORK_GIT_HTTP_HOSTS` | 允许用 `http://` 克隆的主机名，逗号分隔，大小写不敏感，不含端口。其它 `http://` 拒绝 | 不设 |
 | `PI_WORK_GIT_CA_FILE` | 设置后克隆命令增加 `-c http.sslCAInfo=<路径>`，用于自签或内网 CA | 不设 |
@@ -198,9 +197,9 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...
 
 主 Agent 始终可以派子 Agent。未知对话的 `GET /api/conversations/:cid/agents/:aid/messages` 是 `404 {error:'conversation not found'}`。
 
-主 Agent 多两个工具：`delegate`（前台，参数 `{agent, task}`，`agent` 是角色 id）和 `subagent`（后台，`action` 为 `spawn` / `send` / `wait` / `stop` / `list`）。可用角色的 id、名称和 `description` 写在主 Agent 的 `subagents` 系统提示 section。子 Agent 按该角色的模型绑定、工具白名单、Skills 和插件工具各自 `configure`，不能再派子 Agent。
+主 Agent 多两个工具：`delegate`（前台，参数 `{agent, task}`，`agent` 是角色 id）和 `subagent`（后台，`action` 为 `spawn` / `send` / `wait` / `stop` / `list`）。写法照 Pi Durable README「Abort and Subagents」与示例 22（前台）/ 23（后台）：前台子对话由工具任务拥有，重启时 `scanConversations({ ownerTaskId })` 复用，`requestId` 为 `subagent:<taskId>`；后台子对话由 background 锚点任务拥有，答案由 reporter 以 follow-up 送回主对话。没有自写花名册、并发上限或暂停同步。`delegate` 的 `description` 动态列出可用角色的 id、名称和「什么时候用」的描述。子 Agent 按该角色的模型绑定、工具白名单、Skills 和插件工具各自 `configure`，不能再派子 Agent。
 
-`GET /api/conversations/:cid` 的 `agents` 在原有角色 / 流水线芯片之后追加真实子 Agent 实例：`{id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。角色芯片和流水线芯片没有 `mode`。没有子 Agent 时，`agents` 与原来相同。
+`GET /api/conversations/:cid` 的 `agents` 在原有角色 / 流水线芯片之后追加真实子 Agent 实例：`{id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}`。名单从 Harness 读：工具调用的 `details.conversationId`、所有权索引、后台名称文档、子对话 `viewState`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。角色芯片和流水线芯片没有 `mode`。没有子 Agent 时，`agents` 与原来相同。
 
 父对话 SSE 不混入子对话的 `message.delta` / `tool.*`。子 Agent 状态变化时，父对话收到 `agent` 事件，字段与芯片相同，包含 `mode`。角色和流水线的 `agent` 事件仍然不带 `mode`。
 

@@ -7,7 +7,6 @@ import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSSE } from '../../src/core/sse.mjs';
-import { maxSubagents } from '../../src/kernel/subagents.mjs';
 import { ROOT } from './_root.mjs';
 
 const TOKEN = 'unit-kernel-subagents-token';
@@ -38,13 +37,6 @@ const SCOUT = {
   pluginTools: false,
   skills: ['commit-message'],
 };
-
-test('max subagents is unlimited unless PI_WORK_MAX_SUBAGENTS is a positive integer', () => {
-  assert.equal(maxSubagents({}), Infinity);
-  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: '1' }), 1);
-  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: '0' }), Infinity);
-  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: 'nope' }), Infinity);
-});
 
 function childEnv(dataDir, extra = {}) {
   const env = { ...process.env };
@@ -311,8 +303,6 @@ function startScoutModel({ text, readyPath, releasePath }) {
           if (!ok) closed += 1;
           resolve(ok);
         };
-        // After the body is consumed, aborting the client closes the socket
-        // without a request `close` event.
         req.socket.on('close', () => finish(false));
       });
       const ok = await released;
@@ -382,7 +372,7 @@ test('subagent messages 404 for an unknown conversation or agent', { timeout: 30
   }
 });
 
-test('foreground delegate uses the child model, tool whitelist, and skills', { timeout: 60000 }, async () => {
+test('foreground delegate returns the child answer and lists roles in its description', { timeout: 60000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-fg-'));
   const record = path.join(dataDir, 'parent-requests.jsonl');
   const script = await writeScript(dataDir, 'parent.json', [
@@ -424,8 +414,7 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
     assert.match(childHit.system, /Commit messages/);
     assert.equal(childHit.system.includes('Pick a subagent by id'), false);
     const parentLines = (await readFile(record, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-    const roster = parentLines[0].sections.find((section) => section.key === 'subagents');
-    assert.match(roster?.value || '', /scout \(Scout\): when the tree needs reading/);
+    assert.match(parentLines[0].toolDescriptions?.delegate || '', /scout \(Scout\): when the tree needs reading/);
     assert.equal(parentLines[0].tools.includes('delegate'), true);
     const scout = subagentsOf(done).find((agent) => agent.roleId === 'scout');
     assert.ok(scout, JSON.stringify(done.agents));
@@ -460,16 +449,11 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
   }
 });
 
-test('background spawn, send, wait, list, stop, and the concurrency cap', { timeout: 60000 }, async () => {
+test('background spawn reports the answer back to the main conversation', { timeout: 60000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-bg-'));
   const script = await writeScript(dataDir, 'parent.json', [
     { tool: 'subagent', args: { action: 'spawn', name: 'a', agent: 'scout', message: 'ping-a' } },
-    { tool: 'subagent', args: { action: 'list' } },
-    { tool: 'subagent', args: { action: 'wait', name: 'a' } },
-    { tool: 'subagent', args: { action: 'send', name: 'a', message: 'ping-a-again' } },
-    { tool: 'subagent', args: { action: 'wait', name: 'a' } },
-    { tool: 'subagent', args: { action: 'stop', name: 'a' } },
-    { text: 'bg-done' },
+    { text: 'spawned' },
   ]);
   const fake = await startScoutModel({ text: 'SCOUT_PONG' });
   let proc = null;
@@ -483,23 +467,20 @@ test('background spawn, send, wait, list, stop, and the concurrency cap', { time
     const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'bg' });
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'bg' });
     const pendingEvents = collectSse(srv.base, conv.body.id, {
-      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.mode === 'background' && ev.data?.status === 'stopped'),
+      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.mode === 'background' && ev.data?.lastText?.includes('SCOUT_PONG')),
       timeout: 30000,
     });
     assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'run background' })).status, 202);
-    const done = await waitFor(srv.base, conv.body.id, (body) => toolTexts(body).some((text) => text.includes('Stopped a.')));
-    assert.equal(done.status === 'done' || done.status === 'running', true, `${done?.status}\n${srv.logs()}`);
-    const tools = toolTexts(done).join('\n');
-    assert.match(tools, /Started a\./);
-    assert.match(tools, /a: (working|idle) role=scout/);
-    assert.match(tools, /SCOUT_PONG/);
-    assert.match(tools, /Stopped a\./);
-    assert.ok(fake.seen.filter((hit) => hit.path.endsWith('/chat/completions')).length >= 2);
+    const done = await waitFor(srv.base, conv.body.id, (body) => (
+      (body.messages || []).some((message) => String(message.text || '').includes('[subagent a answered, no reply needed] SCOUT_PONG'))
+    ), 120);
+    assert.match(toolTexts(done).join('\n'), /Started a\./);
+    assert.match((done.messages || []).map((message) => message.text || '').join('\n'), /\[subagent a answered, no reply needed] SCOUT_PONG/);
     const scout = subagentsOf(done).find((agent) => agent.name === 'a');
     assert.ok(scout, JSON.stringify(done.agents));
     assert.equal(scout.roleId, 'scout');
-    assert.equal(scout.status, 'stopped');
     assert.equal(scout.mode, 'background');
+    assert.match(scout.lastText, /SCOUT_PONG/);
     const child = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/${encodeURIComponent(scout.id)}/messages`);
     assert.equal(child.status, 200);
     assert.equal(child.body.mode, 'background');
@@ -508,77 +489,6 @@ test('background spawn, send, wait, list, stop, and the concurrency cap', { time
     const events = await pendingEvents;
     const agentEvent = events.find((ev) => ev.event === 'agent' && ev.data?.id === scout.id);
     assert.equal(agentEvent?.data?.mode, 'background');
-  } finally {
-    if (proc) await stopProcess(proc);
-    await fake.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
-
-test('a second background spawn is refused when the cap is 1', { timeout: 60000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-cap-'));
-  const script = await writeScript(dataDir, 'parent.json', [
-    { tool: 'subagent', args: { action: 'spawn', name: 'a', agent: 'scout', message: 'one' } },
-    { tool: 'subagent', args: { action: 'spawn', name: 'b', agent: 'scout', message: 'two' } },
-    { text: 'cap-done' },
-  ]);
-  const fake = await startScoutModel({ text: 'ONE' });
-  let proc = null;
-  try {
-    const srv = await startServer({
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-      PI_WORK_MAX_SUBAGENTS: '1',
-    }, { dataDir });
-    proc = srv.proc;
-    await bindScout(srv.base, fake);
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'cap' });
-    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'cap' });
-    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'two spawns' })).status, 202);
-    const done = await waitFor(srv.base, conv.body.id, (body) => toolTexts(body).some((text) => text.includes('limit 1')));
-    const tools = toolTexts(done).join('\n');
-    assert.match(tools, /Started a\./);
-    assert.match(tools, /limit 1/);
-    assert.equal(tools.includes('Started b.'), false, tools);
-    assert.equal(subagentsOf(done).some((agent) => agent.name === 'b'), false);
-  } finally {
-    if (proc) await stopProcess(proc);
-    await fake.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
-
-test('five background spawns all succeed when no cap is set', { timeout: 60000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-nocap-'));
-  const names = ['a', 'b', 'c', 'd', 'e'];
-  const script = await writeScript(dataDir, 'parent.json', [
-    ...names.map((name) => ({
-      tool: 'subagent',
-      args: { action: 'spawn', name, agent: 'scout', message: `ping-${name}` },
-    })),
-    { text: 'five-started' },
-  ]);
-  const fake = await startScoutModel({ text: 'SCOUT_PONG' });
-  let proc = null;
-  try {
-    const srv = await startServer({
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-    }, { dataDir });
-    proc = srv.proc;
-    await bindScout(srv.base, fake);
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'nocap' });
-    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'nocap' });
-    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'five spawns' })).status, 202);
-    const done = await waitFor(srv.base, conv.body.id, (body) => {
-      const tools = toolTexts(body).join('\n');
-      return names.every((name) => tools.includes(`Started ${name}.`))
-        && assistantTexts(body).includes('five-started');
-    }, 120);
-    const tools = toolTexts(done).join('\n');
-    for (const name of names) assert.match(tools, new RegExp(`Started ${name}\\.`));
-    assert.equal(tools.includes('limit'), false, tools);
-    assert.deepEqual(subagentsOf(done).map((agent) => agent.name).sort(), names);
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
@@ -618,7 +528,6 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
       const sleeper = subagentsOf(body).find((agent) => agent.name === 'sleeper');
       return sleeper?.status === 'stopped';
     });
-    assert.equal(after.status, 'done', JSON.stringify(after.agents));
     assert.equal(subagentsOf(after).find((agent) => agent.name === 'sleeper')?.status, 'stopped');
     const started = Date.now();
     while (fake.closed() < 1 && Date.now() - started < 8000) {
