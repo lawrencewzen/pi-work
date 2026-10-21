@@ -3,6 +3,7 @@ import {
   clipOutputText,
   isProbeFailure,
   isRealToolFailure,
+  parseToolOutput,
   relativizePath,
   relativizeText,
   summarizeToolGroup,
@@ -1741,11 +1742,29 @@ let runStartedAt = null;
 let runStartedFor = null;
 let runTicker = null;
 
+const TOOL_COMMAND_PREVIEW_LINES = 5;
+
 function lastIsStreamingAssistantBody(msgs) {
   const last = Array.isArray(msgs) ? msgs[msgs.length - 1] : null;
   if (!last || last.role !== 'assistant') return false;
   if (last.kind === 'correction') return false;
   return last.streaming === true && Boolean(String(last.text || '').trim());
+}
+
+/** Trailing tool group: skip empty assistant bubbles that have not started a body yet. */
+function threadEndsWithToolGroup(msgs) {
+  for (let i = (msgs || []).length - 1; i >= 0; i -= 1) {
+    const m = msgs[i];
+    if (m?.role === 'tool') return Boolean(m.tool);
+    if (m?.kind === 'correction') continue;
+    if (m?.role === 'assistant' && !String(m.text || '').trim()) continue;
+    return false;
+  }
+  return false;
+}
+
+function showRunClock(conv, msgs) {
+  return Boolean(state.activeConversationId) && ACTIVE_RUN.has(conv?.status) && !lastIsStreamingAssistantBody(msgs);
 }
 
 function pendingStatusText(conv, msgs) {
@@ -1758,6 +1777,10 @@ function pendingStatusText(conv, msgs) {
   const live = (conv?.agents || []).filter((ag) => isRealSubagent(ag) && ACTIVE_RUN.has(ag.status)).length;
   if (live) text = `${text} ${t('pending_subagents', { n: live })}`;
   return text;
+}
+
+function elapsedNow() {
+  return formatElapsed(Date.now() - (runStartedAt || Date.now()));
 }
 
 function armRunClock(conv, show) {
@@ -1780,22 +1803,20 @@ function armRunClock(conv, show) {
   }
   if (!runTicker) {
     runTicker = setInterval(() => {
-      const el = document.querySelector('[data-testid="assistant-pending-elapsed"]');
+      const el = document.querySelector('[data-run-elapsed]');
       if (el && runStartedAt) el.textContent = formatElapsed(Date.now() - runStartedAt);
     }, 1000);
   }
 }
 
 function assistantPendingHtml(conv, msgs) {
-  const show = Boolean(state.activeConversationId) && ACTIVE_RUN.has(conv?.status) && !lastIsStreamingAssistantBody(msgs);
-  armRunClock(conv, show);
-  if (!show) return '';
+  if (!showRunClock(conv, msgs) || threadEndsWithToolGroup(msgs)) return '';
   return (
     `<div class="msg-group msg-side-agent is-pending" data-testid="assistant-pending">` +
     `<div class="pending-line">` +
     `<span class="run-spin" aria-hidden="true"><span></span></span>` +
     `<span class="pending-status" data-testid="assistant-pending-status">${escapeHtml(pendingStatusText(conv, msgs))}</span>` +
-    `<span class="pending-elapsed" data-testid="assistant-pending-elapsed">${escapeHtml(formatElapsed(Date.now() - runStartedAt))}</span>` +
+    `<span class="pending-elapsed" data-testid="assistant-pending-elapsed" data-run-elapsed>${escapeHtml(elapsedNow())}</span>` +
     `</div>` +
     `</div>`
   );
@@ -1883,13 +1904,13 @@ function agentsCardHtml(agents) {
 }
 
 /** Messages → HTML blocks. Shared by the main thread and the sub-agent pane. */
-function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, streamSpin } = {}) {
+function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, streamSpin, liveTail } = {}) {
   const rendered = [];
   const toolRun = [];
   const last = msgs[msgs.length - 1];
-  const flushToolRun = () => {
+  const flushToolRun = (live = false) => {
     if (!toolRun.length) return;
-    rendered.push(renderToolGroupHtml(toolRun));
+    rendered.push(renderToolGroupHtml(toolRun, '', { live }));
     if (afterToolRun) {
       const extra = afterToolRun(toolRun);
       if (extra) rendered.push(extra);
@@ -1902,6 +1923,7 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, stre
       else flushToolRun();
       continue;
     }
+    if (m.role === 'assistant' && m.kind !== 'correction' && !String(m.text || '').trim()) continue;
     flushToolRun();
     if (m.kind === 'correction') {
       rendered.push(
@@ -1936,7 +1958,7 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, stre
       `</div>`
     );
   }
-  flushToolRun();
+  flushToolRun(Boolean(liveTail));
   return rendered;
 }
 
@@ -1947,6 +1969,7 @@ export function renderChatThread() {
 
   const conv = state.activeConversationData;
   if (!conv || !conv.messages || conv.messages.length === 0) {
+    armRunClock(conv, showRunClock(conv, []));
     const pending = assistantPendingHtml(conv, []);
     const errHtml = llmErrorHtml(conv);
     const inner = [pending, errHtml].filter(Boolean).join('')
@@ -1963,10 +1986,14 @@ export function renderChatThread() {
   const realAgents = allAgents.filter((ag) => isRealSubagent(ag));
   let agentsPlaced = false;
   const streamSpin = lastIsStreamingAssistantBody(msgs);
+  const clock = showRunClock(conv, msgs);
+  armRunClock(conv, clock);
+  const liveTail = clock && threadEndsWithToolGroup(msgs);
 
   const rendered = threadBlocksHtml(msgs, {
     fallbackRoleId: conv.roleId,
     streamSpin,
+    liveTail,
     afterToolRun(tools) {
       if (agentsPlaced || !realAgents.length) return '';
       if (!tools.some((tool) => DELEGATE_TOOLS.has(String(tool?.name || '').toLowerCase()))) return '';
@@ -2038,19 +2065,27 @@ function conversationWorkspacePath() {
   return ws?.path || '';
 }
 
-export function renderToolGroupHtml(tools, idPrefix = '') {
+export function renderToolGroupHtml(tools, idPrefix = '', opts = {}) {
   const list = (tools || []).filter(Boolean);
   if (!list.length) return '';
+  const live = Boolean(opts.live);
   const id = `${idPrefix}${toolGroupKey(list)}`;
   const open = state.expandedToolGroups.has(id);
   const summary = summarizeToolGroup(list, t);
   const preview = toolGroupPreview(list, state.expandedToolGroupOlder.has(id));
-  const realFailed = summary.failed > 0 && !summary.running;
+  const spinning = summary.running || live;
+  const realFailed = summary.failed > 0 && !spinning;
   const fail = summary.failed > 0
     ? `<span class="tool-group-fail" data-testid="tool-group-fail">${escapeHtml(t('tool_fail_count', { n: summary.failed }))}</span>`
     : '';
-  const spin = summary.running
+  const spin = spinning
     ? `<span class="tool-group-spin" data-testid="tool-group-spinner" aria-hidden="true"></span>`
+    : '';
+  const thinking = live && !summary.running
+    ? `${t('tool_sum_join')}${t('pending_thinking')}`
+    : '';
+  const elapsed = live
+    ? `<span class="pending-elapsed" data-testid="tool-group-elapsed" data-run-elapsed>${escapeHtml(elapsedNow())}</span>`
     : '';
   const older = preview.hidden > 0
     ? `<button type="button" class="tool-group-older" data-testid="tool-group-older" data-action="expand-tool-group-older" data-group-id="${escapeHtml(id)}">${escapeHtml(tPlural('tool_group_older', preview.hidden))}</button>`
@@ -2058,16 +2093,18 @@ export function renderToolGroupHtml(tools, idPrefix = '') {
   const groupClass = [
     'tool-group',
     open ? 'is-open' : '',
-    summary.running ? 'is-running' : '',
+    spinning ? 'is-running' : '',
+    live ? 'is-live' : '',
     realFailed ? 'is-failed' : '',
   ].filter(Boolean).join(' ');
   return (
     `<div class="${groupClass}" data-testid="tool-group" data-group-id="${escapeHtml(id)}">` +
     `<button type="button" class="tool-group-summary" data-testid="tool-group-summary" data-action="toggle-tool-group" data-group-id="${escapeHtml(id)}" aria-expanded="${open ? 'true' : 'false'}">` +
     spin +
-    `<span class="tool-group-text" data-testid="tool-group-text">${escapeHtml(summary.text)}</span>` +
+    `<span class="tool-group-text" data-testid="tool-group-text">${escapeHtml(summary.text)}${escapeHtml(thinking)}</span>` +
     fail +
     `<svg class="tool-group-chevron icon" data-testid="tool-group-chevron" viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>` +
+    elapsed +
     `</button>` +
     `<div class="tool-group-list" data-testid="tool-group-list">` +
     older +
@@ -2128,12 +2165,6 @@ function truncateCommand(text, max = 64) {
   return `${s.slice(0, Math.max(1, max - 1))}…`;
 }
 
-function toolOutputSource(output) {
-  if (output == null || output === '') return '';
-  if (typeof output === 'string') return output;
-  return JSON.stringify(output, null, 2);
-}
-
 function isToolDetailOpen(tool, tools) {
   const id = tool?.id;
   if (id == null || String(id) === '') return false;
@@ -2142,26 +2173,59 @@ function isToolDetailOpen(tool, tools) {
   return isRealToolFailure(tool, tools);
 }
 
+function isChangeTool(tool) {
+  const kind = toolKind(tool?.name);
+  return kind === 'write' || kind === 'edit';
+}
+
+function clipTailLines(text, limit) {
+  const raw = text == null ? '' : String(text);
+  const lines = raw.split(/\r?\n/);
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  if (lines.length <= limit) return { text: raw, clipped: false };
+  return { text: lines.slice(-limit).join('\n'), clipped: true };
+}
+
+function toolRowOutputText(tool, workspacePath) {
+  const parsed = parseToolOutput(tool?.output);
+  const json = parsed.json && typeof parsed.json === 'object' ? parsed.json : null;
+  let raw = parsed.text;
+  if (toolKind(tool?.name) === 'bash' && json && (json.stdout != null || json.stderr != null)) {
+    const stdout = json.stdout == null ? '' : String(json.stdout);
+    const stderr = json.stderr == null ? '' : String(json.stderr);
+    raw = [stdout, stderr].filter((part) => part !== '').join(stdout && stderr ? '\n' : '');
+    if (!raw) raw = parsed.text;
+  }
+  return relativizeText(unwrapHarnessDiagnostics(raw), workspacePath);
+}
+
+function clipToolRowOutput(tool, outputText, showAll, realFail) {
+  if (showAll) return clipOutputText(outputText, true);
+  if (toolKind(tool?.name) === 'bash') return clipTailLines(outputText, TOOL_COMMAND_PREVIEW_LINES);
+  const limit = realFail ? TOOL_ERROR_PREVIEW_LINES : 20;
+  return clipOutputText(outputText, false, limit);
+}
+
 export function renderToolRowHtml(tool, tools = []) {
   if (!tool) return '';
   const group = Array.isArray(tools) && tools.length ? tools : [tool];
   const workspacePath = conversationWorkspacePath();
   const toolName = tool.name || 'tool';
+  const changeKind = isChangeTool(tool);
   const rawPath = tool.path || tool.input?.path || '';
-  const shownPath = relativizePath(rawPath, workspacePath);
   const display = toolRowDisplay(tool, workspacePath);
   const pathClass = display.intent ? 'tool-path is-intent' : 'tool-path';
   const origHtml = display.detail
     ? `<span class="tool-path-orig" data-testid="tool-row-orig">${escapeHtml(display.detail)}</span>`
     : '';
   const diff = toolDiffCounts(tool);
-  const showDiff = (toolName === 'write' || toolName === 'edit') && (diff.added != null || diff.removed != null);
+  const showDiff = changeKind && (diff.added != null || diff.removed != null);
   const added = diff.added != null ? `+${diff.added}` : '';
   const removed = diff.removed != null ? `−${diff.removed}` : '';
   const bucket = toolStatusBucket(tool.status);
   const probe = isProbeFailure(tool, group);
   const realFail = isRealToolFailure(tool, group);
-  const isExpanded = isToolDetailOpen(tool, group);
+  const isExpanded = !changeKind && isToolDetailOpen(tool, group);
   const hint = toolResultHint(tool, t, { workspacePath });
   const hintFailed = hint.failed && !probe;
   const diffBadge =
@@ -2175,11 +2239,9 @@ export function renderToolRowHtml(tool, tools = []) {
       ? `<span class="tool-row-status is-interrupted" data-testid="tool-row-status">${escapeHtml(localizeToolStatus(tool.status))}</span>`
       : '');
   const preview = pluginResultPreview(tool);
-  const outputText = relativizeText(unwrapHarnessDiagnostics(toolOutputSource(tool.output)), workspacePath);
+  const outputText = toolRowOutputText(tool, workspacePath);
   const showAllOutput = state.expandedToolOutputs.has(tool.id);
-  const clipLimit = realFail && !showAllOutput ? TOOL_ERROR_PREVIEW_LINES : 20;
-  const clipped = clipOutputText(outputText, showAllOutput, clipLimit);
-  const inputText = tool.input ? JSON.stringify(tool.input, null, 2) : '';
+  const clipped = clipToolRowOutput(tool, outputText, showAllOutput, realFail);
   const hintHtml = hint.text
     ? `<span class="tool-row-hint${hintFailed ? ' is-failed' : ''}" data-testid="tool-row-hint">${escapeHtml(hint.text)}</span>`
     : (preview ? `<span class="tool-result" data-testid="tool-row-output">${escapeHtml(preview)}</span>` : '');
@@ -2188,10 +2250,23 @@ export function renderToolRowHtml(tool, tools = []) {
     bucket === 'interrupted' ? 'tool-interrupted' : '',
     realFail ? 'is-failed' : '',
   ].filter(Boolean).join(' ');
+  const rowAction = changeKind && rawPath ? 'open-tool-diff' : 'toggle-tool';
+  const detailHtml = changeKind
+    ? ''
+    : (
+      `<div class="tool-detail-card" data-testid="tool-row-detail" style="display:${isExpanded ? 'block' : 'none'}">` +
+      (isExpanded && clipped.text
+        ? `<div class="tool-detail-block${realFail ? ' is-failed' : ''}">${escapeHtml(clipped.text)}</div>`
+        : '') +
+      (isExpanded && clipped.clipped
+        ? `<button type="button" class="tool-detail-more" data-testid="tool-output-more" data-action="expand-tool-output" data-tool-id="${escapeHtml(tool.id)}">${escapeHtml(t('tool_show_all'))}</button>`
+        : '') +
+      `</div>`
+    );
 
   return (
     `<div class="tool-row-wrapper">` +
-    `<div class="${rowClass}" data-testid="tool-row" data-tool="${escapeHtml(toolName)}" data-path="${escapeHtml(rawPath)}" data-action="toggle-tool" data-tool-id="${escapeHtml(tool.id)}">` +
+    `<div class="${rowClass}" data-testid="tool-row" data-tool="${escapeHtml(toolName)}" data-path="${escapeHtml(rawPath)}" data-action="${rowAction}" data-tool-id="${escapeHtml(tool.id)}">` +
     `<div class="tool-main">` +
     toolIconSvg(toolName) +
     `<span class="tool-action">${escapeHtml(toolActionLabel(toolName))}</span>` +
@@ -2201,16 +2276,7 @@ export function renderToolRowHtml(tool, tools = []) {
     diffBadge +
     `</div>` +
     `<div class="tool-meta">${statusHtml}</div>` +
-    `<div class="tool-detail-card" data-testid="tool-row-detail" style="display:${isExpanded ? 'block' : 'none'}">` +
-    `<div class="tool-detail-block${realFail ? ' is-failed' : ''}">` +
-    (shownPath ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_path_label'))}</span> ${escapeHtml(shownPath)}</div>` : '') +
-    (realFail ? '' : (inputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_input'))}</span>\n${escapeHtml(inputText)}</div>` : '')) +
-    (outputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_output'))}</span>\n${escapeHtml(clipped.text)}</div>` : '') +
-    `</div>` +
-    (clipped.clipped
-      ? `<button type="button" class="tool-detail-more" data-testid="tool-output-more" data-action="expand-tool-output" data-tool-id="${escapeHtml(tool.id)}">${escapeHtml(t('tool_show_all'))}</button>`
-      : '') +
-    `</div>` +
+    detailHtml +
     `</div>` +
     `</div>`
   );
@@ -2352,6 +2418,21 @@ export function toggleToolDetail(id) {
     state.expandedTools.add(id);
   }
   renderChatThread();
+}
+
+function openToolFileDiff(id) {
+  const tool = findToolById(id);
+  const raw = tool?.path || tool?.input?.path || '';
+  if (!raw) {
+    toggleToolDetail(id);
+    return;
+  }
+  const filePath = relativizePath(raw, conversationWorkspacePath()) || raw;
+  state.userPickedFile = true;
+  if (state.activeRightTab !== 'diff') state.activeRightTab = 'diff';
+  state.closedChangeFiles.delete(filePath);
+  setRightOpen(true);
+  loadFileOrDiff(filePath);
 }
 
 export function toggleToolGroup(id) {
@@ -4171,6 +4252,9 @@ document.addEventListener('click', (e) => {
       break;
     case 'expand-tool-output':
       expandToolOutput(actionEl.getAttribute('data-tool-id'));
+      break;
+    case 'open-tool-diff':
+      openToolFileDiff(actionEl.getAttribute('data-tool-id'));
       break;
     case 'toggle-tool':
       if (!e.target.closest('.tool-detail-card')) {

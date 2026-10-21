@@ -69,9 +69,23 @@ test('running status lives in an assistant pending bubble', async ({ page }) => 
   await expect(page.getByTestId('run-bar')).toHaveCount(0);
   await expect(page.getByTestId('btn-stop')).toHaveCount(0);
   await expect(page.locator('[data-testid=chat-send][data-state=stop]')).toBeVisible();
-  await expect(page.getByTestId('assistant-pending-status')).toHaveText('正在运行 `sleep 2`…', { timeout: 8000 });
+
+  await expect(page.getByTestId('tool-group-spinner')).toBeVisible({ timeout: 8000 });
+  await expect(page.getByTestId('assistant-pending')).toHaveCount(0);
+  await expect(page.getByTestId('tool-group-text')).toHaveText('正在运行 `sleep 2`…');
+  await expect(page.getByTestId('tool-group-elapsed')).toHaveText(/^\d+:\d{2}$/);
+  await expect(page.locator('.tool-group-spin, .run-spin, [data-testid=assistant-stream-spin]')).toHaveCount(1);
+
+  await expect(page.getByTestId('tool-group-text')).toHaveText('运行 sleep 2 · 思考中', { timeout: 8000 });
+  await expect(page.getByTestId('assistant-pending')).toHaveCount(0);
+  await expect(page.getByTestId('tool-group-spinner')).toBeVisible();
+  await expect(page.getByTestId('tool-group-elapsed')).toHaveText(/^\d+:\d{2}$/);
+  await expect(page.locator('.tool-group-spin, .run-spin, [data-testid=assistant-stream-spin]')).toHaveCount(1);
+
   await expect(page.getByTestId('message').filter({ hasText: '跑完了。' })).toBeVisible({ timeout: 20000 });
   await expect(pending).toHaveCount(0);
+  await expect(page.getByTestId('tool-group-spinner')).toHaveCount(0);
+  await expect(page.getByTestId('tool-group-elapsed')).toHaveCount(0);
   await expect(statusText(page)).toContainText(/done|完成/i);
   await expect(page.locator('[data-testid=chat-send][data-state=stop]')).toHaveCount(0);
 });

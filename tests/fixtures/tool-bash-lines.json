@@ -1,0 +1,4 @@
+{ "turns": [
+  { "tool": "bash", "args": { "command": "node -e \"for (let i = 1; i <= 30; i++) console.log('L' + String(i).padStart(2, '0'))\"" } },
+  { "text": "打完了。" }
+] }
