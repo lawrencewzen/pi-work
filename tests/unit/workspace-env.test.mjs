@@ -51,11 +51,16 @@ async function withWorkspaceEnv(use) {
   }
 }
 
+// win32: Git Bash `ln -s` copies a regular file (isSymbolicLink=false); official
+// NodeExecutionEnv fails the same two cases (CI run 39554765466). Node fs.symlink()
+// still creates native links — sandbox escape below covers that.
 registerEnvConformance({
   describe,
   expect,
   it: (name, run, timeoutMs) => it(name, { timeout: timeoutMs }, run),
-}, 'workspace env conformance', withWorkspaceEnv);
+}, 'workspace env conformance', withWorkspaceEnv, {
+  symlinks: process.platform !== 'win32',
+});
 
 test('sandbox: env rejects ../, absolute paths, and NUL', async () => {
   const base = await mkdtemp(path.join(tmpdir(), 'piw-env-sand-'));
