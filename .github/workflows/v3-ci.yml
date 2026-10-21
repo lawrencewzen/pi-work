@@ -17,3 +17,28 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PI_WORK_SHOTS: ${{ runner.temp }}/pi-work-shots
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Upload Playwright report and screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            playwright-report/
+            test-results/
+            ${{ runner.temp }}/pi-work-shots/
+          if-no-files-found: ignore
+          retention-days: 7
