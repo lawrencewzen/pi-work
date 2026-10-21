@@ -6,14 +6,26 @@ import { createWorkspace, newConversation, send, statusText, openApp } from './h
 
 test('kill -9 server mid-task, restart -> resumes to done without duplicate writes', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['crash']);
-  let srv = await startServer({ script: 'crash.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const holdReady = path.join(root, 'hold-ready');
+  let srv = await startServer({
+    script: 'crash.json',
+    extraEnv: {
+      PI_WORK_WORKSPACE_ROOT: root,
+      PI_WORK_FAUX_HOLD_READY: holdReady,
+    },
+  });
   const { dataDir, port } = srv;
   const token = await openApp(page, srv);
   await createWorkspace(page, 'crash', ws);
   await newConversation(page);
   await send(page, 'go');
-  // wait until side effect happened (during the delay step), then hard-kill
+  // crash.json's first assistant turn fires write(log.txt) and bash(side_effect) together.
+  // Those tools run in parallel; bash can finish first. write is replay:unsafe, so SIGKILL
+  // before log.txt is on disk is not replayed after resume — ENOENT looks like a recovery
+  // miss. Wait until both files exist and the next scripted delay (the cut turn) has started.
+  await expect.poll(() => fs.readFile(path.join(ws, 'log.txt'), 'utf8').catch(() => ''), { timeout: 15000 }).toBe('1\n');
   await expect.poll(() => fs.readFile(path.join(ws, 'side_effect.txt'), 'utf8').catch(() => ''), { timeout: 15000 }).toBe('once\n');
+  await expect.poll(() => fs.readFile(holdReady, 'utf8').catch(() => ''), { timeout: 15000 }).toBe('seen');
   await srv.kill('SIGKILL');
 
   srv = await startServer({ script: 'crash.json', dataDir, port, extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
