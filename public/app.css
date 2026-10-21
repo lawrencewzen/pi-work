@@ -290,7 +290,7 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 .msg-header { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--faint); }
 .msg-sender { color: var(--faint); font-weight: 400; }
 .msg-chip { font-family: var(--mono); font-size: 11px; color: var(--faint); }
-.msg-chip::before { content: '· '; }
+.msg-sender + .msg-chip::before { content: '· '; }
 .msg-body { color: var(--ink); line-height: 1.6; min-width: 0; overflow-wrap: anywhere; text-wrap: pretty; }
 .msg-body p { margin-bottom: 8px; }
 .msg-body h1, .msg-body h2, .msg-body h3, .msg-body h4, .msg-body h5, .msg-body h6 { font-weight: 600; line-height: 1.35; margin: .7em 0 .3em; }

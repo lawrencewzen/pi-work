@@ -12,6 +12,7 @@ function copyMeta(target, data) {
   if (data.kind) target.kind = data.kind;
   if (data.fromAgent) target.fromAgent = data.fromAgent;
   if (data.toAgent) target.toAgent = data.toAgent;
+  if (typeof data.model === 'string' && data.model) target.model = data.model;
 }
 
 /** Drop assistant rows that are still marked streaming. At most the row `keepId` stays. */
@@ -90,8 +91,7 @@ export function applyMessageDone(msgs, data) {
     if (existing) {
       if (carriedText(data)) existing.text = data.text;
       else if (m.text && !existing.text) existing.text = m.text;
-      if (data.agentId) existing.agentId = data.agentId;
-      if (data.roleId) existing.roleId = data.roleId;
+      copyMeta(existing, data);
       existing.streaming = false;
       existing.done = true;
       const idx = msgs.indexOf(m);
@@ -100,8 +100,7 @@ export function applyMessageDone(msgs, data) {
     } else {
       if (officialId) m.id = officialId;
       if (carriedText(data)) m.text = data.text;
-      if (data.agentId) m.agentId = data.agentId;
-      if (data.roleId) m.roleId = data.roleId;
+      copyMeta(m, data);
       m.streaming = false;
       m.done = true;
     }
@@ -113,8 +112,7 @@ export function applyMessageDone(msgs, data) {
       streaming: false,
       done: true,
     };
-    if (data.agentId) created.agentId = data.agentId;
-    if (data.roleId) created.roleId = data.roleId;
+    copyMeta(created, data);
     msgs.push(created);
   }
   if (m || carriedText(data) || liveId) dropStreamingResidues(msgs);
