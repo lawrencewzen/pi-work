@@ -9,6 +9,7 @@ import {
   toolResultHint,
   toolRowHeading,
   toolStatusBucket,
+  unwrapHarnessDiagnostics,
   TOOL_ERROR_PREVIEW_LINES,
   toolGroupPreview,
 } from './tool-groups.js';
@@ -2260,7 +2261,7 @@ export function renderToolRowHtml(tool) {
     ? `<span class="tool-row-status is-${bucket}" data-testid="tool-row-status">${escapeHtml(localizeToolStatus(tool.status))}</span>`
     : '';
   const preview = pluginResultPreview(tool);
-  const outputText = toolOutputSource(tool.output);
+  const outputText = unwrapHarnessDiagnostics(toolOutputSource(tool.output));
   const showAllOutput = state.expandedToolOutputs.has(tool.id);
   const clipLimit = bucket === 'failed' && !showAllOutput ? TOOL_ERROR_PREVIEW_LINES : 20;
   const clipped = clipOutputText(outputText, showAllOutput, clipLimit);

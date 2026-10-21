@@ -299,6 +299,35 @@ export function parseToolOutput(output) {
   return { text, json: null };
 }
 
+const HARNESS_TAG = /^<\/?harness>$/;
+const HARNESS_SEVERITY = /^\[(error|warn|warning|info)\]\s+/i;
+
+/**
+ * Pi Durable appends diagnostics as:
+ *   <harness>
+ *   [error] ENOENT: ...
+ *   </harness>
+ * Drop the wrapper lines and the severity prefix. Text without that wrapper is unchanged.
+ */
+export function unwrapHarnessDiagnostics(text) {
+  const raw = text == null ? '' : String(text);
+  const lines = raw.split(/\r?\n/);
+  if (!lines.some((line) => line.trim() === '<harness>')) return raw;
+  const out = [];
+  let inside = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (HARNESS_TAG.test(trimmed)) {
+      inside = trimmed === '<harness>';
+      continue;
+    }
+    out.push(inside ? line.replace(HARNESS_SEVERITY, '') : line);
+  }
+  while (out.length && out[0] === '') out.shift();
+  while (out.length && out[out.length - 1] === '') out.pop();
+  return out.join('\n');
+}
+
 function firstLine(text, max = 72) {
   const line = String(text ?? '').split(/\r?\n/).find((item) => item.trim()) || '';
   return oneLine(line, max);
@@ -326,7 +355,7 @@ export function toolResultHint(tool, t) {
     : parsed.text;
 
   if (bucket === 'failed') {
-    return { text: firstLine(failText || parsed.text, 64), failed: true };
+    return { text: firstLine(unwrapHarnessDiagnostics(failText || parsed.text), 64), failed: true };
   }
   if (bucket === 'running') return { text: '', failed: false };
 

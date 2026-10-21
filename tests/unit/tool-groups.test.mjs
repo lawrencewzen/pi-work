@@ -10,6 +10,7 @@ import {
   toolGroupPreview,
   toolResultHint,
   toolRowHeading,
+  unwrapHarnessDiagnostics,
 } from '../../public/tool-groups.js';
 
 const zh = {
@@ -313,6 +314,29 @@ test('row hints report lines, items, matches, exit code, first output line, and 
   assert.equal(failed.text, 'ENOENT: no such file or directory, open \'prompts\'');
   assert.equal(outputLineCount('a\nb\nc\n'), 3);
   assert.equal(toolFileLabel('src/api/auth.ts'), 'auth.ts');
+});
+
+test('harness diagnostic wrapping is stripped from failed hints; plain output is unchanged', () => {
+  const wrapped = '<harness>\n[error] ENOENT: no such file or directory, open \'missing.txt\'\n</harness>';
+  const failed = toolResultHint(tool('read', { status: 'error', output: wrapped }), t);
+  assert.equal(failed.failed, true);
+  assert.equal(failed.text, 'ENOENT: no such file or directory, open \'missing.txt\'');
+  assert.equal(
+    unwrapHarnessDiagnostics(wrapped),
+    'ENOENT: no such file or directory, open \'missing.txt\'',
+  );
+  assert.equal(
+    unwrapHarnessDiagnostics('<harness>\n[warning] timed out\n[info] spilled to /tmp/out\n</harness>'),
+    'timed out\nspilled to /tmp/out',
+  );
+  const plain = 'ENOENT: no such file or directory, open \'prompts\'\nmore';
+  assert.equal(unwrapHarnessDiagnostics(plain), plain);
+  assert.equal(
+    unwrapHarnessDiagnostics('keep [error] in the body\n[error] this stays'),
+    'keep [error] in the body\n[error] this stays',
+  );
+  const unwrappedFail = toolResultHint(tool('read', { status: 'error', output: plain }), t);
+  assert.equal(unwrappedFail.text, 'ENOENT: no such file or directory, open \'prompts\'');
 });
 
 test('long groups keep the last eight rows and hide the rest', () => {
