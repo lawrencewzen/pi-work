@@ -14,7 +14,7 @@ const {
   shouldUpgradeBuiltinTools,
 } = await load('src/core/roles-load.mjs');
 
-const EN_TOOL_INTENT = '\n\nWhen calling any tool, always fill in the description parameter. Use at most 15 characters to state the purpose of this step (for example "read CLI entry" or "run unit tests"). Say why you are doing it, not a restatement of the command.';
+const EN_TOOL_INTENT = '\n\nWhen calling any tool, always fill in the description parameter in the user\'s language. Keep it short (at most 15 Chinese characters, or 6 English words) and state the purpose of this step, not a restatement of the command. For example 「看 CLI 入口」 or "read CLI entry".';
 const ZH_TOOL_INTENT = '\n\n调用任何工具时都填写 description 参数，用不超过 15 个字说明这一步的目的（例如「看 CLI 入口」「跑单元测试」），说的是为什么做，不是复述命令。';
 
 async function readFactoryRole(id) {
@@ -272,8 +272,10 @@ test('builtin factory prompts require filling tool description', async () => {
     const previous = previousFactoryPrompt(id, role.systemPrompt);
     assert.notEqual(previous, role.systemPrompt, id);
     if (id === 'default') {
-      assert.match(role.systemPrompt, /description parameter/);
-      assert.match(role.systemPrompt, /at most 15 characters/);
+      assert.match(role.systemPrompt, /description parameter in the user's language/);
+      assert.match(role.systemPrompt, /15 Chinese characters, or 6 English words/);
+      assert.match(role.systemPrompt, /「看 CLI 入口」/);
+      assert.match(role.systemPrompt, /read CLI entry/);
       assert.match(role.systemPrompt, /not a restatement of the command/);
     } else {
       assert.match(role.systemPrompt, /调用任何工具时都填写 description 参数/);
