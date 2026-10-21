@@ -23,7 +23,7 @@ import { FAUX_MODEL, openKernel } from './index.mjs';
 import { createKernelModels, explicitDemo } from './models.mjs';
 import { installPluginReload } from './plugins.mjs';
 import { createRoleHost, installRoleExtensions } from './roles.mjs';
-import { createSubagentExtension, createSubagentHost, maxSubagents } from './subagents.mjs';
+import { createSubagentExtension, createSubagentHost } from './subagents.mjs';
 import { createWorkspaceExtension, toolsForRole } from './tools.mjs';
 import { installUsageExtension } from './usage.mjs';
 
@@ -99,7 +99,6 @@ export async function openConversationKernel({
   const subagentExtension = createSubagentExtension({
     listRoles: () => store.listRoles(),
     prepareChild: (role, parent) => subagentApi.prepareChild(role, parent),
-    maxConcurrent: () => maxSubagents(env),
     onChild: (parentId, childId, roleId) => subagentApi.onChild?.(parentId, childId, roleId),
   });
   roleBridge.extraTools = () => subagentExtension.tools || [];

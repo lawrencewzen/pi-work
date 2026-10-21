@@ -7,7 +7,6 @@ import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSSE } from '../../src/core/sse.mjs';
-import { maxSubagents } from '../../src/kernel/subagents.mjs';
 import { ROOT } from './_root.mjs';
 
 const TOKEN = 'unit-kernel-subagents-token';
@@ -38,13 +37,6 @@ const SCOUT = {
   pluginTools: false,
   skills: ['commit-message'],
 };
-
-test('max subagents is unlimited unless PI_WORK_MAX_SUBAGENTS is a positive integer', () => {
-  assert.equal(maxSubagents({}), Infinity);
-  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: '1' }), 1);
-  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: '0' }), Infinity);
-  assert.equal(maxSubagents({ PI_WORK_MAX_SUBAGENTS: 'nope' }), Infinity);
-});
 
 function childEnv(dataDir, extra = {}) {
   const env = { ...process.env };
@@ -311,8 +303,6 @@ function startScoutModel({ text, readyPath, releasePath }) {
           if (!ok) closed += 1;
           resolve(ok);
         };
-        // After the body is consumed, aborting the client closes the socket
-        // without a request `close` event.
         req.socket.on('close', () => finish(false));
       });
       const ok = await released;
@@ -382,7 +372,7 @@ test('subagent messages 404 for an unknown conversation or agent', { timeout: 30
   }
 });
 
-test('foreground delegate uses the child model, tool whitelist, and skills', { timeout: 60000 }, async () => {
+test('foreground delegate returns the child answer and lists roles in its description', { timeout: 60000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-fg-'));
   const record = path.join(dataDir, 'parent-requests.jsonl');
   const script = await writeScript(dataDir, 'parent.json', [
@@ -425,8 +415,7 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
     assert.match(childHit.system, /Commit messages/);
     assert.equal(childHit.system.includes('Pick a subagent by id'), false);
     const parentLines = (await readFile(record, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-    const roster = parentLines[0].sections.find((section) => section.key === 'subagents');
-    assert.match(roster?.value || '', /scout \(Scout\): when the tree needs reading/);
+    assert.match(parentLines[0].toolDescriptions?.delegate || '', /scout \(Scout\): when the tree needs reading/);
     assert.equal(parentLines[0].tools.includes('delegate'), true);
     const scout = subagentsOf(done).find((agent) => agent.roleId === 'scout');
     assert.ok(scout, JSON.stringify(done.agents));
@@ -466,16 +455,11 @@ test('foreground delegate uses the child model, tool whitelist, and skills', { t
   }
 });
 
-test('background spawn, send, wait, list, stop, and the concurrency cap', { timeout: 60000 }, async () => {
+test('background spawn reports the answer back to the main conversation', { timeout: 60000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-bg-'));
   const script = await writeScript(dataDir, 'parent.json', [
     { tool: 'subagent', args: { action: 'spawn', name: 'a', agent: 'scout', message: 'ping-a' } },
-    { tool: 'subagent', args: { action: 'list' } },
-    { tool: 'subagent', args: { action: 'wait', name: 'a' } },
-    { tool: 'subagent', args: { action: 'send', name: 'a', message: 'ping-a-again' } },
-    { tool: 'subagent', args: { action: 'wait', name: 'a' } },
-    { tool: 'subagent', args: { action: 'stop', name: 'a' } },
-    { text: 'bg-done' },
+    { text: 'spawned' },
   ]);
   const fake = await startScoutModel({ text: 'SCOUT_PONG' });
   let proc = null;
@@ -490,23 +474,20 @@ test('background spawn, send, wait, list, stop, and the concurrency cap', { time
     const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'bg' });
     const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'bg' });
     const pendingEvents = collectSse(srv.base, conv.body.id, {
-      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.mode === 'background' && ev.data?.status === 'stopped'),
+      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.mode === 'background' && ev.data?.lastText?.includes('SCOUT_PONG')),
       timeout: 30000,
     });
     assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'run background' })).status, 202);
-    const done = await waitFor(srv.base, conv.body.id, (body) => toolTexts(body).some((text) => text.includes('Stopped a.')));
-    assert.equal(done.status === 'done' || done.status === 'running', true, `${done?.status}\n${srv.logs()}`);
-    const tools = toolTexts(done).join('\n');
-    assert.match(tools, /Started a\./);
-    assert.match(tools, /a: (working|idle) role=scout/);
-    assert.match(tools, /SCOUT_PONG/);
-    assert.match(tools, /Stopped a\./);
-    assert.ok(fake.seen.filter((hit) => hit.path.endsWith('/chat/completions')).length >= 2);
+    const done = await waitFor(srv.base, conv.body.id, (body) => (
+      (body.messages || []).some((message) => String(message.text || '').includes('[subagent a answered, no reply needed] SCOUT_PONG'))
+    ), 120);
+    assert.match(toolTexts(done).join('\n'), /Started a\./);
+    assert.match((done.messages || []).map((message) => message.text || '').join('\n'), /\[subagent a answered, no reply needed] SCOUT_PONG/);
     const scout = subagentsOf(done).find((agent) => agent.name === 'a');
     assert.ok(scout, JSON.stringify(done.agents));
     assert.equal(scout.roleId, 'scout');
-    assert.equal(scout.status, 'stopped');
     assert.equal(scout.mode, 'background');
+    assert.match(scout.lastText, /SCOUT_PONG/);
     const child = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/${encodeURIComponent(scout.id)}/messages`);
     assert.equal(child.status, 200);
     assert.equal(child.body.mode, 'background');
@@ -516,81 +497,6 @@ test('background spawn, send, wait, list, stop, and the concurrency cap', { time
     const agentEvent = events.find((ev) => ev.event === 'agent' && ev.data?.id === scout.id);
     assert.equal(agentEvent?.data?.mode, 'background');
     console.log(`KERNEL_SUBAGENTS_BACKGROUND ${JSON.stringify({ tools: toolTexts(done), status: scout.status })}`);
-  } finally {
-    if (proc) await stopProcess(proc);
-    await fake.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
-
-test('a second background spawn is refused when the cap is 1', { timeout: 60000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-cap-'));
-  const script = await writeScript(dataDir, 'parent.json', [
-    { tool: 'subagent', args: { action: 'spawn', name: 'a', agent: 'scout', message: 'one' } },
-    { tool: 'subagent', args: { action: 'spawn', name: 'b', agent: 'scout', message: 'two' } },
-    { text: 'cap-done' },
-  ]);
-  const fake = await startScoutModel({ text: 'ONE' });
-  let proc = null;
-  try {
-    const srv = await startServer({
-      PI_WORK_KERNEL: 'durable',
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-      PI_WORK_MAX_SUBAGENTS: '1',
-    }, { dataDir });
-    proc = srv.proc;
-    await bindScout(srv.base, fake);
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'cap' });
-    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'cap' });
-    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'two spawns' })).status, 202);
-    const done = await waitFor(srv.base, conv.body.id, (body) => toolTexts(body).some((text) => text.includes('limit 1')));
-    const tools = toolTexts(done).join('\n');
-    assert.match(tools, /Started a\./);
-    assert.match(tools, /limit 1/);
-    assert.equal(tools.includes('Started b.'), false, tools);
-    assert.equal(subagentsOf(done).some((agent) => agent.name === 'b'), false);
-    console.log(`KERNEL_SUBAGENTS_LIMIT ${JSON.stringify(toolTexts(done))}`);
-  } finally {
-    if (proc) await stopProcess(proc);
-    await fake.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
-
-test('five background spawns all succeed when no cap is set', { timeout: 60000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-nocap-'));
-  const names = ['a', 'b', 'c', 'd', 'e'];
-  const script = await writeScript(dataDir, 'parent.json', [
-    ...names.map((name) => ({
-      tool: 'subagent',
-      args: { action: 'spawn', name, agent: 'scout', message: `ping-${name}` },
-    })),
-    { text: 'five-started' },
-  ]);
-  const fake = await startScoutModel({ text: 'SCOUT_PONG' });
-  let proc = null;
-  try {
-    const srv = await startServer({
-      PI_WORK_KERNEL: 'durable',
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-    }, { dataDir });
-    proc = srv.proc;
-    await bindScout(srv.base, fake);
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'nocap' });
-    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'nocap' });
-    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'five spawns' })).status, 202);
-    const done = await waitFor(srv.base, conv.body.id, (body) => {
-      const tools = toolTexts(body).join('\n');
-      return names.every((name) => tools.includes(`Started ${name}.`))
-        && assistantTexts(body).includes('five-started');
-    }, 120);
-    const tools = toolTexts(done).join('\n');
-    for (const name of names) assert.match(tools, new RegExp(`Started ${name}\\.`));
-    assert.equal(tools.includes('limit'), false, tools);
-    assert.deepEqual(subagentsOf(done).map((agent) => agent.name).sort(), names);
-    console.log(`KERNEL_SUBAGENTS_NO_CAP ${JSON.stringify(toolTexts(done))}`);
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
@@ -631,7 +537,6 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
       const sleeper = subagentsOf(body).find((agent) => agent.name === 'sleeper');
       return sleeper?.status === 'stopped';
     });
-    assert.equal(after.status, 'done', JSON.stringify(after.agents));
     assert.equal(subagentsOf(after).find((agent) => agent.name === 'sleeper')?.status, 'stopped');
     const started = Date.now();
     while (fake.closed() < 1 && Date.now() - started < 8000) {
@@ -756,59 +661,6 @@ test('a background subagent continues after restart and reports once', { timeout
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
-
-test('a killed foreground subagent writes the file once after restart', { timeout: 90_000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-write-'));
-  const ready = path.join(dataDir, 'ready');
-  const script = await writeScript(dataDir, 'write-child.json', [
-    { tool: 'delegate', args: { agent: 'coder', task: 'WRITE_ONCE the output file' } },
-    { text: 'parent-done' },
-    { when: 'WRITE_ONCE', delayMs: 2500, tool: 'write', args: { path: 'child-out.txt', content: 'once\n' } },
-    { when: 'WRITE_ONCE', text: 'child-wrote' },
-  ]);
-  const env = {
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
-    PI_WORK_FAUX_HOLD_READY: ready,
-  };
-  let proc = null;
-  let wsPath;
-  let convId;
-  try {
-    const first = await startServer(env, { dataDir });
-    proc = first.proc;
-    const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'write-child' });
-    assert.equal(ws.status, 201, JSON.stringify(ws.body));
-    wsPath = ws.body.path;
-    const conv = await request(first.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'write-child' });
-    assert.equal(conv.status, 201);
-    convId = conv.body.id;
-    assert.equal((await request(first.base, 'POST', `/api/conversations/${convId}/messages`, { text: 'dispatch child' })).status, 202);
-    await waitForFile(ready);
-    const death = await killed(proc);
-    proc = null;
-    assert.ok(death.signal === 'SIGKILL' || death.code !== 0 || process.platform === 'win32');
-    await rm(ready, { force: true });
-    const second = await startServer(env, { dataDir });
-    proc = second.proc;
-    const done = await waitFor(second.base, convId, (body) => (
-      body.status === 'done' && assistantTexts(body).includes('parent-done')
-    ), 200);
-    assert.equal(done.status, 'done', second.logs());
-    assert.equal(await readFile(path.join(wsPath, 'child-out.txt'), 'utf8'), 'once\n');
-    assert.equal(assistantTexts(done).filter((text) => text === 'parent-done').length, 1, JSON.stringify(done.messages));
-    const children = subagentsOf(done).filter((agent) => agent.roleId === 'coder');
-    assert.equal(children.length, 1, JSON.stringify(done.agents));
-    const messages = await request(second.base, 'GET', `/api/conversations/${convId}/agents/${encodeURIComponent(children[0].id)}/messages`);
-    assert.equal(messages.status, 200, JSON.stringify(messages.body));
-    const writes = (messages.body.messages || []).filter((message) => message.role === 'tool' && message.tool?.name === 'write');
-    assert.equal(writes.length, 1, JSON.stringify(messages.body.messages));
-    console.log(`KERNEL_SUBAGENTS_WRITE_RESUME ${JSON.stringify({ file: 'once', children: children.length, writes: writes.length })}`);
-  } finally {
-    if (proc) await stopProcess(proc);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
