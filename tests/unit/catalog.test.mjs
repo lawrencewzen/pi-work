@@ -7,7 +7,25 @@ import { DatabaseSync } from 'node:sqlite';
 import { load, ROOT } from './_root.mjs';
 
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
-const { loadRoleTemplates, shouldUpgradeBuiltinPrompt, shouldUpgradeBuiltinTools } = await load('src/core/roles-load.mjs');
+const {
+  BUILTIN_ROLE_IDS,
+  loadRoleTemplates,
+  shouldUpgradeBuiltinPrompt,
+  shouldUpgradeBuiltinTools,
+} = await load('src/core/roles-load.mjs');
+
+const EN_TOOL_INTENT = '\n\nWhen calling any tool, always fill in the description parameter in the user\'s language. Keep it short (at most 15 Chinese characters, or 6 English words) and state the purpose of this step, not a restatement of the command. For example 「看 CLI 入口」 or "read CLI entry".';
+const ZH_TOOL_INTENT = '\n\n调用任何工具时都填写 description 参数，用不超过 15 个字说明这一步的目的（例如「看 CLI 入口」「跑单元测试」），说的是为什么做，不是复述命令。';
+
+async function readFactoryRole(id) {
+  return JSON.parse(await fs.readFile(path.join(ROOT, 'roles', `${id}.json`), 'utf8'));
+}
+
+function previousFactoryPrompt(id, systemPrompt) {
+  const intent = id === 'default' ? EN_TOOL_INTENT : ZH_TOOL_INTENT;
+  assert.equal(systemPrompt.includes(intent), true, id);
+  return systemPrompt.replace(intent, '');
+}
 
 const scribe = {
   id: 'scribe',
@@ -245,4 +263,54 @@ test('startup upgrades untouched preset tools and fills an empty description', a
   assert.deepEqual(coder.tools, ['read', 'write']);
   assert.equal(coder.description, '我写的说明');
   assert.equal(coder.systemPrompt, '我改过的提示词');
+});
+
+test('builtin factory prompts require filling tool description', async () => {
+  assert.deepEqual(BUILTIN_ROLE_IDS, ['default', 'planner', 'coder', 'tester', 'auditor']);
+  for (const id of BUILTIN_ROLE_IDS) {
+    const role = await readFactoryRole(id);
+    const previous = previousFactoryPrompt(id, role.systemPrompt);
+    assert.notEqual(previous, role.systemPrompt, id);
+    if (id === 'default') {
+      assert.match(role.systemPrompt, /description parameter in the user's language/);
+      assert.match(role.systemPrompt, /15 Chinese characters, or 6 English words/);
+      assert.match(role.systemPrompt, /「看 CLI 入口」/);
+      assert.match(role.systemPrompt, /read CLI entry/);
+      assert.match(role.systemPrompt, /not a restatement of the command/);
+    } else {
+      assert.match(role.systemPrompt, /调用任何工具时都填写 description 参数/);
+      assert.match(role.systemPrompt, /不超过 15 个字/);
+      assert.match(role.systemPrompt, /不是复述命令/);
+    }
+  }
+});
+
+test('startup upgrades unedited factory prompts that lacked tool description', async (t) => {
+  const rolesDir = path.join(ROOT, 'roles');
+  const store = await openStore();
+  t.after(() => store.close());
+  const templates = {};
+  for (const id of BUILTIN_ROLE_IDS) {
+    templates[id] = await readFactoryRole(id);
+    const previous = previousFactoryPrompt(id, templates[id].systemPrompt);
+    await store.createRole({ ...templates[id], systemPrompt: previous });
+    assert.equal(shouldUpgradeBuiltinPrompt(await store.getRole(id), templates[id]), true, id);
+  }
+  const custom = '我改过的提示词，不要覆盖';
+  await store.updateRole('coder', { ...templates.coder, systemPrompt: custom, tools: ['read'] });
+  assert.equal(shouldUpgradeBuiltinPrompt(await store.getRole('coder'), templates.coder), false);
+
+  await loadRoleTemplates(store, rolesDir);
+  for (const id of BUILTIN_ROLE_IDS) {
+    const role = await store.getRole(id);
+    if (id === 'coder') {
+      assert.equal(role.systemPrompt, custom);
+      assert.deepEqual(role.tools, ['read']);
+    } else {
+      assert.equal(role.systemPrompt, templates[id].systemPrompt, id);
+    }
+  }
+  await loadRoleTemplates(store, rolesDir);
+  assert.equal((await store.getRole('coder')).systemPrompt, custom);
+  assert.equal((await store.getRole('default')).systemPrompt, templates.default.systemPrompt);
 });
