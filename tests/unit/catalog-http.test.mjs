@@ -31,13 +31,14 @@ test('role HTTP catalog, including template tombstones; pipeline routes are gone
     assert.equal(roles.status, 200);
     const planner = roles.body.find((role) => role.id === 'planner');
     assert.equal(planner?.builtin, true);
-    assert.match(planner?.defaultPrompt || '', /## 交接/);
-    assert.match(planner?.defaultPrompt || '', /角色：规划/);
+    assert.match(planner?.defaultPrompt || '', /交回主 Agent/);
+    assert.match(planner?.defaultPrompt || '', /规划角色/);
     assert.equal(planner?.systemPrompt, planner?.defaultPrompt);
     for (const id of ['coder', 'tester', 'auditor']) {
       const role = roles.body.find((item) => item.id === id);
       assert.equal(role?.builtin, true);
-      assert.match(role?.defaultPrompt || '', new RegExp(`角色：${{ coder: '编码', tester: '测试', auditor: '审计' }[id]}`));
+      assert.match(role?.defaultPrompt || '', /交回主 Agent/);
+      assert.match(role?.defaultPrompt || '', new RegExp(`${{ coder: '编码', tester: '测试', auditor: '审计' }[id]}角色`));
     }
     const main = roles.body.find((role) => role.id === 'default');
     assert.equal(main?.builtin, true);

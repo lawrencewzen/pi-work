@@ -93,7 +93,8 @@ test('roles api generates ids, protects presets, resets templates, and publishes
     const reset = await call(srv.url, 'POST', '/roles/planner/reset');
     assert.equal(reset.status, 200);
     assert.equal(reset.body.name, 'Planner');
-    assert.match(reset.body.systemPrompt, /角色：规划/);
+    assert.match(reset.body.systemPrompt, /交回主 Agent/);
+    assert.match(reset.body.systemPrompt, /规划角色/);
     assert.deepEqual(reset.body.tools, ['read', 'ls', 'grep']);
     assert.equal(reset.body.description, '先读仓库，把需求拆成可执行的短计划。只读，不改代码。');
     assert.equal(reset.body.skills, undefined);

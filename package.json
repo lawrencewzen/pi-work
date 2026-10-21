@@ -2,7 +2,7 @@
   "name": "pi-work",
   "version": "0.1.0",
   "private": true,
-  "description": "网页版个人 Agent。对话运行时是 Pi Durable Harness；应用数据在 SQLite。断点恢复、多角色并行、流水线编排。",
+  "description": "网页版个人 Agent。对话运行时是 Pi Durable Harness；应用数据在 SQLite。断点恢复、主 Agent 派子 Agent 协作。",
   "type": "module",
   "engines": {
     "node": ">=22.19"

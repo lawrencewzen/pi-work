@@ -5,7 +5,6 @@ import path from 'node:path';
 import { startServer, prepareWorkspaces, api } from './helpers/server.mjs';
 import { openApp, createWorkspace, newConversation, send } from './helpers/ui.mjs';
 
-const SHOTS = process.env.PI_WORK_SHOTS || '/opt/cursor/artifacts/screenshots';
 const CHILD_TEXT = '子代理回复：已看过。';
 const FOREGROUND_TASK = '请确认前台子代理已收到任务。';
 const BACKGROUND_NAME = '巡查';
@@ -52,11 +51,6 @@ function startChildModel(text) {
       });
     });
   });
-}
-
-async function shot(page, name) {
-  await fs.mkdir(SHOTS, { recursive: true });
-  await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
 
 async function assertNarrowWorkbench(page) {
@@ -165,7 +159,6 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-sender]')).toHaveCount(0);
     await expect(page.locator('#center-thread')).not.toContainText('主 Agent');
     await expect(page.locator('body')).not.toContainText('sk-scout-test');
-    await shot(page, 'sidebar-subagents-light-1440');
 
     // A sub-agent opens in a closable tab of the right panel; the main chat stays usable.
     await foreground.click();
@@ -177,7 +170,6 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(transcript.locator('[data-testid=message][data-role=assistant]')).toContainText(CHILD_TEXT);
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await expect(page.getByTestId('chat-input')).toBeEnabled();
-    await shot(page, 'subagent-messages-light-1440');
 
     await switchLanguage(page, 'en');
     await expect(page.locator('.agent-pane-tag')).toHaveText('Sub-agent');
@@ -195,7 +187,6 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
 
     await switchAppearance(page, 'dark');
     await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toContain('dark');
-    await shot(page, 'sidebar-subagents-dark-1440');
     await switchAppearance(page, 'light');
 
     await page.setViewportSize({ width: 1000, height: 760 });
@@ -203,13 +194,11 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(page.getByTestId('run-bar')).toHaveCount(0);
     await expect(page.getByTestId('btn-stop')).toHaveCount(0);
     await expect(page.getByTestId('chat-send')).toBeVisible();
-    await shot(page, 'sidebar-subagents-light-1000');
     await foreground.click();
     await expect(page.getByTestId('subagent-banner')).toBeVisible();
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await assertNarrowWorkbench(page);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
-    await shot(page, 'subagent-1000');
     await page.getByTestId('subagent-back').click();
   } finally {
     await srv?.kill();

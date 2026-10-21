@@ -29,14 +29,8 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Playwright e2e
-        run: |
-          export PI_WORK_SHOTS="${RUNNER_TEMP}/pi-work-shots"
-          mkdir -p "$PI_WORK_SHOTS"
-          npm run test:e2e
-      - name: Stage screenshots
-        if: failure()
-        run: mkdir -p e2e-shots && cp -a "${RUNNER_TEMP}/pi-work-shots/." e2e-shots/ || true
-      - name: Upload Playwright report and screenshots
+        run: npm run test:e2e
+      - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -44,6 +38,5 @@ jobs:
           path: |
             playwright-report/
             test-results/
-            e2e-shots/
           if-no-files-found: ignore
           retention-days: 7

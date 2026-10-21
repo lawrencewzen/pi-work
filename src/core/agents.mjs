@@ -42,7 +42,7 @@ function statsFromMessages(msgs) {
 
 /**
  * Derive the conversation's main agent from the persisted role and messages.
- * Extra agents on the conversation are sub-agent instances, not pipeline steps.
+ * Extra agents on the conversation are sub-agent instances.
  */
 export function buildAgents({ conv, role, roles = [], messages = [] } = {}) {
   const cid = conv?.id || 'conv';

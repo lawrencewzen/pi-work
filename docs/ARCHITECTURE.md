@@ -40,7 +40,7 @@ flowchart LR
 ## 关键概念
 - **Agent** = 一条 Harness 对话上的运行（角色 + 检查点），可多个并行。
 - **Role**：系统提示词、工具白名单、模型。未知工具名在执行前被拒绝（`E_UNKNOWN_TOOL`），不会发出 `tool.start`。
-- **多角色协作**：主 Agent 用 `delegate` / `subagent` 按角色模板派子 Agent，另开 Harness 对话。没有宿主按步轮换角色的流水线。`GET /api/conversations/:cid` 的 `agents[]` 是当前角色芯片加上子 Agent 实例。演示见 [SUBAGENTS.md](SUBAGENTS.md)。
+- **多角色协作**：主 Agent 用 `delegate` / `subagent` 按角色模板派子 Agent，另开 Harness 对话。宿主不按步轮换角色。`GET /api/conversations/:cid` 的 `agents[]` 是当前角色芯片加上子 Agent 实例。演示见 [SUBAGENTS.md](SUBAGENTS.md)。
 - **卡住与重试**：只使用 Pi Durable 的 `stream.timeoutMs` 和 `retry`。不另写看门狗，也不在卡住时自动提交下一句。停止是 `conversation.abort(context, { background: true })`，进行中的运行和后台子 Agent 一起停。
 - **工具沙箱**：所有路径解析后必须位于工作区根目录内。`write` / `edit` 的工具结果保留 `details`（path、before、after、行数），右栏 diff 从这些条目汇总：同一路径以本对话第一次改动的 before 为基线，和磁盘当前内容比较。`bash` 使用环境变量白名单、进程组 SIGKILL、1 MiB 输出上限；完整 OS 沙箱（bubblewrap）为 v1 之后的工作。
 - **Skills**：`skills/<id>/SKILL.md`（前言里的 `id` / `name` / `description` + 正文）。仓库自带的 Skill 与 `$PI_WORK_DATA_DIR/skills` 中用户新建的 Skill 合并，同名时用户副本优先。`settings.skills[id] === false` 表示关闭，缺省为开启。内核在请求模型前，把已开启 Skill 的正文放进系统提示 section。
