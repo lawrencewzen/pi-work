@@ -56,6 +56,17 @@ test('bundled skills render into the prompt and can be disabled', async () => {
   assert.equal(listed.some((skill) => Object.hasOwn(skill, 'body')), false);
 });
 
+test('skill prompt allow-list keeps only globally enabled skills', async () => {
+  const subset = await buildSkillPrompt(bundledSkills, {}, ['commit-message']);
+  assert.match(subset, /Commit messages/);
+  assert.equal(subset.includes('Review notes'), false);
+  const none = await buildSkillPrompt(bundledSkills, {}, []);
+  assert.equal(none, '');
+  const disabled = await buildSkillPrompt(bundledSkills, { 'commit-message': false }, ['commit-message', 'review-notes']);
+  assert.equal(disabled.includes('Commit messages'), false);
+  assert.match(disabled, /Review notes/);
+});
+
 test('user skills override bundled text and reject duplicates', async () => {
   const user = await tmp();
   await writeSkillFile(user, {

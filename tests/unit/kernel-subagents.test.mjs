@@ -383,7 +383,6 @@ test('foreground delegate returns the child answer and lists roles in its descri
   let proc = null;
   try {
     const srv = await startServer({
-      PI_WORK_KERNEL: 'durable',
       PI_WORK_LLM: 'faux',
       PI_WORK_FAUX_SCRIPT: script,
       PI_WORK_FAUX_RECORD: record,
@@ -443,11 +442,6 @@ test('foreground delegate returns the child answer and lists roles in its descri
     for (const ev of events.filter((item) => item.event === 'agent' && !String(item.data?.id || '').includes(':sub:'))) {
       assert.equal(ev.data.mode, undefined);
     }
-    console.log(`KERNEL_SUBAGENTS_FOREGROUND ${JSON.stringify({
-      model: childHit.model,
-      tools: childHit.tools,
-      agent: { id: scout.id, status: scout.status, lastText: scout.lastText },
-    })}`);
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
@@ -465,7 +459,6 @@ test('background spawn reports the answer back to the main conversation', { time
   let proc = null;
   try {
     const srv = await startServer({
-      PI_WORK_KERNEL: 'durable',
       PI_WORK_LLM: 'faux',
       PI_WORK_FAUX_SCRIPT: script,
     }, { dataDir });
@@ -496,7 +489,6 @@ test('background spawn reports the answer back to the main conversation', { time
     const events = await pendingEvents;
     const agentEvent = events.find((ev) => ev.event === 'agent' && ev.data?.id === scout.id);
     assert.equal(agentEvent?.data?.mode, 'background');
-    console.log(`KERNEL_SUBAGENTS_BACKGROUND ${JSON.stringify({ tools: toolTexts(done), status: scout.status })}`);
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
@@ -516,7 +508,6 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
   let proc = null;
   try {
     const srv = await startServer({
-      PI_WORK_KERNEL: 'durable',
       PI_WORK_LLM: 'faux',
       PI_WORK_FAUX_SCRIPT: script,
     }, { dataDir });
@@ -547,7 +538,6 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
     const messages = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/${encodeURIComponent(child.id)}/messages`);
     assert.equal(messages.status, 200);
     assert.equal(messages.body.messages.some((message) => message.text === 'SHOULD_NOT_FINISH'), false);
-    console.log(`KERNEL_SUBAGENTS_STOP ${JSON.stringify({ status: after.status, agent: child.status, closed: fake.closed() })}`);
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
@@ -565,7 +555,6 @@ test('a killed foreground subagent resumes the same child without a second submi
   ]);
   const fake = await startScoutModel({ text: 'RESUMED_CHILD', readyPath: ready, releasePath: release });
   const env = {
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
   };
@@ -601,7 +590,6 @@ test('a killed foreground subagent resumes the same child without a second submi
     assert.equal(subagentsOf(done).filter((agent) => agent.roleId === 'scout').length, 1);
     const calls = fake.seen.filter((hit) => hit.path.endsWith('/chat/completions')).length;
     assert.ok(calls >= 1 && calls <= 3, `child model calls ${calls}`);
-    console.log(`KERNEL_SUBAGENTS_RECOVER_FG ${JSON.stringify({ users: users.length, assistants: assistants.length, calls })}`);
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
@@ -619,7 +607,6 @@ test('a background subagent continues after restart and reports once', { timeout
   ]);
   const fake = await startScoutModel({ text: 'BG_ANSWER', readyPath: ready, releasePath: release });
   const env = {
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
   };
@@ -657,10 +644,61 @@ test('a background subagent continues after restart and reports once', { timeout
     const again = await request(third.base, 'GET', `/api/conversations/${conv.body.id}`);
     const againReports = (again.body.messages || []).filter((message) => String(message.text || '').includes('BG_ANSWER'));
     assert.equal(againReports.length, 1, JSON.stringify(again.body.messages));
-    console.log(`KERNEL_SUBAGENTS_RECOVER_BG ${JSON.stringify({ reports: againReports.length })}`);
   } finally {
     if (proc) await stopProcess(proc);
     await fake.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('a killed foreground subagent writes the file once after restart', { timeout: 90_000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-write-'));
+  const ready = path.join(dataDir, 'ready');
+  const script = await writeScript(dataDir, 'write-child.json', [
+    { tool: 'delegate', args: { agent: 'coder', task: 'WRITE_ONCE the output file' } },
+    { text: 'parent-done' },
+    { when: 'WRITE_ONCE', delayMs: 2500, tool: 'write', args: { path: 'child-out.txt', content: 'once\n' } },
+    { when: 'WRITE_ONCE', text: 'child-wrote' },
+  ]);
+  const env = {
+    PI_WORK_LLM: 'faux',
+    PI_WORK_FAUX_SCRIPT: script,
+    PI_WORK_FAUX_HOLD_READY: ready,
+  };
+  let proc = null;
+  let wsPath;
+  let convId;
+  try {
+    const first = await startServer(env, { dataDir });
+    proc = first.proc;
+    const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'write-child' });
+    assert.equal(ws.status, 201, JSON.stringify(ws.body));
+    wsPath = ws.body.path;
+    const conv = await request(first.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'write-child' });
+    assert.equal(conv.status, 201);
+    convId = conv.body.id;
+    assert.equal((await request(first.base, 'POST', `/api/conversations/${convId}/messages`, { text: 'dispatch child' })).status, 202);
+    await waitForFile(ready);
+    const death = await killed(proc);
+    proc = null;
+    assert.ok(death.signal === 'SIGKILL' || death.code !== 0 || process.platform === 'win32');
+    await rm(ready, { force: true });
+    const second = await startServer(env, { dataDir });
+    proc = second.proc;
+    const done = await waitFor(second.base, convId, (body) => (
+      body.status === 'done' && assistantTexts(body).includes('parent-done')
+    ), 200);
+    assert.equal(done.status, 'done', second.logs());
+    assert.equal(await readFile(path.join(wsPath, 'child-out.txt'), 'utf8'), 'once\n');
+    assert.equal(assistantTexts(done).filter((text) => text === 'parent-done').length, 1, JSON.stringify(done.messages));
+    const children = subagentsOf(done).filter((agent) => agent.roleId === 'coder');
+    assert.equal(children.length, 1, JSON.stringify(done.agents));
+    const messages = await request(second.base, 'GET', `/api/conversations/${convId}/agents/${encodeURIComponent(children[0].id)}/messages`);
+    assert.equal(messages.status, 200, JSON.stringify(messages.body));
+    const writes = (messages.body.messages || []).filter((message) => message.role === 'tool' && message.tool?.name === 'write');
+    assert.equal(writes.length, 1, JSON.stringify(messages.body.messages));
+  } finally {
+    if (proc) await stopProcess(proc);
     await rm(dataDir, { recursive: true, force: true });
   }
 });

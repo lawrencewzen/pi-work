@@ -3,14 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { load, ROOT } from './_root.mjs';
+import { load } from './_root.mjs';
 
 const { allocateRoleId, roleIdFromName } = await load('src/core/config.mjs');
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
 const { planRoleModelMigration, effectiveModelFor } = await load('src/core/model-sources.mjs');
-const { buildSkillPrompt } = await load('src/core/skills.mjs');
-
-const bundledSkills = [path.join(ROOT, 'skills')];
 
 async function openStore() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-role-'));
@@ -86,18 +83,4 @@ test('effectiveModel follows default unless the role has its own binding', () =>
   assert.deepEqual(effectiveModelFor({ sources: [], models: {} }, 'planner'), {
     sourceId: null, model: null, follow: true,
   });
-});
-
-test('skill prompt allow-list keeps only globally enabled skills', async () => {
-  const all = await buildSkillPrompt(bundledSkills, {});
-  assert.match(all, /Commit messages/);
-  assert.match(all, /Review notes/);
-  const subset = await buildSkillPrompt(bundledSkills, {}, ['commit-message']);
-  assert.match(subset, /Commit messages/);
-  assert.equal(subset.includes('Review notes'), false);
-  const none = await buildSkillPrompt(bundledSkills, {}, []);
-  assert.equal(none, '');
-  const disabled = await buildSkillPrompt(bundledSkills, { 'commit-message': false }, ['commit-message', 'review-notes']);
-  assert.equal(disabled.includes('Commit messages'), false);
-  assert.match(disabled, /Review notes/);
 });

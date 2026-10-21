@@ -29,7 +29,6 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { attachUsage } from './usage.mjs';
 
 export const GROK_ISSUER = 'https://auth.x.ai';
 export const GROK_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
@@ -373,99 +372,6 @@ export function grokProxyHeaders(accessToken, model, version = grokClientVersion
     'user-agent': `xai-grok-cli/${version}`,
     accept: 'application/json',
   };
-}
-
-export function toGrokResponsesBody(messages, tools, model) {
-  let instructions = '';
-  const input = [];
-  for (const m of messages || []) {
-    if (!m) continue;
-    if (m.role === 'system') {
-      const text = String(m.content ?? m.text ?? '');
-      if (text) instructions += (instructions ? '\n\n' : '') + text;
-      continue;
-    }
-    if (m.role === 'user') {
-      input.push({ role: 'user', content: String(m.content ?? m.text ?? '') });
-      continue;
-    }
-    if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
-      for (const tc of m.tool_calls) {
-        const args = tc.function?.arguments ?? tc.arguments ?? {};
-        input.push({
-          type: 'function_call',
-          call_id: String(tc.id || tc.function?.id || ''),
-          name: String(tc.function?.name || tc.name || ''),
-          arguments: typeof args === 'string' ? args : JSON.stringify(args),
-        });
-      }
-      continue;
-    }
-    if (m.role === 'assistant') {
-      input.push({ role: 'assistant', content: String(m.content ?? m.text ?? '') });
-      continue;
-    }
-    if (m.role === 'tool') {
-      const output = typeof m.content === 'string' ? m.content : String(m.text ?? '');
-      input.push({
-        type: 'function_call_output',
-        call_id: String(m.tool_call_id || m.id || ''),
-        output: output.trim() ? output : '(no output)',
-      });
-    }
-  }
-  const body = { model: model || GROK_SESSION_MODEL, input, stream: false };
-  if (instructions) body.instructions = instructions;
-  if (Array.isArray(tools) && tools.length) {
-    body.tools = tools.map((t) => ({
-      type: 'function',
-      name: t.function?.name || t.name,
-      description: t.function?.description || t.description || '',
-      parameters: t.function?.parameters || t.parameters || { type: 'object', properties: {} },
-    }));
-  }
-  return body;
-}
-
-export function actionFromGrokResponses(json) {
-  const output = Array.isArray(json?.output) ? json.output : [];
-  const call = output.find((item) => item && item.type === 'function_call' && item.name);
-  if (call) {
-    let args = call.arguments;
-    if (typeof args === 'string') {
-      try { args = JSON.parse(args); } catch { args = { _raw: args }; }
-    }
-    if (args == null || typeof args !== 'object') args = {};
-    return attachUsage({
-      type: 'tool',
-      name: String(call.name),
-      args,
-      callId: String(call.call_id || call.id || ''),
-    }, json?.usage);
-  }
-  const texts = [];
-  for (const item of output) {
-    if (!item || item.type !== 'message') continue;
-    const content = Array.isArray(item.content) ? item.content : [];
-    for (const part of content) {
-      if (!part) continue;
-      if (part.type === 'output_text' || part.type === 'text') texts.push(String(part.text ?? ''));
-    }
-  }
-  if (typeof json?.output_text === 'string' && json.output_text.trim()) texts.push(json.output_text);
-  const text = texts.join('').trim();
-  if (!text) {
-    const reason = String(json?.error?.message || json?.incomplete_details?.reason || json?.status || '');
-    if (/terminated/i.test(reason)) {
-      const err = new Error('terminated');
-      err.code = 'E_STREAM_CUT';
-      throw err;
-    }
-    const err = new Error('empty model output');
-    err.code = 'E_EMPTY_OUTPUT';
-    throw err;
-  }
-  return attachUsage({ type: 'text', text }, json?.usage);
 }
 
 export const UNCONFIGURED_MODEL_CODE = 'E_NO_MODEL';

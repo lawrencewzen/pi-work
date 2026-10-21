@@ -53,24 +53,6 @@ export function toolGroupKey(tools) {
   return `g:${name}:${list.length}`;
 }
 
-/** Runs of consecutive `{ role:'tool', tool }` messages. Anything else splits a run. */
-export function partitionToolRuns(messages) {
-  const runs = [];
-  let run = null;
-  for (const message of messages || []) {
-    if (message?.role === 'tool' && message.tool) {
-      if (!run) {
-        run = [];
-        runs.push(run);
-      }
-      run.push(message.tool);
-      continue;
-    }
-    run = null;
-  }
-  return runs;
-}
-
 function presentSummary(text) {
   if (!text) return '';
   const first = text.charAt(0);

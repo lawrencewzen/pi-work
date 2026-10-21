@@ -14,9 +14,6 @@ const {
   presentContext,
   composerContextText,
 } = await load('public/usage.js');
-const { fauxTurnFromScript } = await load('src/kernel/faux-script.mjs');
-const { applyStampedUsage, reportedUsage } = await load('src/kernel/usage.mjs');
-const { actionFromGrokResponses } = await load('src/core/grok-auth.mjs');
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
 
 test('token formatting matches the composer mockup scale', () => {
@@ -78,33 +75,6 @@ test('latest provider usage is shown against the reported or configured window',
   assert.equal(presented.contextLabel, '1.2k / 200k');
   assert.equal(presentContext(null, {}).contextLabel, '—');
   assert.equal(formatContextValue({ total: 0 }, 128000), '0 / 128k');
-});
-
-test('script turns and grok responses pass through real usage only', () => {
-  const plain = fauxTurnFromScript([{ text: 'hi' }], { messages: [] });
-  applyStampedUsage(plain);
-  assert.equal(plain.content?.[0]?.text, 'hi');
-  assert.equal(reportedUsage(plain), null);
-
-  const scripted = fauxTurnFromScript(
-    [{ text: 'hi', usage: { total_tokens: 50, prompt_tokens: 40, completion_tokens: 10 } }],
-    { messages: [] },
-  );
-  applyStampedUsage(scripted);
-  assert.equal(scripted.usage.input, 40);
-  assert.equal(scripted.usage.output, 10);
-  assert.equal(scripted.usage.totalTokens, 50);
-
-  const grok = actionFromGrokResponses({
-    output: [{ type: 'message', content: [{ type: 'output_text', text: 'pong' }] }],
-    usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
-  });
-  assert.equal(grok.text, 'pong');
-  assert.deepEqual(grok.usage, { input: 10, output: 2, total: 12 });
-  const grokBare = actionFromGrokResponses({
-    output: [{ type: 'message', content: [{ type: 'output_text', text: 'pong' }] }],
-  });
-  assert.equal(Object.hasOwn(grokBare, 'usage'), false);
 });
 
 test('sqlite keeps the latest usage across later conversation updates', async () => {

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   clipOutputText,
-  partitionToolRuns,
   summarizeToolGroup,
   toolDiffCounts,
   toolGroupKey,
@@ -138,22 +137,10 @@ test('english summary capitalizes the first clause', () => {
 });
 
 test('assistant text splits tool runs; the group key stays on the first call', () => {
-  const messages = [
-    { role: 'assistant', text: '先看' },
-    { role: 'tool', tool: { id: 'a', name: 'read' } },
-    { role: 'tool', tool: { id: 'b', name: 'read' } },
-    { role: 'assistant', text: '再改' },
-    { role: 'tool', tool: { id: 'c', name: 'edit' } },
-    { role: 'user', text: '继续' },
-    { role: 'tool', tool: { id: 'd', name: 'bash' } },
-    { role: 'tool' },
-    { role: 'tool', tool: { id: 'e', name: 'ls' } },
-  ];
-  const runs = partitionToolRuns(messages);
-  assert.deepEqual(runs.map((run) => run.map((item) => item.id)), [['a', 'b'], ['c'], ['d'], ['e']]);
-  const grown = [...runs[0], { id: 'z', name: 'ls' }];
-  assert.equal(toolGroupKey(runs[0]), toolGroupKey(grown));
-  assert.equal(toolGroupKey(runs[0]), 'g:a');
+  const first = [{ id: 'a', name: 'read' }, { id: 'b', name: 'read' }];
+  const grown = [...first, { id: 'z', name: 'ls' }];
+  assert.equal(toolGroupKey(first), toolGroupKey(grown));
+  assert.equal(toolGroupKey(first), 'g:a');
 });
 
 test('output clips to 20 lines until show-all', () => {

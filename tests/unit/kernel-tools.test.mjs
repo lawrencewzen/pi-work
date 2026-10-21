@@ -184,7 +184,6 @@ async function writeScript(dataDir, name, turns) {
 
 function durableEnv(script, extra = {}) {
   return {
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
     ...extra,

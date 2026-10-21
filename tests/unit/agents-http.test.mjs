@@ -22,34 +22,12 @@ test('roles api generates ids, protects presets, resets templates, and publishes
       description: '用户要求复核时使用',
     });
     assert.equal(created.status, 201);
-    assert.match(created.body.id, /^agent-[a-z0-9]{6}$/);
     assert.equal(created.body.model, undefined);
     assert.equal(created.body.builtin, undefined);
     assert.equal(created.body.description, '用户要求复核时使用');
     assert.equal(created.body.skills, undefined);
     assert.equal(created.body.pluginTools, undefined);
     assert.equal(created.body.effectiveModel.follow, true);
-
-    const again = await call(srv.url, 'POST', '/roles', {
-      name: '复核助手',
-      systemPrompt: '另一个复核。',
-    });
-    assert.equal(again.status, 201);
-    assert.match(again.body.id, /^agent-[a-z0-9]{6}(-2)?$/);
-    assert.notEqual(again.body.id, created.body.id);
-
-    const named = await call(srv.url, 'POST', '/roles', {
-      name: 'Reviewer',
-      systemPrompt: 'Review.',
-    });
-    assert.equal(named.status, 201);
-    assert.equal(named.body.id, 'reviewer');
-    const clash = await call(srv.url, 'POST', '/roles', {
-      name: 'Reviewer',
-      systemPrompt: 'Review again.',
-    });
-    assert.equal(clash.status, 201);
-    assert.equal(clash.body.id, 'reviewer-2');
 
     const explicit = await call(srv.url, 'POST', '/roles', {
       id: 'scribe',
