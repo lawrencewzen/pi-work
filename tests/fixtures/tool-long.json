@@ -1,0 +1,13 @@
+{ "turns": [
+  { "text": "多看几眼。", "tool": "read", "args": { "path": "t0.txt" } },
+  { "tool": "read", "args": { "path": "t1.txt" } },
+  { "tool": "read", "args": { "path": "t2.txt" } },
+  { "tool": "read", "args": { "path": "t3.txt" } },
+  { "tool": "read", "args": { "path": "t4.txt" } },
+  { "tool": "read", "args": { "path": "t5.txt" } },
+  { "tool": "read", "args": { "path": "t6.txt" } },
+  { "tool": "read", "args": { "path": "t7.txt" } },
+  { "tool": "read", "args": { "path": "t8.txt" } },
+  { "tool": "read", "args": { "path": "prompts" } },
+  { "text": "看完了。" }
+] }

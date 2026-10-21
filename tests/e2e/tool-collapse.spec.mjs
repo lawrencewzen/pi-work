@@ -12,6 +12,12 @@ async function seedReads(dir) {
   await fs.writeFile(path.join(dir, 'long.txt'), `${lines.join('\n')}\n`);
 }
 
+async function seedLong(dir) {
+  for (let i = 0; i < 9; i += 1) {
+    await fs.writeFile(path.join(dir, `t${i}.txt`), `t${i}\n`);
+  }
+}
+
 async function switchLanguage(page, lang) {
   await page.locator('[data-action=open-settings]').click();
   await page.locator(`[data-action=switch-language][data-lang=${lang}]`).click();
@@ -30,7 +36,7 @@ test('seven tool calls collapse to one summary, then a row, then the output', as
     await send(page, '看看');
     const summary = page.getByTestId('tool-group-summary');
     await expect(summary).toBeVisible({ timeout: 20000 });
-    await expect(page.getByTestId('tool-group-text')).toHaveText('读取了 6 个文件，列出 1 个目录');
+    await expect(page.getByTestId('tool-group-text')).toHaveText('读了 6 个文件 · 列出 1 个目录');
     await expect(page.getByTestId('message').filter({ hasText: '看完了，一共这些。' })).toBeVisible();
     const rows = page.locator('[data-testid=tool-row]');
     await expect(rows).toHaveCount(7);
@@ -41,6 +47,8 @@ test('seven tool calls collapse to one summary, then a row, then the output', as
     for (let i = 0; i < 7; i += 1) await expect(rows.nth(i)).toBeVisible();
     await expect(page.locator('[data-testid=tool-row][data-tool=read]')).toHaveCount(6);
     await expect(page.locator('[data-testid=tool-row][data-tool=ls]')).toHaveCount(1);
+    await expect(page.locator('[data-testid=tool-row][data-path="long.txt"]').getByTestId('tool-row-hint')).toHaveText('30 行');
+    await expect(page.locator('[data-testid=tool-row][data-tool=ls]').getByTestId('tool-row-hint')).toHaveText('6 项');
 
     const row = page.locator('[data-testid=tool-row][data-path="long.txt"]');
     const detail = row.getByTestId('tool-row-detail');
@@ -56,7 +64,7 @@ test('seven tool calls collapse to one summary, then a row, then the output', as
     await expect(detail).toContainText('L30');
 
     await switchLanguage(page, 'en');
-    await expect(page.getByTestId('tool-group-text')).toHaveText('Read 6 files, listed 1 directory');
+    await expect(page.getByTestId('tool-group-text')).toHaveText('Read 6 files · listed 1 directory');
     await expect(detail).toBeVisible();
     await expect(detail).toContainText('L30');
   } finally {
@@ -72,13 +80,16 @@ test('a failed call keeps the summary collapsed and shows the failure count', as
     await createWorkspace(page, 'demo', ws);
     await newConversation(page);
     await send(page, '看看');
-    await expect(page.getByTestId('tool-group-text')).toHaveText('读取了 missing.txt', { timeout: 20000 });
+    await expect(page.getByTestId('tool-group-text')).toHaveText('读取 missing.txt 失败', { timeout: 20000 });
     await expect(page.getByTestId('tool-group-fail')).toHaveText('1 个失败');
     await expect(page.locator('[data-testid=tool-row][data-tool=read]')).toBeHidden();
     await page.getByTestId('tool-group-summary').click();
     const row = page.locator('[data-testid=tool-row][data-tool=read]');
     await expect(row).toBeVisible();
     await expect(row.getByTestId('tool-row-status')).toHaveText('失败');
+    await expect(row.getByTestId('tool-row-hint')).toContainText(/ENOENT|missing\.txt|no such file/i);
+    await expect(row.getByTestId('tool-row-detail')).toBeVisible();
+    await expect(row.getByTestId('tool-row-detail')).toContainText(/ENOENT|missing\.txt|no such file/i);
   } finally {
     await srv.kill();
   }
@@ -93,11 +104,46 @@ test('a running call shows a spinner and the current action without opening the 
     await newConversation(page);
     await send(page, '跑');
     await expect(page.getByTestId('tool-group-spinner')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId('tool-group-text')).toHaveText('正在执行 sleep 3');
+    await expect(page.getByTestId('tool-group-text')).toHaveText('正在运行 `sleep 3`…');
     await expect(page.locator('[data-testid=tool-row][data-tool=bash]')).toBeHidden();
-    await expect(page.getByTestId('tool-group-text')).toHaveText('执行了 sleep 3', { timeout: 15000 });
+    await expect(page.getByTestId('tool-group-text')).toHaveText('运行 sleep 3', { timeout: 15000 });
     await expect(page.getByTestId('tool-group-spinner')).toHaveCount(0);
     await expect(page.locator('[data-testid=tool-row][data-tool=bash]')).toBeHidden();
+  } finally {
+    await srv.kill();
+  }
+});
+
+test('a long group hides earlier calls until clicked; failed rows start expanded', async ({ page }) => {
+  const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
+  await seedLong(ws);
+  const srv = await startServer({ script: 'tool-long.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  try {
+    await openApp(page, srv);
+    await createWorkspace(page, 'demo', ws);
+    await newConversation(page);
+    await send(page, '看看');
+    await expect(page.getByTestId('tool-group-text')).toHaveText('读取 prompts 失败 · 读了 9 个文件', { timeout: 20000 });
+    await expect(page.getByTestId('tool-group-fail')).toHaveText('1 个失败');
+    await page.getByTestId('tool-group-summary').click();
+    const rows = page.locator('[data-testid=tool-row]');
+    await expect(rows).toHaveCount(8);
+    await expect(page.getByTestId('tool-group-older')).toHaveText('还有 2 个较早的调用');
+    await expect(page.locator('[data-testid=tool-row][data-path="t0.txt"]')).toHaveCount(0);
+    const failed = page.locator('[data-testid=tool-row][data-path="prompts"]');
+    await expect(failed).toBeVisible();
+    await expect(failed.getByTestId('tool-row-detail')).toBeVisible();
+    await expect(failed.getByTestId('tool-row-hint')).toContainText(/ENOENT|prompts|no such file/i);
+
+    const thread = page.locator('#center-thread');
+    await thread.evaluate((el) => { el.scrollTop = 40; });
+    const before = await thread.evaluate((el) => el.scrollTop);
+    await page.getByTestId('tool-group-older').click();
+    await expect(rows).toHaveCount(10);
+    await expect(page.getByTestId('tool-group-older')).toHaveCount(0);
+    await expect(page.locator('[data-testid=tool-row][data-path="t0.txt"]')).toBeVisible();
+    const after = await thread.evaluate((el) => el.scrollTop);
+    if (before > 0) expect(after).toBeGreaterThan(0);
   } finally {
     await srv.kill();
   }

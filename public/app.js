@@ -6,7 +6,10 @@ import {
   toolFocus,
   toolGroupKey,
   toolKind,
+  toolResultHint,
   toolStatusBucket,
+  TOOL_ERROR_PREVIEW_LINES,
+  toolGroupPreview,
 } from './tool-groups.js';
 import { composerContextText } from './usage.js';
 import { composerAgentPresentation, resolveDispatchModel } from './agent-chip.js';
@@ -85,6 +88,8 @@ const state = {
   expandedTools: new Set(),
   expandedToolGroups: new Set(),
   expandedToolOutputs: new Set(),
+  collapsedToolDetails: new Set(),
+  expandedToolGroupOlder: new Set(),
   viewingAgentId: null,
   viewingAgent: null,
   workspaceTree: [],
@@ -2066,7 +2071,8 @@ export function renderChatThread() {
     return;
   }
 
-  const stick = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+  const prevTop = thread.scrollTop;
+  const stick = thread.scrollHeight - prevTop - thread.clientHeight < 80;
   const msgs = dedupeMessages(conv.messages);
   const allAgents = conv.agents || [];
   const realAgents = allAgents.filter((ag) => isRealSubagent(ag));
@@ -2088,6 +2094,7 @@ export function renderChatThread() {
 
   thread.innerHTML = `<div class="thread-inner">${rendered.join('')}</div>`;
   if (stick || state.forceThreadBottom) thread.scrollTop = thread.scrollHeight;
+  else thread.scrollTop = prevTop;
   state.forceThreadBottom = false;
 }
 
@@ -2136,11 +2143,15 @@ export function renderToolGroupHtml(tools, idPrefix = '') {
   const id = `${idPrefix}${toolGroupKey(list)}`;
   const open = state.expandedToolGroups.has(id);
   const summary = summarizeToolGroup(list, t);
+  const preview = toolGroupPreview(list, state.expandedToolGroupOlder.has(id));
   const fail = summary.failed > 0
     ? `<span class="tool-group-fail" data-testid="tool-group-fail">${escapeHtml(t('tool_fail_count', { n: summary.failed }))}</span>`
     : '';
   const spin = summary.running
     ? `<span class="tool-group-spin" data-testid="tool-group-spinner" aria-hidden="true"></span>`
+    : '';
+  const older = preview.hidden > 0
+    ? `<button type="button" class="tool-group-older" data-testid="tool-group-older" data-action="expand-tool-group-older" data-group-id="${escapeHtml(id)}">${escapeHtml(tPlural('tool_group_older', preview.hidden))}</button>`
     : '';
   return (
     `<div class="tool-group${open ? ' is-open' : ''}${summary.running ? ' is-running' : ''}" data-testid="tool-group" data-group-id="${escapeHtml(id)}">` +
@@ -2151,7 +2162,8 @@ export function renderToolGroupHtml(tools, idPrefix = '') {
     `<svg class="tool-group-chevron icon" data-testid="tool-group-chevron" viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg>` +
     `</button>` +
     `<div class="tool-group-list" data-testid="tool-group-list">` +
-    list.map((tool) => renderToolRowHtml(tool)).join('') +
+    older +
+    preview.tools.map((tool) => renderToolRowHtml(tool)).join('') +
     `</div>` +
     `</div>`
   );
@@ -2207,6 +2219,14 @@ function toolOutputSource(output) {
   return JSON.stringify(output, null, 2);
 }
 
+function isToolDetailOpen(tool) {
+  const id = tool?.id;
+  if (id == null || String(id) === '') return false;
+  if (state.collapsedToolDetails.has(id)) return false;
+  if (state.expandedTools.has(id)) return true;
+  return toolStatusBucket(tool.status) === 'failed';
+}
+
 export function renderToolRowHtml(tool) {
   if (!tool) return '';
   const toolName = tool.name || 'tool';
@@ -2216,8 +2236,9 @@ export function renderToolRowHtml(tool) {
   const showDiff = (toolName === 'write' || toolName === 'edit') && (diff.added != null || diff.removed != null);
   const added = diff.added != null ? `+${diff.added}` : '';
   const removed = diff.removed != null ? `−${diff.removed}` : '';
-  const isExpanded = state.expandedTools.has(tool.id);
   const bucket = toolStatusBucket(tool.status);
+  const isExpanded = isToolDetailOpen(tool);
+  const hint = toolResultHint(tool, t);
   const diffBadge =
     `<span class="tool-diff-badge${showDiff ? '' : ' is-hidden'}">` +
     `<span class="add" data-testid="tool-row-added">${escapeHtml(added)}</span>` +
@@ -2228,24 +2249,34 @@ export function renderToolRowHtml(tool) {
     : '';
   const preview = pluginResultPreview(tool);
   const outputText = toolOutputSource(tool.output);
-  const clipped = clipOutputText(outputText, state.expandedToolOutputs.has(tool.id));
+  const showAllOutput = state.expandedToolOutputs.has(tool.id);
+  const clipLimit = bucket === 'failed' && !showAllOutput ? TOOL_ERROR_PREVIEW_LINES : 20;
+  const clipped = clipOutputText(outputText, showAllOutput, clipLimit);
   const inputText = tool.input ? JSON.stringify(tool.input, null, 2) : '';
+  const hintHtml = hint.text
+    ? `<span class="tool-row-hint${hint.failed ? ' is-failed' : ''}" data-testid="tool-row-hint">${escapeHtml(hint.text)}</span>`
+    : (preview ? `<span class="tool-result" data-testid="tool-row-output">${escapeHtml(preview)}</span>` : '');
+  const rowClass = [
+    'tool-row',
+    bucket === 'interrupted' ? 'tool-interrupted' : '',
+    bucket === 'failed' ? 'is-failed' : '',
+  ].filter(Boolean).join(' ');
 
   return (
     `<div class="tool-row-wrapper">` +
-    `<div class="tool-row${bucket === 'interrupted' ? ' tool-interrupted' : ''}" data-testid="tool-row" data-tool="${escapeHtml(toolName)}" data-path="${escapeHtml(rawPath)}" data-action="toggle-tool" data-tool-id="${escapeHtml(tool.id)}">` +
+    `<div class="${rowClass}" data-testid="tool-row" data-tool="${escapeHtml(toolName)}" data-path="${escapeHtml(rawPath)}" data-action="toggle-tool" data-tool-id="${escapeHtml(tool.id)}">` +
     `<div class="tool-main">` +
     toolIconSvg(toolName) +
     `<span class="tool-action">${escapeHtml(toolActionLabel(toolName))}</span>` +
     `<span class="tool-path" data-testid="tool-row-path">${escapeHtml(display)}</span>` +
-    (preview ? `<span class="tool-result" data-testid="tool-row-output">${escapeHtml(preview)}</span>` : '') +
+    hintHtml +
     diffBadge +
     `</div>` +
     `<div class="tool-meta">${statusHtml}</div>` +
     `<div class="tool-detail-card" data-testid="tool-row-detail" style="display:${isExpanded ? 'block' : 'none'}">` +
-    `<div class="tool-detail-block">` +
+    `<div class="tool-detail-block${bucket === 'failed' ? ' is-failed' : ''}">` +
     (rawPath ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_path_label'))}</span> ${escapeHtml(rawPath)}</div>` : '') +
-    (inputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_input'))}</span>\n${escapeHtml(inputText)}</div>` : '') +
+    (bucket === 'failed' ? '' : (inputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_input'))}</span>\n${escapeHtml(inputText)}</div>` : '')) +
     (outputText ? `<div class="tool-detail-line"><span class="tool-detail-k">${escapeHtml(t('tool_output'))}</span>\n${escapeHtml(clipped.text)}</div>` : '') +
     `</div>` +
     (clipped.clipped
@@ -2361,10 +2392,27 @@ function showModalError(id, message) {
   el.classList.add('is-visible');
 }
 
+function findToolById(id) {
+  const msgs = state.activeConversationData?.messages || [];
+  for (const message of msgs) {
+    if (message?.role === 'tool' && message.tool && String(message.tool.id) === String(id)) {
+      return message.tool;
+    }
+  }
+  return null;
+}
+
 export function toggleToolDetail(id) {
   if (!id) return;
-  if (state.expandedTools.has(id)) state.expandedTools.delete(id);
-  else state.expandedTools.add(id);
+  const tool = findToolById(id);
+  const open = tool ? isToolDetailOpen(tool) : state.expandedTools.has(id);
+  if (open) {
+    state.expandedTools.delete(id);
+    state.collapsedToolDetails.add(id);
+  } else {
+    state.collapsedToolDetails.delete(id);
+    state.expandedTools.add(id);
+  }
   renderChatThread();
 }
 
@@ -2372,6 +2420,12 @@ export function toggleToolGroup(id) {
   if (!id) return;
   if (state.expandedToolGroups.has(id)) state.expandedToolGroups.delete(id);
   else state.expandedToolGroups.add(id);
+  renderChatThread();
+}
+
+export function expandToolGroupOlder(id) {
+  if (!id) return;
+  state.expandedToolGroupOlder.add(id);
   renderChatThread();
 }
 
@@ -4172,6 +4226,9 @@ document.addEventListener('click', (e) => {
       break;
     case 'toggle-tool-group':
       toggleToolGroup(actionEl.getAttribute('data-group-id'));
+      break;
+    case 'expand-tool-group-older':
+      expandToolGroupOlder(actionEl.getAttribute('data-group-id'));
       break;
     case 'expand-tool-output':
       expandToolOutput(actionEl.getAttribute('data-tool-id'));
