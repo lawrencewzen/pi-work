@@ -1133,7 +1133,7 @@ button.file-tree-row:hover { background: var(--side); }
   border-color: var(--accent);
 }
 
-/* Pipeline handoff note in chat — agent side (left) */
+/* System note in chat (correction uses this class) — agent side (left) */
 .handoff-note {
   align-self: flex-start;
   display: flex;

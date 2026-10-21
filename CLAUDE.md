@@ -13,5 +13,5 @@ Web 编码工作台，内核是 Pi Durable（`@earendil-works/pi-durable` 的 Ha
 
 - 动手前先读台账 `~/.claude/grokbot-tasks.md`，接上之前的进度。
 - 读代码、复跑测试只在 `~/.cache/claude-review/lawrencewzen/pi-work` 里做，不碰本工作副本。
-- 发给小克的任务单要写明本项目的验证要求：`npm run check`、`npm test`；动了 UI 的，要附浏览器截图。
+- 发给小克的任务单要写明本项目的验证要求：`npm run check`、`npm test`；默认用测试结果证明，确实需要看画面时另行说明。
 - 上线部署、不可逆的数据操作、对外发布、明显花钱的事，先问用户。

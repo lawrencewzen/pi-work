@@ -1730,7 +1730,7 @@ let runTicker = null;
 function lastIsStreamingAssistantBody(msgs) {
   const last = Array.isArray(msgs) ? msgs[msgs.length - 1] : null;
   if (!last || last.role !== 'assistant') return false;
-  if (last.kind === 'correction' || last.kind === 'handoff') return false;
+  if (last.kind === 'correction') return false;
   return last.streaming === true && Boolean(String(last.text || '').trim());
 }
 
@@ -1893,14 +1893,6 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, stre
       rendered.push(
         `<div class="handoff-note msg-side-agent" data-testid="message" data-role="system" data-kind="correction">` +
         `<span>${escapeHtml(m.text || '')}</span>` +
-        `</div>`
-      );
-      continue;
-    }
-    if (m.kind === 'handoff') {
-      rendered.push(
-        `<div class="handoff-note msg-side-agent" data-testid="message" data-role="system" data-kind="handoff">` +
-        `<span>${escapeHtml(t('handoff_note', { from: localizeRoleLabel(m.fromAgent || ''), to: localizeRoleLabel(m.toAgent || '') }))}</span>` +
         `</div>`
       );
       continue;

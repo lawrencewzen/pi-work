@@ -163,8 +163,8 @@ test('restores a preset, keeps its model, and hides delete on built-ins', async 
   await expect(page.getByTestId('agent-reset')).toBeVisible();
   await expect(page.getByTestId('agent-description')).toBeVisible();
   const original = await page.getByTestId('agent-prompt').inputValue();
-  expect(original).toContain('## 交接');
-  expect(original).toContain('角色：编码');
+  expect(original).toContain('交回主 Agent');
+  expect(original).toContain('编码角色');
 
   await page.getByTestId('agent-model-pick').click();
   const pop = page.getByTestId('model-pop');

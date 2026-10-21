@@ -4,25 +4,13 @@ import path from 'node:path';
 import { startServer, prepareWorkspaces } from './helpers/server.mjs';
 import { createWorkspace, newConversation, send, statusText, openApp } from './helpers/ui.mjs';
 
-const SHOTS = process.env.PI_WORK_SHOTS || '/opt/cursor/artifacts/screenshots';
 const TEXT_A = '这是一个 TypeScript/Node.js 项目，用于开发相关。';
 const TEXT_B = '第二轮已经看完，结论里有顿号、和的字。';
 
 test.use({
   viewport: { width: 1440, height: 900 },
-  deviceScaleFactor: 8 / 3,
 });
 test.describe.configure({ timeout: 90_000 });
-
-async function shot(page, name) {
-  await fs.mkdir(SHOTS, { recursive: true });
-  const file = path.join(SHOTS, `${name}.png`);
-  await page.locator('#center-thread').evaluate((el) => { el.scrollTop = el.scrollHeight; });
-  await page.screenshot({ path: file });
-  const buf = await fs.readFile(file);
-  expect(buf.readUInt32BE(16), `${name} width`).toBe(3840);
-  return file;
-}
 
 test('two turns each leave one agent reply, including after refresh', async ({ page }) => {
   const prepared = await prepareWorkspaces(['ghost']);
@@ -61,7 +49,6 @@ test('two turns each leave one agent reply, including after refresh', async ({ p
     await expect(assistants).toHaveCount(2);
     await expect(assistants.nth(0).getByTestId('message-body')).toContainText(TEXT_A);
     await expect(assistants.nth(1).getByTestId('message-body')).toContainText(TEXT_B);
-    await shot(page, 't8-1-two-replies');
 
     await page.reload();
     await expect(assistants.filter({ hasText: TEXT_A })).toHaveCount(1, { timeout: 20000 });
@@ -72,7 +59,6 @@ test('two turns each leave one agent reply, including after refresh', async ({ p
     await expect(assistants.nth(0).getByTestId('message-body')).toContainText(TEXT_A);
     await expect(assistants.nth(1).getByTestId('message-body')).toContainText(TEXT_B);
     await expect(statusText(page)).toContainText(/done|完成/i);
-    await shot(page, 't8-1-after-refresh');
   } finally {
     await srv.kill();
   }

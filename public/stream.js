@@ -162,13 +162,13 @@ export function mergeRefreshedMessages(local, serverMessages, { keepStreaming = 
       continue;
     }
     if (String(m.id).startsWith('usr-')) {
-      const dup = merged.some((x) => x.role === m.role && x.kind !== 'handoff' && x.text === m.text);
+      const dup = merged.some((x) => x.role === m.role && x.text === m.text);
       if (!dup) merged.push(m);
     }
   }
   if (keepStreaming && pending.length) {
     const last = pending[pending.length - 1];
-    const dup = merged.some((x) => x.role === last.role && x.kind !== 'handoff' && x.text && x.text === last.text);
+    const dup = merged.some((x) => x.role === last.role && x.text && x.text === last.text);
     if (!dup) merged.push(last);
   }
   return dedupeById(merged);

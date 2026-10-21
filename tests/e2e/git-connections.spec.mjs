@@ -7,7 +7,6 @@ import { startFakeGitlab } from '../helpers/fake-gitlab.mjs';
 
 const PAT = 'glpat-e2e-secret-9k3q';
 const BAD = 'glpat-e2e-secret-bad1';
-const SHOTS = process.env.PI_WORK_SHOTS || '/opt/cursor/artifacts/screenshots';
 
 let gitlab;
 let srv;
@@ -18,20 +17,6 @@ test.afterEach(async () => {
   gitlab?.close();
   gitlab = null;
 });
-
-function pngSize(file) {
-  const buf = fs.readFileSync(file);
-  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
-}
-
-async function shot(page, name) {
-  fs.mkdirSync(SHOTS, { recursive: true });
-  const file = path.join(SHOTS, name);
-  await page.screenshot({ path: file, animations: 'disabled' });
-  const size = pngSize(file);
-  expect(size.width, name).toBe(3840);
-  return file;
-}
 
 async function assertFits(page) {
   const report = await page.evaluate(() => {
@@ -111,13 +96,11 @@ test('settings Git connection imports a GitLab project', async ({ browser }) => 
 
   const light = await browser.newContext({
     viewport: { width: 1440, height: 900 },
-    deviceScaleFactor: 8 / 3,
   });
   const page = await light.newPage();
   await login(page, srv.url);
   await openGitSettings(page);
   await expect(page.getByTestId('git-empty')).toBeVisible();
-  await shot(page, 'git-settings-empty-light.png');
 
   await page.getByTestId('git-add').click();
   await expect(page.getByTestId('git-drawer')).toBeVisible();
@@ -134,23 +117,19 @@ test('settings Git connection imports a GitLab project', async ({ browser }) => 
   await page.getByTestId('git-test').click();
   await expect(page.getByTestId('git-test-result')).toContainText('zhangsan');
   await expect(page.getByTestId('git-test-result')).toContainText('可以读取项目列表');
-  await shot(page, 'git-settings-test-ok-light.png');
   await page.getByTestId('git-save').click();
   await expect(page.getByTestId('git-row')).toContainText('内网 GitLab');
   await page.getByTestId('git-row-test').click();
   await expect(page.getByTestId('git-row')).toContainText('已连接');
   await expect(page.getByTestId('git-row')).toContainText('zhangsan');
   await expect(page.getByTestId('git-row')).not.toContainText(PAT);
-  await shot(page, 'git-settings-list-light.png');
   await page.locator('.sm-git [data-action=close-settings]').click();
 
   await importProject(page, 'widget');
-  await shot(page, 'git-import-pick-light.png');
   await page.getByTestId('workspace-create-submit').click();
   await expect(page.getByTestId('workspace-item').filter({ hasText: 'widget' })).toBeVisible();
   await page.locator('#tab-btn-file').click();
   await expect(page.getByTestId('workspace-file').filter({ hasText: 'README.md' })).toBeVisible();
-  await shot(page, 'git-import-success-light.png');
 
   await openGitSettings(page);
   await page.getByTestId('git-edit').click();
@@ -165,7 +144,6 @@ test('settings Git connection imports a GitLab project', async ({ browser }) => 
   await expect(page.locator('.git-projects')).toContainText('认证失败');
   await expect(page.locator('#ws-dialog')).not.toContainText(BAD);
   await expect(page.locator('#ws-dialog')).not.toContainText(PAT);
-  await shot(page, 'git-import-auth-failed-light.png');
   await page.locator('#ws-dialog button[data-action=close-modal]').click();
 
   await openGitSettings(page);
@@ -173,12 +151,10 @@ test('settings Git connection imports a GitLab project', async ({ browser }) => 
   await page.locator('[data-action=switch-appearance][data-mode=dark]').click();
   await page.locator('[data-action=close-settings]').first().click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', /dark/);
-  await shot(page, 'git-workspace-dark.png');
   await light.close();
 
   const narrow = await browser.newContext({
     viewport: { width: 1000, height: 900 },
-    deviceScaleFactor: 3.84,
   });
   const slim = await narrow.newPage();
   await login(slim, srv.url);
@@ -191,12 +167,10 @@ test('settings Git connection imports a GitLab project', async ({ browser }) => 
   await slim.getByTestId('git-row-test').click();
   await expect(slim.getByTestId('git-row')).toContainText('已连接');
   await assertFits(slim);
-  await shot(slim, 'git-settings-1000.png');
   await slim.locator('.sm-git [data-action=close-settings]').click();
   await slim.getByTestId('workspace-new').click();
   await slim.locator('#ws-modal-tab-git').click();
   await expect(slim.getByTestId('git-project').filter({ hasText: 'acme/widget' })).toBeVisible();
   await assertFits(slim);
-  await shot(slim, 'git-import-1000.png');
   await narrow.close();
 });

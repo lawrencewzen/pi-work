@@ -1,6 +1,6 @@
 // Role adapter for one Pi Durable conversation.
 // Idle role changes go through conversation.configure. Multi-role work is
-// dispatched with sub-agents; this host does not rotate roles on a pipeline.
+// dispatched with sub-agents; this host does not rotate roles.
 import { randomUUID } from 'node:crypto';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable';

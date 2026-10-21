@@ -15,7 +15,7 @@ npm run test:e2e                         # playwright test -c tests/playwright.c
 
 - 用例自己起 `server.mjs`，走演示模型（`PI_WORK_LLM=faux`），不需要登录或 API Key。
 - 用系统 Chrome 时设 `PI_WORK_CHROME`（例如 `/usr/bin/google-chrome`）。
-- 部分用例把截图写到 `PI_WORK_SHOTS`（默认 `/opt/cursor/artifacts/screenshots`）。CI 会指到 runner 临时目录；失败时报告和截图作为 artifact 保留 7 天。
+- 默认用测试结果证明，确实需要看画面时另行说明。Playwright 失败时仍会留下报告（`screenshot: only-on-failure`），CI 作为 artifact 保留 7 天。
 - Windows CI 不跑 e2e。
 
 ## 规则

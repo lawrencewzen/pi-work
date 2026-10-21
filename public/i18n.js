@@ -429,7 +429,7 @@ export const translations = {
     ag_prompt: '提示词',
     ag_prompt_count: '{n} 字',
     ag_prompt_changed: '已改动，和预设版本不同',
-    ag_prompt_ph: '这个子 Agent 的角色、职责、输出格式、交接要求……',
+    ag_prompt_ph: '这个子 Agent 的角色、职责、输出格式、交回主 Agent 的结论……',
     ag_starter: '从哪里开始',
     ag_starter_blank: '空白',
     ag_starter_copy: '复制 {name}',
@@ -709,7 +709,6 @@ export const translations = {
     err_create_conversation: '创建对话失败',
     ws_created: '工作区「{name}」已创建',
     plugin_imported: '插件 {name} 已导入',
-    handoff_note: '{from} → {to}',
   },
   en: {
     ws_remove: 'Remove workspace',
@@ -1139,7 +1138,7 @@ export const translations = {
     ag_prompt: 'Prompt',
     ag_prompt_count: '{n} characters',
     ag_prompt_changed: 'Edited, different from the built-in prompt',
-    ag_prompt_ph: 'Role, duties, output format, and handoff…',
+    ag_prompt_ph: 'Role, duties, output format, and what to report back…',
     ag_starter: 'Start from',
     ag_starter_blank: 'Blank',
     ag_starter_copy: 'Copy {name}',
@@ -1419,7 +1418,6 @@ export const translations = {
     err_create_conversation: 'Failed to create conversation',
     ws_created: 'Workspace "{name}" created',
     plugin_imported: 'Plugin {name} imported',
-    handoff_note: '{from} → {to}',
   },
 };
 
