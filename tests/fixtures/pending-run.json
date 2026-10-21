@@ -1,0 +1,4 @@
+{ "turns": [
+  { "delayMs": 1500, "tool": "bash", "args": { "command": "sleep 2" } },
+  { "text": "跑完了。" }
+] }
