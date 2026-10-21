@@ -8,6 +8,7 @@ export const BUILTIN_ROLE_IDS = ['default', 'planner', 'coder', 'tester', 'audit
 // startup, but only when the user never edited them.
 const PREVIOUS_BUILTIN_PROMPTS = {
   default: [
+    'You are a helpful coding assistant. Use tools to work in the workspace.',
     'You are the default coding Agent in pi-work. Understand the user\'s request, break work into steps, use workspace tools, and summarize results. For simple tasks, do the work yourself without dispatching other roles.',
   ],
   planner: [

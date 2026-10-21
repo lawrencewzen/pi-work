@@ -285,6 +285,18 @@ test('builtin factory prompts require filling tool description', async () => {
   }
 });
 
+test('startup upgrades the original sqlite default seed prompt', async (t) => {
+  const store = await openStore();
+  t.after(() => store.close());
+  const seed = 'You are a helpful coding assistant. Use tools to work in the workspace.';
+  const factory = await readFactoryRole('default');
+  assert.equal((await store.getRole('default')).systemPrompt, seed);
+  assert.equal(shouldUpgradeBuiltinPrompt(await store.getRole('default'), factory), true);
+  await loadRoleTemplates(store, path.join(ROOT, 'roles'));
+  assert.equal((await store.getRole('default')).systemPrompt, factory.systemPrompt);
+  assert.notEqual(factory.systemPrompt, seed);
+});
+
 test('startup upgrades unedited factory prompts that lacked tool description', async (t) => {
   const rolesDir = path.join(ROOT, 'roles');
   const store = await openStore();
