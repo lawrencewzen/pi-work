@@ -24,7 +24,7 @@ function api(url, method, p, body) {
   });
 }
 
-test('role and pipeline HTTP catalog, including template tombstones', async () => {
+test('role HTTP catalog, including template tombstones; pipeline routes are gone', async () => {
   const srv = await startServer({ extraEnv: { PI_WORK_TOKEN: TOKEN } });
   try {
     const roles = await api(srv.url, 'GET', '/roles');
@@ -46,12 +46,12 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
     assert.equal(main?.effectiveModel?.follow, true);
     assert.deepEqual(roles.body.find((role) => role.id === 'auditor')?.tools, ['read', 'ls', 'grep']);
 
-    const pipes = await api(srv.url, 'GET', '/pipelines');
-    assert.equal(pipes.status, 200);
-    const feature = pipes.body.find((pipe) => pipe.id === 'feature');
-    const demo = pipes.body.find((pipe) => pipe.id === 'demo');
-    assert.ok(demo);
-    assert.deepEqual(feature?.steps.map((step) => step.role), ['planner', 'coder', 'tester', 'auditor']);
+    assert.equal((await api(srv.url, 'GET', '/pipelines')).status, 404);
+    assert.equal((await api(srv.url, 'POST', '/pipelines', {
+      id: 'notes',
+      name: 'Notes',
+      steps: [{ role: 'scribe' }],
+    })).status, 404);
 
     const delDefault = await api(srv.url, 'DELETE', '/roles/default');
     assert.equal(delDefault.status, 409);
@@ -59,8 +59,8 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
 
     const delPlanner = await api(srv.url, 'DELETE', '/roles/planner');
     assert.equal(delPlanner.status, 409);
-    assert.equal(delPlanner.body.error, 'role_in_use');
-    assert.ok(delPlanner.body.pipelines.includes('feature'));
+    assert.equal(delPlanner.body.error, 'protected');
+    assert.equal(delPlanner.body.pipelines, undefined);
 
     const created = await api(srv.url, 'POST', '/roles', scribe);
     assert.equal(created.status, 201);
@@ -81,36 +81,23 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
     const missing = await api(srv.url, 'PUT', '/roles/nope', { name: 'X', systemPrompt: 'y' });
     assert.equal(missing.status, 404);
 
-    const badPipe = await api(srv.url, 'POST', '/pipelines', {
-      id: 'Bad Id',
-      name: 'Nope',
-      steps: [{ role: 'scribe' }],
-    });
-    assert.equal(badPipe.status, 400);
-
-    const pipe = await api(srv.url, 'POST', '/pipelines', {
-      id: 'notes',
-      name: 'Notes',
-      steps: [{ role: 'scribe', input: 'user' }, { role: 'auditor', input: 'previous' }],
-    });
-    assert.equal(pipe.status, 201);
-    assert.equal((await api(srv.url, 'DELETE', '/roles/scribe')).status, 409);
-
     const ws = await api(srv.url, 'POST', '/workspaces', { name: 'catalog-ws' });
     assert.equal(ws.status, 201);
     const conv = await api(srv.url, 'POST', `/workspaces/${ws.body.id}/conversations`, {
-      title: 'uses notes',
+      title: 'ignores pipeline',
       pipelineId: 'notes',
     });
     assert.equal(conv.status, 201);
-    const blocked = await api(srv.url, 'DELETE', '/pipelines/notes');
-    assert.equal(blocked.status, 409);
-    assert.equal(blocked.body.error, 'pipeline_in_use');
+    const got = await api(srv.url, 'GET', `/conversations/${conv.body.id}`);
+    assert.equal(got.status, 200);
+    assert.equal('pipelineId' in got.body, false);
+    assert.equal('pipelineStep' in got.body, false);
+    const patched = await api(srv.url, 'PATCH', `/conversations/${conv.body.id}`, { pipelineId: 'notes' });
+    assert.equal(patched.status, 200);
+    assert.equal('pipelineId' in patched.body, false);
+    assert.equal('pipelineStep' in patched.body, false);
 
-    assert.equal((await api(srv.url, 'DELETE', '/pipelines/feature')).status, 200);
-    const blockedPreset = await api(srv.url, 'DELETE', '/roles/planner');
-    assert.equal(blockedPreset.status, 409);
-    assert.equal(blockedPreset.body.error, 'protected');
+    assert.equal((await api(srv.url, 'DELETE', '/roles/scribe')).status, 200);
   } finally {
     await srv.kill();
   }
@@ -118,12 +105,9 @@ test('role and pipeline HTTP catalog, including template tombstones', async () =
   const restarted = await startServer({ dataDir: srv.dataDir, extraEnv: { PI_WORK_TOKEN: TOKEN } });
   try {
     const roles = await api(restarted.url, 'GET', '/roles');
-    const pipes = await api(restarted.url, 'GET', '/pipelines');
     assert.equal(roles.body.some((role) => role.id === 'planner'), true);
-    assert.equal(roles.body.some((role) => role.id === 'scribe'), true);
-    assert.equal(pipes.body.some((pipe) => pipe.id === 'feature'), false);
-    assert.equal(pipes.body.some((pipe) => pipe.id === 'demo'), true);
-    assert.equal(pipes.body.some((pipe) => pipe.id === 'notes'), true);
+    assert.equal(roles.body.some((role) => role.id === 'scribe'), false);
+    assert.equal((await api(restarted.url, 'GET', '/pipelines')).status, 404);
 
     const again = await api(restarted.url, 'POST', '/roles', {
       id: 'planner',

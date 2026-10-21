@@ -2,7 +2,9 @@
 
 Sub-agents follow Pi Durable's Abort and Subagents section and examples 22 (foreground) and 23 (background). The Harness owns the child conversation, its submission, abort, and restart reuse. pi-work only configures a child from a role template and reads what the tools already committed.
 
-A conversation still has role / pipeline chips on `GET /api/conversations/:cid` (`agents` without `mode`). Real sub-agent instances are appended after those chips.
+A conversation has one main agent (the conversation role, or `default`). Extra agents are sub-agent instances spawned with `delegate` / `subagent`, each in its own Harness conversation. There is no host-side pipeline that rotates roles in the same chat.
+
+A conversation still has a role chip on `GET /api/conversations/:cid` (`agents` without `mode`). Real sub-agent instances are appended after that chip.
 
 ## Tools
 
@@ -17,7 +19,7 @@ The main agent has two tools. Children are configured with this extension remove
 
 ```bash
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>
-# → agents: role/pipeline chips, then
+# → agents: role chip, then
 #   {id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}
 #   id is <cid>:sub:<child conversation id>
 #   mode is foreground | background

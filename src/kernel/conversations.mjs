@@ -170,10 +170,6 @@ export async function openConversationKernel({
   }
 
   async function deliver(cid, ev) {
-    if (ev.event === 'status' && ev.data?.status === 'done' && roles) {
-      const action = await roles.onRunFinished(cid);
-      if (action !== 'continue') return;
-    }
     push(cid, ev);
     if (ev.event === 'status') {
       const conv = await store.getConversation(cid);
@@ -272,7 +268,6 @@ export async function openConversationKernel({
   for (const row of stored) await attach(row);
   await modelRoutes.warm();
   harness.resume();
-  for (const row of stored) await roles.reconcile(row);
 
   async function conversationFor(conv) {
     if (!conv?.harnessId) return null;
@@ -429,7 +424,7 @@ export async function openConversationKernel({
       const out = { ...conv, status, usage };
       if (view.llmError) out.llmError = view.llmError;
       if (includeMessages) {
-        out.messages = roles ? await roles.annotate(conv, transcript.messages) : transcript.messages;
+        out.messages = transcript.messages;
       }
       return out;
     },

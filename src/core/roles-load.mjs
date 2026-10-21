@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { validateRole, validatePipeline } from './config.mjs';
+import { validateRole } from './config.mjs';
 
 export const BUILTIN_ROLE_IDS = ['default', 'planner', 'coder', 'tester', 'auditor'];
 
@@ -119,18 +119,6 @@ export async function loadRoleTemplates(store, dir) {
       }
       if (changed) await store.updateRole(value.id, patch);
     }
-    loaded.push(value.id);
-  }
-  return loaded;
-}
-
-export async function loadPipelineTemplates(store, dir) {
-  const roles = await store.listRoles();
-  const loaded = [];
-  for (const value of await readJsonTemplates(dir, (obj) => validatePipeline(obj, roles))) {
-    if (await store.hasCatalogTombstone('pipeline', value.id)) continue;
-    const existing = await store.getPipeline(value.id);
-    if (!existing) await store.createPipeline(value);
     loaded.push(value.id);
   }
   return loaded;

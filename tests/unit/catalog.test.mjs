@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { load, ROOT } from './_root.mjs';
 
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
-const { loadRoleTemplates, loadPipelineTemplates, shouldUpgradeBuiltinPrompt, shouldUpgradeBuiltinTools } = await load('src/core/roles-load.mjs');
+const { loadRoleTemplates, shouldUpgradeBuiltinPrompt, shouldUpgradeBuiltinTools } = await load('src/core/roles-load.mjs');
 
 const scribe = {
   id: 'scribe',
@@ -35,7 +36,7 @@ async function withSqlite(fn) {
   }
 }
 
-test('sqlite store updates and deletes roles and pipelines', async () => {
+test('sqlite store updates and deletes roles', async () => {
   const store = await openStore();
   try {
     assert.equal(await store.updateRole('missing', scribe), undefined);
@@ -46,17 +47,6 @@ test('sqlite store updates and deletes roles and pipelines', async () => {
     const cleared = await store.updateRole('scribe', { ...scribe, name: 'Notes' });
     assert.equal(cleared.model, undefined);
     assert.equal(await store.getRole('scribe').then((role) => role.name), 'Notes');
-
-    await store.createPipeline({ id: 'notes', name: 'Notes', steps: [{ role: 'scribe', input: 'user' }] });
-    const pipe = await store.updatePipeline('notes', {
-      id: 'notes',
-      name: 'Note pass',
-      steps: [{ role: 'scribe', input: 'previous' }],
-    });
-    assert.equal(pipe.name, 'Note pass');
-    assert.equal(pipe.steps[0].input, 'previous');
-    assert.equal(await store.deletePipeline('notes'), true);
-    assert.equal(await store.getPipeline('notes'), undefined);
     assert.equal(await store.deleteRole('scribe'), true);
     assert.equal(await store.getRole('scribe'), undefined);
 
@@ -69,27 +59,74 @@ test('sqlite store updates and deletes roles and pipelines', async () => {
   }
 });
 
-test('sqlite counts conversations that reference a role or pipeline', async () => {
+test('sqlite counts conversations that reference a role', async () => {
   await withSqlite(async (store) => {
     const ws = await store.createWorkspace({ name: 'ws', path: '/tmp/piw-cat-ws' });
     await store.createRole(scribe);
-    await store.createPipeline({ id: 'notes', name: 'Notes', steps: [{ role: 'scribe' }] });
     await store.createConversation({ workspaceId: ws.id, title: 'a', roleId: 'scribe' });
-    await store.createConversation({ workspaceId: ws.id, title: 'b', pipelineId: 'notes' });
+    await store.createConversation({ workspaceId: ws.id, title: 'b' });
     assert.equal(await store.countConversationsReferencing({ roleId: 'scribe' }), 1);
-    assert.equal(await store.countConversationsReferencing({ pipelineId: 'notes' }), 1);
+    assert.equal(await store.countConversationsReferencing({}), 0);
   });
 });
 
-test('templates seed feature pipeline and honor tombstones', async (t) => {
+test('startup drops the pipelines table and does not read pipeline columns', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-drop-pipe-'));
+  const dbPath = path.join(dir, 'pi-work.sqlite');
+  const raw = new DatabaseSync(dbPath);
+  raw.exec(`
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT,
+      title TEXT,
+      status TEXT,
+      auto_continues INTEGER DEFAULT 0,
+      retries INTEGER DEFAULT 0,
+      last_checkpoint_at INTEGER,
+      current_step INTEGER DEFAULT 0,
+      pipeline_step INTEGER DEFAULT 0,
+      updated_at INTEGER,
+      created_at INTEGER,
+      role_id TEXT,
+      pipeline_id TEXT,
+      workspace_path TEXT,
+      last_progress_at INTEGER,
+      original_text TEXT,
+      harness_id INTEGER
+    );
+    CREATE TABLE pipelines (id TEXT PRIMARY KEY, name TEXT, steps_json TEXT);
+    INSERT INTO pipelines (id, name, steps_json) VALUES ('legacy', 'Legacy', '[]');
+    INSERT INTO conversations (
+      id, workspace_id, title, pipeline_step, pipeline_id, updated_at, created_at
+    ) VALUES ('c1', 'w1', 'old', 2, 'legacy', 1, 1);
+  `);
+  raw.close();
+  const store = createSqliteStore(dir);
+  try {
+    const check = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      assert.equal(
+        check.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='pipelines'").get(),
+        undefined,
+      );
+    } finally {
+      check.close();
+    }
+    const conv = await store.getConversation('c1');
+    assert.equal(conv?.id, 'c1');
+    assert.equal('pipelineId' in conv, false);
+    assert.equal('pipelineStep' in conv, false);
+  } finally {
+    store.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('templates seed builtin roles and honor tombstones', async (t) => {
   const store = await openStore();
   t.after(() => store.close());
   const rolesDir = path.join(ROOT, 'roles');
-  const pipesDir = path.join(ROOT, 'pipelines');
-  const examplesDir = path.join(ROOT, 'examples', 'pipelines');
   await loadRoleTemplates(store, rolesDir);
-  await loadPipelineTemplates(store, pipesDir);
-  await loadPipelineTemplates(store, examplesDir);
 
   const planner = await store.getRole('planner');
   assert.equal(planner?.name, 'Planner');
@@ -97,19 +134,11 @@ test('templates seed feature pipeline and honor tombstones', async (t) => {
   assert.equal(planner.description, '先读仓库，把需求拆成可执行的短计划。只读，不改代码。');
   assert.deepEqual((await store.getRole('auditor')).tools, ['read', 'ls', 'grep']);
   assert.deepEqual((await store.getRole('default')).tools, ['read', 'write', 'edit', 'ls', 'grep', 'bash']);
-  const feature = await store.getPipeline('feature');
-  assert.deepEqual(feature?.steps.map((step) => step.role), ['planner', 'coder', 'tester', 'auditor']);
-  assert.ok(await store.getPipeline('demo'));
 
   await store.deleteRole('planner');
   await store.tombstoneCatalog('role', 'planner');
-  await store.deletePipeline('feature');
-  await store.tombstoneCatalog('pipeline', 'feature');
   await loadRoleTemplates(store, rolesDir);
-  await loadPipelineTemplates(store, pipesDir);
   assert.equal(await store.getRole('planner'), undefined);
-  assert.equal(await store.getPipeline('feature'), undefined);
-  assert.ok(await store.getPipeline('demo'));
 });
 
 test('startup upgrades unedited builtin prompts and keeps edited ones', async (t) => {

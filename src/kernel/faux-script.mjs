@@ -272,8 +272,9 @@ export function scriptedDemoStep(scriptPath, env = process.env, hooks = {}) {
       }
     }
     const chosen = scriptPool(turns, view)[used];
-    // `{end:true}` finishes a pipeline step. Counting it keeps the next step on
-    // the following turn whether or not the empty assistant is stored.
+    // `{end:true}` is an empty assistant turn. Counting it keeps the next
+    // scripted reply on the following model call whether or not the empty
+    // assistant is stored.
     if (chosen?.end && streamOptions?.sessionId) {
       noteScriptAssistants(streamOptions.sessionId, used + 1);
     }

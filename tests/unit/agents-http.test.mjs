@@ -112,8 +112,6 @@ test('roles api generates ids, protects presets, resets templates, and publishes
     assert.equal(notBuiltin.body.error, 'not_builtin');
 
     assert.equal((await call(srv.url, 'DELETE', '/roles/default')).body.error, 'protected');
-    assert.equal((await call(srv.url, 'DELETE', '/pipelines/feature')).status, 200);
-    assert.equal((await call(srv.url, 'DELETE', '/pipelines/demo')).status, 200);
     for (const id of ['planner', 'coder', 'tester', 'auditor']) {
       const denied = await call(srv.url, 'DELETE', `/roles/${id}`);
       assert.equal(denied.status, 409, id);

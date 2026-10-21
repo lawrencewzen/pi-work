@@ -34,9 +34,8 @@
   - `formatSSE({id, event, data})` → `id: <id>\nevent: <event>\ndata: <JSON 单行>\n\n`；data 为对象时 JSON.stringify；多行字符串按行拆成多个 `data:`；缺 id 则省略该行。
   - `parseSSE(text)` → 事件数组 `{id, event, data}`（data 为解析后的 JSON，若可解析）。往返一致。
 - `src/core/config.mjs`
-  - `validateRole(obj)` / `validatePipeline(obj, roles)` → `{ok:true, value}` 或 `{ok:false, errors:[string]}`。
+  - `validateRole(obj)` → `{ok:true, value}` 或 `{ok:false, errors:[string]}`。
   - Role：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, systemPrompt:string 非空, tools: 子集 of ['read','write','edit','ls','grep','bash'], description?: string, skills?: string[], pluginTools?: boolean}`。tools 缺省 `['read','ls','grep']`。`description` 最长 500，缺省空字符串。`skills` 缺省表示继承全部全局已启用的 Skill；`[]` 表示不用；非空数组只使用其中且全局已启用的那些。`pluginTools` 缺省或 `true` 表示这个角色可以使用已启用的插件工具；`false` 表示不并入、也不能调用。请求里的 `model` 和 `builtin` 一律忽略，不报错。
-  - Pipeline：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, steps:[{role:<已存在 role id>, input?:'previous'|'user'}]}`，steps 非空，最多 20 步。
 - `src/core/git-import.mjs`
   - `validateGitUrl(url, { httpHosts?, env? })`：允许 `https:`、`ssh:`、`git@host:path`。`http:` 仅当主机名（不含端口，大小写不敏感）在允许列表中。列表优先用 `httpHosts`，否则用 `env.PI_WORK_GIT_HTTP_HOSTS`（传了 `env` 时），再否则读进程环境。逗号分隔。`file:`、`git:`、`ftp:` 等拒绝。主机或路径段以 `-` 开头则拒绝。
   - `stripGitUrlCredentials(url)`：去掉 `scheme://user:pass@` 中的 `user:pass`。
@@ -49,11 +48,11 @@
 |---|---|---|
 | `POST /workspaces` | `{name, path}` | `201 {id,name,path}`；path 不存在 → 400 |
 | `GET /workspaces` | | `[{id,name,path}]` |
-| `POST /workspaces/:wid/conversations` | `{title?, roleId?, pipelineId?}` | `201 {id, workspaceId, title, status:'idle'}` |
+| `POST /workspaces/:wid/conversations` | `{title?, roleId?}` | `201 {id, workspaceId, title, status:'idle'}`。若仍带 `pipelineId` 则忽略、不报错 |
 | `GET /workspaces/:wid/conversations?q=` | | 列表，按更新时间倒序 |
-| `GET /conversations/:cid` | | `{id,title,status,roleId,pipelineId,pipelineStep,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError` |
+| `GET /conversations/:cid` | | `{id,title,status,roleId,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
 | `POST /conversations/:cid/messages` | `{text}` | `202 {runId, status:'running'}`。对话忙时用 `whenBusy:'steer'` 插入当前运行，不返回 409 |
-| `PATCH /conversations/:cid` | `{roleId?, pipelineId?}` | `200 {id, roleId, pipelineId, pipelineStep, status, agents}`。`agents` 是切换后的侧栏角色列表，客户端应立刻用它刷新，不必整页刷新。空 `roleId` 表示默认 Agent，并清除流水线。`running` 时 409 `{error:'err_role_busy'}`。未知角色或流水线 400 |
+| `PATCH /conversations/:cid` | `{roleId?}` | `200 {id, roleId, status, agents}`。`agents` 是切换后的侧栏角色列表，客户端应立刻用它刷新，不必整页刷新。空 `roleId` 表示默认 Agent。若仍带 `pipelineId` 则忽略、不报错。`running` 时 409 `{error:'err_role_busy'}`。未知角色 400 |
 | `POST /conversations/:cid/stop` | | `200 {status:'stopped'}`。中止当前运行，并停掉后台子 Agent |
 | `GET /conversations/:cid/changes` | | `[{path, added, removed, toolCallId}]`（按文件聚合）。基线是该路径第一次 `write`/`edit` 的 `before`，对比工作区里该文件的当前内容。单份 before/after 或当前文件超过 1 MB 时该项带 `error:'文件过大'` |
 | `GET /workspaces/:wid/files?path=` | | `{path, content}`；越界 → 403 `{error:'E_SANDBOX'}` |
@@ -62,10 +61,8 @@
 | `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}`。`POST` 可以不带 `id`：服务端用名称生成唯一 id（ASCII 小写、数字、横线；纯中文等无法生成合法 id 时用 `agent-` 加 6 位随机）。与已有角色或 tombstone 冲突时在后面加 `-2`、`-3`……。调用方仍然可以显式传合法 `id`。响应带生成的 `id`。`GET` 对预设 `default`、`planner`、`coder`、`tester`、`auditor` 带 `builtin:true`、`defaultPrompt`（`roles/<id>.json` 的出厂提示词）和 `defaultTools`。每个角色都带只读 `effectiveModel:{sourceId, model, follow}`。`follow:true` 表示这个角色没有自己的 `settings.models` 绑定，实际用的是默认角色的绑定，或再退到第一个可用来源的第一个模型；没有可用模型时 `sourceId` 和 `model` 为 `null`。响应不含 `model`。库里的 `systemPrompt` 可以和出厂提示词不同。启动时，预设提示词若仍是已知的旧出厂稿且用户没改过，会换成当前模板；改过的保持不动。预设的 `tools` 若仍等于旧模板值则升到新模板（审计从 `read,write,ls,grep` 改为只读 `read,ls,grep`），改过的保留。`description` 为空时补上模板里的说明 |
 | `PUT /roles/:id` | Role | 更新已有角色，按整份角色替换（没传的 `skills` / `pluginTools` 回到缺省）。不存在 404 `{error:'not_found'}`；路径与 body.id 不一致 400 `{errors:['id mismatch']}`。`model` 被忽略 |
 | `POST /roles/:id/reset` | | 把预设的名称、提示词、工具、`description`、`skills`、`pluginTools` 恢复成 `roles/<id>.json`。不改 `settings.models` 里的绑定。不是预设 400 `{error:'not_builtin'}`；角色不存在 404 `{error:'not_found'}` |
-| `DELETE /roles/:id` | | 200 `{ok:true,id}`。五个预设不可删。被流水线引用时仍是 409 `{error:'role_in_use',pipelines:[id]}`；被对话 `roleId` 引用时 409 `{error:'role_in_conversations',conversations:n}`。没有这些引用时，预设返回 409 `{error:'protected'}`。成功删除会写入 catalog tombstone，下次启动不会从 `roles/*.json` 再种回该 id，并删掉 `settings.models` 里这个角色的绑定 |
-| `GET /pipelines` · `POST /pipelines` | Pipeline | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}` |
-| `PUT /pipelines/:id` | Pipeline | 同角色更新。步骤里的 role 必须已存在 |
-| `DELETE /pipelines/:id` | | 200 `{ok:true,id}`。被对话 `pipelineId` 引用 409 `{error:'pipeline_in_use',conversations:n}`。成功删除写入 tombstone，下次启动不会从 `pipelines/*.json` 或 `examples/pipelines/*.json` 再种回该 id |
+| `DELETE /roles/:id` | | 200 `{ok:true,id}`。五个预设不可删。被对话 `roleId` 引用时 409 `{error:'role_in_conversations',conversations:n}`。没有这些引用时，预设返回 409 `{error:'protected'}`。成功删除会写入 catalog tombstone，下次启动不会从 `roles/*.json` 再种回该 id，并删掉 `settings.models` 里这个角色的绑定 |
+| `GET /pipelines` · `POST /pipelines` · `PUT /pipelines/:id` · `DELETE /pipelines/:id` | | 404 `{error:'not found'}`。流水线已删除 |
 status 取值：`idle | running | waiting | failed | done | stopped`。应用库只存最近一次 `submit` 的 `last_submission_id`。状态是 `harness.submission(id).status()`：`queued` / `placed` 为运行中，`done` 为完成，`unanswered` 且 `reason` 为 `aborted` 为已停止，其它 `unanswered` 为失败（`llmError` 来自这条记录的 `reason` / `detail`）。还没有这个指针的对话是空闲。指针指向的提交在 Harness 里找不到时，状态是 `failed`，`llmError` 为 `{code:'E_SUBMISSION_MISSING', message:'找不到这次运行的记录'}`，HTTP 仍是 200。没有 harness id 的旧行不出现在列表里。
 
 ### Git 导入
@@ -94,7 +91,7 @@ status 取值：`idle | running | waiting | failed | done | stopped`。应用库
 - `E_NO_MODEL` 不重试。流超时按 retry 重试，次数用尽后 `failed`。
 
 ## 6. faux 模型脚本
-JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...","tool":"write","args":{...}} | {"tools":[{"tool":"read","args":{...}}]} | {"cut":true} | {"end":true} | {"delayMs":N} ]}`。一个对象是一次模型调用。文字和紧跟的工具调用放在同一个对象里，合成一条助手消息，Harness 自己跑完工具回合。只有文字、没有工具调用时这一轮结束，剩下的对象留给下一条用户消息。`{"cut":true}` 变成可重试的 `terminated` 错误。`{"end":true}` 是结束流水线步骤的空助手消息。回合上的 `usage` 仅在带有数字 token 字段时进入会话用量（例如 `{"text":"ok","usage":{"total_tokens":16400}}`）；没有 `usage` 时作曲栏保持 `—`。
+JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...","tool":"write","args":{...}} | {"tools":[{"tool":"read","args":{...}}]} | {"cut":true} | {"end":true} | {"delayMs":N} ]}`。一个对象是一次模型调用。文字和紧跟的工具调用放在同一个对象里，合成一条助手消息，Harness 自己跑完工具回合。只有文字、没有工具调用时这一轮结束，剩下的对象留给下一条用户消息。`{"cut":true}` 变成可重试的 `terminated` 错误。`{"end":true}` 是空助手消息，占住一轮，让脚本的下一拍留给下一次模型调用。回合上的 `usage` 仅在带有数字 token 字段时进入会话用量（例如 `{"text":"ok","usage":{"total_tokens":16400}}`）；没有 `usage` 时作曲栏保持 `—`。
 
 ## 7. data-testid 约定（E2E）
 | testid | 元素 |
@@ -199,9 +196,9 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...
 
 主 Agent 多两个工具：`delegate`（前台，参数 `{agent, task}`，`agent` 是角色 id）和 `subagent`（后台，`action` 为 `spawn` / `send` / `wait` / `stop` / `list`）。写法照 Pi Durable README「Abort and Subagents」与示例 22（前台）/ 23（后台）：前台子对话由工具任务拥有，重启时 `scanConversations({ ownerTaskId })` 复用，`requestId` 为 `subagent:<taskId>`；后台子对话由 background 锚点任务拥有，答案由 reporter 以 follow-up 送回主对话。没有自写花名册、并发上限或暂停同步。`delegate` 的 `description` 动态列出可用角色的 id、名称和「什么时候用」的描述。子 Agent 按该角色的模型绑定、工具白名单、Skills 和插件工具各自 `configure`，不能再派子 Agent。
 
-`GET /api/conversations/:cid` 的 `agents` 在原有角色 / 流水线芯片之后追加真实子 Agent 实例：`{id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}`。名单从 Harness 读：工具调用的 `details.conversationId`、所有权索引、后台名称文档、子对话 `viewState`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。角色芯片和流水线芯片没有 `mode`。没有子 Agent 时，`agents` 与原来相同。
+`GET /api/conversations/:cid` 的 `agents` 在当前角色芯片之后追加真实子 Agent 实例：`{id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}`。名单从 Harness 读：工具调用的 `details.conversationId`、所有权索引、后台名称文档、子对话 `viewState`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。角色芯片没有 `mode`。没有子 Agent 时，`agents` 只有当前角色那一项。
 
-父对话 SSE 不混入子对话的 `message.delta` / `tool.*`。子 Agent 状态变化时，父对话收到 `agent` 事件，字段与芯片相同，包含 `mode`。角色和流水线的 `agent` 事件仍然不带 `mode`。
+父对话 SSE 不混入子对话的 `message.delta` / `tool.*`。子 Agent 状态变化时，父对话收到 `agent` 事件，字段与芯片相同，包含 `mode`。角色的 `agent` 事件仍然不带 `mode`。
 
 | 方法 路径 | 响应 |
 |---|---|

@@ -24,22 +24,6 @@ function roleName(roleId, role, byId) {
   return roleId || 'Agent';
 }
 
-function groupMessagesByAgent(messages, n) {
-  const groups = Array.from({ length: n }, () => []);
-  let idx = 0;
-  for (const m of messages || []) {
-    if (m?.role === 'user' && typeof m.id === 'string') {
-      const match = m.id.match(/:u:p(\d+)$/);
-      if (match) {
-        const next = Number(match[1]);
-        if (Number.isInteger(next) && next >= 0 && next < n) idx = next;
-      }
-    }
-    if (idx < n) groups[idx].push(m);
-  }
-  return groups;
-}
-
 function statsFromMessages(msgs) {
   let toolCalls = 0;
   let step = 0;
@@ -57,41 +41,28 @@ function statsFromMessages(msgs) {
 }
 
 /**
- * Derive the conversation's agents from persisted conversation / pipeline / messages.
- * No pipeline → a single default/role agent. Pipeline steps become one agent each.
+ * Derive the conversation's main agent from the persisted role and messages.
+ * Extra agents on the conversation are sub-agent instances, not pipeline steps.
  */
-export function buildAgents({ conv, pipeline, role, roles = [], messages = [] } = {}) {
+export function buildAgents({ conv, role, roles = [], messages = [] } = {}) {
   const cid = conv?.id || 'conv';
   const byId = new Map((roles || []).filter((r) => r?.id).map((r) => [r.id, r]));
   if (role?.id) byId.set(role.id, { ...(byId.get(role.id) || {}), ...role });
 
-  const pipeSteps = Array.isArray(pipeline?.steps) ? pipeline.steps : [];
-  const fallbackRoleId = role?.id || conv?.roleId || 'default';
-  const steps = pipeSteps.length ? pipeSteps : [{ role: fallbackRoleId }];
-  const current = pipeSteps.length ? (Number(conv?.pipelineStep) || 0) : 0;
-  const groups = groupMessagesByAgent(messages, steps.length);
-  const convStatus = conv?.status || 'idle';
-
-  return steps.map((s, i) => {
-    const roleId = s?.role || fallbackRoleId;
-    const { toolCalls, step, lastText } = statsFromMessages(groups[i]);
-    let status;
-    if (i < current) status = 'done';
-    else if (i > current) status = 'waiting';
-    else status = mapConvStatusToAgent(convStatus);
-    if (!AGENT_STATUSES.has(status)) status = 'waiting';
-    const totalSteps = step;
-    return {
-      id: `${cid}:agent:${i}`,
-      roleId,
-      name: roleName(roleId, role, byId),
-      status,
-      step,
-      totalSteps,
-      toolCalls,
-      lastText,
-    };
-  });
+  const roleId = role?.id || conv?.roleId || 'default';
+  const { toolCalls, step, lastText } = statsFromMessages(messages);
+  let status = mapConvStatusToAgent(conv?.status || 'idle');
+  if (!AGENT_STATUSES.has(status)) status = 'waiting';
+  return [{
+    id: `${cid}:agent:0`,
+    roleId,
+    name: roleName(roleId, role, byId),
+    status,
+    step,
+    totalSteps: step,
+    toolCalls,
+    lastText,
+  }];
 }
 
 export function agentEventData(agent, status = agent?.status) {
