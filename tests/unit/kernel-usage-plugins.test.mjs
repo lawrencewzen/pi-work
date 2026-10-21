@@ -228,7 +228,6 @@ async function kernelPresented(script, window) {
   const scriptPath = path.join(dataDir, 'faux.json');
   await writeFile(scriptPath, JSON.stringify(script));
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: scriptPath,
     LLM_CONTEXT_WINDOW: window,
@@ -343,7 +342,6 @@ test('importing and toggling a plugin applies on the next request; a running cal
   }));
   const folder = await writeHoldPlugin(srcRoot, 'v1');
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: scriptPath,
     PI_WORK_FAUX_RECORD: record,
@@ -389,7 +387,6 @@ test('replacing a plugin module keeps the running call and serves the new code n
   }));
   const folder = await writeHoldPlugin(srcRoot, 'v1');
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: scriptPath,
   }, dataDir);

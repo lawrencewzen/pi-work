@@ -174,24 +174,6 @@ export function mergeRefreshedMessages(local, serverMessages, { keepStreaming = 
   return dedupeById(merged);
 }
 
-const CLOSE_ON_STATUS = new Set(['done', 'failed', 'stopped', 'idle']);
-
-/** Replay SSE the way the chat thread does. A finished status drops a stream that done did not. */
-export function foldStreamEvents(events) {
-  const messages = [];
-  let status = null;
-  for (const ev of events || []) {
-    const data = ev?.data || {};
-    if (ev?.event === 'message.delta') applyStreamDelta(messages, data);
-    else if (ev?.event === 'message.done') applyMessageDone(messages, data);
-    else if (ev?.event === 'status') {
-      status = data.status || status;
-      if (CLOSE_ON_STATUS.has(status)) dropStreamingResidues(messages);
-    }
-  }
-  return { messages, status };
-}
-
 export function statusKeepsStreaming(status) {
-  return status === 'running' || status === 'recovering';
+  return status === 'running';
 }

@@ -24,8 +24,6 @@ const {
   entryFromTokenResponse,
   interpretDeviceToken,
   assertSafeVerificationUri,
-  toGrokResponsesBody,
-  actionFromGrokResponses,
   grokProxyHeaders,
   selectChatRuntime,
   redactAuthText,
@@ -289,42 +287,6 @@ test('interpretDeviceToken and verification uri helpers', () => {
 });
 
 test('responses body maps tools and proxy headers stay on the subscription model', () => {
-  const body = toGrokResponsesBody([
-    { role: 'system', content: 'be brief' },
-    { role: 'user', content: 'read it' },
-    { role: 'assistant', tool_calls: [{ id: 'c1', function: { name: 'read', arguments: '{"path":"a.txt"}' } }] },
-    { role: 'tool', tool_call_id: 'c1', content: 'hello' },
-  ], [{ type: 'function', function: { name: 'read', description: 'Read', parameters: { type: 'object' } } }], 'grok-build');
-  assert.equal(body.model, 'grok-build');
-  assert.equal(body.instructions, 'be brief');
-  assert.equal(body.input[0].role, 'user');
-  assert.equal(body.input[1].type, 'function_call');
-  assert.equal(body.input[1].name, 'read');
-  assert.equal(body.input[2].type, 'function_call_output');
-  assert.equal(body.input[2].output, 'hello');
-  const emptyOut = toGrokResponsesBody([
-    { role: 'tool', tool_call_id: 'c1', content: '' },
-  ], [], 'grok-build');
-  assert.equal(emptyOut.input[0].output, '(no output)');
-  assert.equal(body.tools[0].name, 'read');
-  assert.equal(JSON.stringify(body).includes('Bearer'), false);
-
-  const text = actionFromGrokResponses({
-    output: [{ type: 'message', content: [{ type: 'output_text', text: 'pong' }] }],
-  });
-  assert.deepEqual(text, { type: 'text', text: 'pong' });
-  const tool = actionFromGrokResponses({
-    output: [{ type: 'function_call', name: 'read', arguments: '{"path":"a.txt"}', call_id: 'c1' }],
-  });
-  assert.equal(tool.type, 'tool');
-  assert.equal(tool.name, 'read');
-  assert.equal(tool.callId, 'c1');
-  assert.deepEqual(tool.args, { path: 'a.txt' });
-  assert.throws(
-    () => actionFromGrokResponses({ output: [], incomplete_details: { reason: 'terminated' } }),
-    (err) => err.code === 'E_STREAM_CUT' && err.message === 'terminated',
-  );
-
   const headers = grokProxyHeaders('test-access-token', 'grok-build', '1.0.50');
   assert.equal(headers.authorization, 'Bearer test-access-token');
   assert.equal(headers['x-xai-token-auth'], 'xai-grok-cli');

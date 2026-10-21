@@ -86,10 +86,10 @@ async function request(base, method, apiPath, body) {
   return { status: res.status, body: text ? JSON.parse(text) : null };
 }
 
-async function openConversation(base) {
+async function openConversation(base, title = 'hi') {
   const ws = await request(base, 'POST', '/api/workspaces', { name: 'bare' });
   assert.equal(ws.status, 201);
-  const conv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'hi' });
+  const conv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title });
   assert.equal(conv.status, 201);
   return conv.body.id;
 }
@@ -110,7 +110,7 @@ test('unconfigured server refuses a turn instead of answering with the faux scri
     assert.equal(settings.status, 200);
     assert.equal(settings.body.runtime, 'none');
 
-    const id = await openConversation(srv.base);
+    const id = await openConversation(srv.base, 'New conversation');
     const sent = await request(srv.base, 'POST', `/api/conversations/${id}/messages`, { text: '你好' });
     assert.equal(sent.status, 202);
 
@@ -121,6 +121,7 @@ test('unconfigured server refuses a turn instead of answering with the faux scri
     assert.equal(done.messages.some((message) => message.role === 'assistant'), false);
     assert.equal(done.messages.some((message) => String(message.text || '').includes('reported usage')), false);
     assert.equal(done.messages.some((message) => message.role === 'user' && message.text === '你好'), true);
+    assert.equal(done.title, '你好');
   } finally {
     await stopProcess(srv.proc);
   }

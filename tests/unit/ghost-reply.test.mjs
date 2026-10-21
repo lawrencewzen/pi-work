@@ -8,8 +8,9 @@ import { parseSSE } from '../../src/core/sse.mjs';
 import {
   applyMessageDone,
   applyStreamDelta,
-  foldStreamEvents,
+  dropStreamingResidues,
   mergeRefreshedMessages,
+  statusKeepsStreaming,
 } from '../../public/stream.js';
 import { ROOT } from './_root.mjs';
 
@@ -231,17 +232,25 @@ test('two generations leave two assistant bubbles and a refresh drops the live f
     ...round('live-2', '8', ['甲、乙', '、', '丙'], '甲、乙、丙'),
     { event: 'status', data: { status: 'done' } },
   ];
-  const folded = foldStreamEvents(events);
-  const assistants = assistantsOf(folded.messages);
+  const messages = [];
+  for (const ev of events) {
+    const data = ev?.data || {};
+    if (ev?.event === 'message.delta') applyStreamDelta(messages, data);
+    else if (ev?.event === 'message.done') applyMessageDone(messages, data);
+    else if (ev?.event === 'status' && (data.status === 'done' || data.status === 'failed' || data.status === 'stopped' || data.status === 'idle')) {
+      dropStreamingResidues(messages);
+    }
+  }
+  const assistants = assistantsOf(messages);
   assert.equal(assistants.length, 2);
   assert.deepEqual(assistants.map((message) => message.text), [
     '这是一个 TypeScript/Node.js 项目，用于开发相关，也用于。',
     '甲、乙、丙',
   ]);
-  assert.equal(folded.messages.some((message) => message.streaming), false);
-  assert.equal(folded.messages.some((message) => String(message.id).startsWith('live')), false);
+  assert.equal(messages.some((message) => message.streaming), false);
+  assert.equal(messages.some((message) => String(message.id).startsWith('live')), false);
 
-  const withGhost = folded.messages.concat([{
+  const withGhost = messages.concat([{
     id: 'live',
     role: 'assistant',
     text: '这是一个 TypeScript',
@@ -280,7 +289,6 @@ test('faux two turns: folded events match the transcript and leave no stream', {
     ],
   }));
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
     PI_WORK_FAUX_TPS: '4',
@@ -311,16 +319,28 @@ test('faux two turns: folded events match the transcript and leave no stream', {
       }
     }
     assert.equal(open.size, 0, JSON.stringify([...open]));
-    const folded = foldStreamEvents(events);
-    const merged = mergeRefreshedMessages(folded.messages, done.messages, {
-      keepStreaming: folded.status === 'running' || folded.status === 'recovering',
+    const replayed = [];
+    let status = null;
+    for (const ev of events) {
+      const data = ev?.data || {};
+      if (ev?.event === 'message.delta') applyStreamDelta(replayed, data);
+      else if (ev?.event === 'message.done') applyMessageDone(replayed, data);
+      else if (ev?.event === 'status') {
+        status = data.status || status;
+        if (status === 'done' || status === 'failed' || status === 'stopped' || status === 'idle') {
+          dropStreamingResidues(replayed);
+        }
+      }
+    }
+    const merged = mergeRefreshedMessages(replayed, done.messages, {
+      keepStreaming: statusKeepsStreaming(status),
     });
     const expected = assistantsOf(done.messages).map((message) => message.text);
     assert.deepEqual(expected, [TEXT_A, TEXT_B]);
     assert.deepEqual(assistantsOf(merged).map((message) => message.text), expected);
     assert.equal(merged.some((message) => message.streaming), false);
     assert.equal(merged.some((message) => message.id === 'live' || String(message.id).startsWith('live-')), false);
-    assert.equal(assistantsOf(folded.messages).map((message) => message.text).join('\n'), expected.join('\n'));
+    assert.equal(assistantsOf(replayed).map((message) => message.text).join('\n'), expected.join('\n'));
   } finally {
     await stopProcess(srv.proc);
     await rm(srv.dataDir, { recursive: true, force: true });

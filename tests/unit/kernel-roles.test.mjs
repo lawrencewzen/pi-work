@@ -247,7 +247,6 @@ test('kernel path: switching role changes the system prompt, skills, and tool li
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-krole-'));
   const record = path.join(dataDir, 'requests.jsonl');
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_TEXT: 'noted',
     PI_WORK_FAUX_RECORD: record,
@@ -330,7 +329,6 @@ test('kernel path: a two-step pipeline matches the legacy handoff', { timeout: 4
   };
 
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_PLAN: JSON.stringify(['plan-done', 'tests-pass', 'plan-done', 'tests-pass']),
   });
@@ -396,7 +394,6 @@ test('kernel path: PATCH while busy is 409 err_role_busy', { timeout: 30000 }, a
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-krole-busy-'));
   const ready = path.join(dataDir, 'hold-ready');
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_HOLD: '1',
     PI_WORK_FAUX_HOLD_READY: ready,
@@ -430,7 +427,6 @@ test('kernel path: killing during a pipeline handoff resumes the next step once'
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-krole-kill-'));
   const ready = path.join(dataDir, 'hold-ready');
   const first = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_PLAN: JSON.stringify(['plan-done', 'hold']),
     PI_WORK_FAUX_HOLD_READY: ready,
@@ -473,7 +469,6 @@ test('kernel path: killing during a pipeline handoff resumes the next step once'
   }
 
   const second = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_PLAN: JSON.stringify(['tests-pass']),
   }, { dataDir });
