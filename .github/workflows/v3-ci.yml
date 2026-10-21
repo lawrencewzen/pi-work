@@ -20,8 +20,6 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      PI_WORK_SHOTS: ${{ runner.temp }}/pi-work-shots
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,7 +28,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - name: Playwright e2e
+        run: |
+          export PI_WORK_SHOTS="${RUNNER_TEMP}/pi-work-shots"
+          mkdir -p "$PI_WORK_SHOTS"
+          npm run test:e2e
+      - name: Stage screenshots
+        if: failure()
+        run: mkdir -p e2e-shots && cp -a "${RUNNER_TEMP}/pi-work-shots/." e2e-shots/ || true
       - name: Upload Playwright report and screenshots
         if: failure()
         uses: actions/upload-artifact@v4
@@ -39,6 +44,6 @@ jobs:
           path: |
             playwright-report/
             test-results/
-            ${{ runner.temp }}/pi-work-shots/
+            e2e-shots/
           if-no-files-found: ignore
           retention-days: 7
