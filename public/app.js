@@ -902,9 +902,9 @@ export function connectSSE(cid) {
         }
         if (data.status && data.status !== 'failed' && state.activeConversationData.llmError) {
           state.activeConversationData.llmError = null;
-          renderChatThread();
         }
         renderStatusBar();
+        renderChatThread();
         renderConversations();
       }
       updateConversationStatus(cid, data.status);
@@ -1168,6 +1168,7 @@ export async function stopConversation() {
     if (state.activeConversationData) {
       state.activeConversationData.status = res.status || 'stopped';
       renderStatusBar();
+      renderChatThread();
     }
   } catch (err) {
     showToast(err.message || 'err_stop');
@@ -1642,7 +1643,8 @@ function renderDemoModelBadge() {
   }
 }
 
-const RUN_BAR_STATUSES = new Set(['running']);
+const SEND_ICON = '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 11.5V2.5M3 6.5l4-4 4 4"></path></svg>';
+const STOP_ICON = '<svg viewBox="0 0 14 14" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"></rect></svg>';
 
 export function renderStatusBar() {
   renderComposerContext();
@@ -1692,8 +1694,6 @@ export function renderStatusBar() {
     else statusTextEl.removeAttribute('title');
   }
 
-  renderRunBar(conv, status);
-
   const projName = document.getElementById('composer-project-name');
   if (projName) projName.textContent = ws?.name || '';
   const projChip = document.getElementById('composer-project-chip');
@@ -1727,17 +1727,28 @@ let runStartedAt = null;
 let runStartedFor = null;
 let runTicker = null;
 
-function renderRunBar(conv, status) {
-  const runBar = document.getElementById('run-bar');
-  if (!runBar) return;
-  const show = Boolean(state.activeConversationId) && RUN_BAR_STATUSES.has(status);
-  runBar.hidden = !show;
+function lastIsStreamingAssistantBody(msgs) {
+  const last = Array.isArray(msgs) ? msgs[msgs.length - 1] : null;
+  if (!last || last.role !== 'assistant') return false;
+  if (last.kind === 'correction' || last.kind === 'handoff') return false;
+  return last.streaming === true && Boolean(String(last.text || '').trim());
+}
 
-  const btnStop = document.getElementById('btn-stop');
-  const canStop = RUN_BAR_STATUSES.has(status);
-  if (btnStop) { btnStop.disabled = !canStop; btnStop.hidden = !canStop; }
+function pendingStatusText(conv, msgs) {
+  const tools = [];
+  for (const m of msgs || []) {
+    if (m?.role === 'tool' && m.tool) tools.push(m.tool);
+  }
+  const summary = summarizeToolGroup(tools, t);
+  let text = summary.running ? summary.text : t('pending_thinking');
+  const live = (conv?.agents || []).filter((ag) => isRealSubagent(ag) && ACTIVE_RUN.has(ag.status)).length;
+  if (live) text = `${text} ${t('pending_subagents', { n: live })}`;
+  return text;
+}
 
-  if (!show) {
+function armRunClock(conv, show) {
+  const running = Boolean(state.activeConversationId) && ACTIVE_RUN.has(conv?.status);
+  if (!running) {
     runStartedAt = null;
     runStartedFor = null;
     if (runTicker) { clearInterval(runTicker); runTicker = null; }
@@ -1749,30 +1760,58 @@ function renderRunBar(conv, status) {
     const ts = Number(last?.createdAt || last?.ts || 0);
     runStartedAt = ts > 0 && ts <= Date.now() ? ts : Date.now();
   }
-  const titleEl = document.getElementById('run-title');
-  if (titleEl) titleEl.textContent = t(`status_${status}`) || status;
-  const stepEl = document.getElementById('run-step');
-  if (stepEl) stepEl.textContent = conv?.currentStep ? t('run_step', { n: conv.currentStep }) : '';
-  const agentsEl = document.getElementById('run-agents');
-  if (agentsEl) {
-    const subs = (conv?.agents || []).filter((ag) => isRealSubagent(ag));
-    const live = subs.filter((ag) => ACTIVE_RUN.has(ag.status)).length;
-    agentsEl.textContent = live ? t('run_subagents', { n: live }) : '';
+  if (!show) {
+    if (runTicker) { clearInterval(runTicker); runTicker = null; }
+    return;
   }
-  const progress = document.querySelector('#run-bar .run-progress');
-  if (progress) progress.classList.toggle('is-indeterminate', true);
-  const tick = () => {
-    const el = document.getElementById('run-elapsed');
-    if (el && runStartedAt) el.textContent = formatElapsed(Date.now() - runStartedAt);
-  };
-  tick();
-  if (!runTicker) runTicker = setInterval(tick, 1000);
+  if (!runTicker) {
+    runTicker = setInterval(() => {
+      const el = document.querySelector('[data-testid="assistant-pending-elapsed"]');
+      if (el && runStartedAt) el.textContent = formatElapsed(Date.now() - runStartedAt);
+    }, 1000);
+  }
+}
+
+function assistantPendingHtml(conv, msgs) {
+  const show = Boolean(state.activeConversationId) && ACTIVE_RUN.has(conv?.status) && !lastIsStreamingAssistantBody(msgs);
+  armRunClock(conv, show);
+  if (!show) return '';
+  return (
+    `<div class="msg-group msg-side-agent is-pending" data-testid="assistant-pending">` +
+    `<div class="pending-line">` +
+    `<span class="run-spin" aria-hidden="true"><span></span></span>` +
+    `<span class="pending-status" data-testid="assistant-pending-status">${escapeHtml(pendingStatusText(conv, msgs))}</span>` +
+    `<span class="pending-elapsed" data-testid="assistant-pending-elapsed">${escapeHtml(formatElapsed(Date.now() - runStartedAt))}</span>` +
+    `</div>` +
+    `</div>`
+  );
 }
 
 function syncSendReady() {
   const input = document.querySelector('[data-testid="chat-input"]');
   const send = document.querySelector('[data-testid="chat-send"]');
-  if (send) send.classList.toggle('is-ready', Boolean(input && !input.disabled && input.value.trim()));
+  if (!send) return;
+  const hasText = Boolean(input && !input.disabled && input.value.trim());
+  const stopMode = ACTIVE_RUN.has(state.activeConversationData?.status) && !hasText && Boolean(state.activeConversationId);
+  if (stopMode) {
+    send.dataset.state = 'stop';
+    send.setAttribute('data-action', 'stop-conversation');
+    send.setAttribute('aria-label', t('btn_stop'));
+    send.setAttribute('title', t('btn_stop_title'));
+    send.setAttribute('data-i18n-aria', 'btn_stop');
+    send.setAttribute('data-i18n-title', 'btn_stop_title');
+    send.innerHTML = STOP_ICON;
+    send.classList.add('is-ready');
+    return;
+  }
+  send.removeAttribute('data-state');
+  send.setAttribute('data-action', 'send-message');
+  send.removeAttribute('aria-label');
+  send.removeAttribute('data-i18n-aria');
+  send.setAttribute('title', t('send_title'));
+  send.setAttribute('data-i18n-title', 'send_title');
+  send.innerHTML = SEND_ICON;
+  send.classList.toggle('is-ready', hasText);
 }
 
 export function renderCenterNotice() {
@@ -1791,7 +1830,7 @@ export function syncComposerLock() {
     input.disabled = noWorkspace;
     input.placeholder = isDraftActive()
       ? t('draft_placeholder')
-      : (RUN_BAR_STATUSES.has(status) ? t('composer_placeholder_running') : t('composer_placeholder'));
+      : (ACTIVE_RUN.has(status) ? t('composer_placeholder_running') : t('composer_placeholder'));
   }
   if (send) send.disabled = noWorkspace;
   const chip = document.getElementById('composer-agent-chip-btn');
@@ -1830,9 +1869,10 @@ function agentsCardHtml(agents) {
 }
 
 /** Messages → HTML blocks. Shared by the main thread and the sub-agent pane. */
-function threadBlocksHtml(msgs, { afterToolRun, senderName } = {}) {
+function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, streamSpin } = {}) {
   const rendered = [];
   const toolRun = [];
+  const last = msgs[msgs.length - 1];
   const flushToolRun = () => {
     if (!toolRun.length) return;
     rendered.push(renderToolGroupHtml(toolRun));
@@ -1873,14 +1913,20 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName } = {}) {
       );
       continue;
     }
+    if (!String(m.text || '').trim()) continue;
+    const roleLabel = senderName || assistantSenderText(m, fallbackRoleId);
     const chip = assistantChip(m);
+    const headerBits = [];
+    if (roleLabel) headerBits.push(`<span class="msg-sender" data-testid="message-sender">${escapeHtml(roleLabel)}</span>`);
+    if (chip && !senderName) headerBits.push(`<span class="msg-chip">${escapeHtml(chip)}</span>`);
+    const header = headerBits.length ? `<div class="msg-header">${headerBits.join('')}</div>` : '';
+    const spin = streamSpin && m === last
+      ? `<span class="msg-stream-spin" data-testid="assistant-stream-spin" aria-hidden="true"></span>`
+      : '';
     rendered.push(
       `<div class="msg-group msg-side-agent" data-testid="message" data-role="assistant">` +
-      `<div class="msg-header">` +
-      `<span class="msg-sender" data-testid="message-sender">${escapeHtml(senderName || assistantLabel(m))}</span>` +
-      (chip && !senderName ? `<span class="msg-chip">${escapeHtml(chip)}</span>` : '') +
-      `</div>` +
-      `<div class="msg-body" data-testid="message-body">${renderMarkdown(m.text || '')}</div>` +
+      header +
+      `<div class="msg-body" data-testid="message-body">${renderMarkdown(m.text || '')}${spin}</div>` +
       `</div>`
     );
   }
@@ -1895,11 +1941,12 @@ export function renderChatThread() {
 
   const conv = state.activeConversationData;
   if (!conv || !conv.messages || conv.messages.length === 0) {
+    const pending = assistantPendingHtml(conv, []);
     const errHtml = llmErrorHtml(conv);
-    thread.innerHTML = errHtml
-      ? `<div class="thread-inner">${errHtml}</div>`
-      : (state.activeConversationId ? `<div class="thread-inner"><div class="thread-empty">${escapeHtml(t('empty_chat_hint'))}</div></div>` : '');
-    if (errHtml) thread.scrollTop = thread.scrollHeight;
+    const inner = [pending, errHtml].filter(Boolean).join('')
+      || (state.activeConversationId ? `<div class="thread-empty">${escapeHtml(t('empty_chat_hint'))}</div>` : '');
+    thread.innerHTML = inner ? `<div class="thread-inner">${inner}</div>` : '';
+    if (pending || errHtml) thread.scrollTop = thread.scrollHeight;
     return;
   }
 
@@ -1909,8 +1956,11 @@ export function renderChatThread() {
   const allAgents = conv.agents || [];
   const realAgents = allAgents.filter((ag) => isRealSubagent(ag));
   let agentsPlaced = false;
+  const streamSpin = lastIsStreamingAssistantBody(msgs);
 
   const rendered = threadBlocksHtml(msgs, {
+    fallbackRoleId: conv.roleId,
+    streamSpin,
     afterToolRun(tools) {
       if (agentsPlaced || !realAgents.length) return '';
       if (!tools.some((tool) => DELEGATE_TOOLS.has(String(tool?.name || '').toLowerCase()))) return '';
@@ -1921,6 +1971,8 @@ export function renderChatThread() {
 
   if (!agentsPlaced && realAgents.length) rendered.push(agentsCardHtml(realAgents));
 
+  const pending = assistantPendingHtml(conv, msgs);
+  if (pending) rendered.push(pending);
   const errHtml = llmErrorHtml(conv);
   if (errHtml) rendered.push(errHtml);
 
@@ -2139,6 +2191,13 @@ function assistantLabel(m) {
     return localizeRoleLabel(role?.id || role?.name || rid);
   }
   return t('ag_group_main');
+}
+
+function assistantSenderText(m, fallbackRoleId) {
+  const rid = m?.roleId || m?.agentId || fallbackRoleId;
+  if (!rid || String(rid).toLowerCase() === 'default') return '';
+  const role = (state.roles || []).find((r) => r.id === rid);
+  return localizeRoleLabel(role?.id || role?.name || rid);
 }
 
 function assistantChip(m) {
@@ -3811,7 +3870,7 @@ function projectMenuItems(wid) {
 async function removeWorkspace(wid) {
   const ws = state.workspaces.find((w) => w.id === wid);
   if (!ws) return;
-  const busy = projectConversations(wid).some((c) => RUN_BAR_STATUSES.has(c.status));
+  const busy = projectConversations(wid).some((c) => ACTIVE_RUN.has(c.status));
   if (busy) {
     showToast('ws_remove_busy');
     return;
@@ -3849,7 +3908,7 @@ async function removeWorkspace(wid) {
 
 function conversationMenuItems(wid, cid) {
   const conv = projectConversations(wid).find((c) => c.id === cid) || {};
-  const running = RUN_BAR_STATUSES.has(conv.status);
+  const running = ACTIVE_RUN.has(conv.status);
   const items = [];
   if (running) {
     items.push({ label: t('btn_stop'), run: async () => { await switchWorkspaceAndConv(wid, cid); stopConversation(); } });
@@ -4046,8 +4105,9 @@ document.addEventListener('click', (e) => {
       if (composer) {
         const val = composer.value.trim();
         if (val) {
-          sendMessage(val);
           composer.value = '';
+          sendMessage(val);
+          syncSendReady();
         }
       }
       break;
@@ -4274,7 +4334,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   applyChromeLabels();
   startRelativeTimeTicker();
   const composer = document.querySelector('[data-testid="chat-input"]');
-  const sendBtn = document.querySelector('[data-testid="chat-send"]');
 
   if (composer) {
     composer.addEventListener('input', syncSendReady);
@@ -4283,21 +4342,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         e.preventDefault();
         const val = composer.value.trim();
         if (val) {
-          sendMessage(val);
           composer.value = '';
+          sendMessage(val);
           syncSendReady();
-        }
-      }
-    });
-  }
-
-  if (sendBtn) {
-    sendBtn.addEventListener('click', () => {
-      if (composer) {
-        const val = composer.value.trim();
-        if (val) {
-          sendMessage(val);
-          composer.value = '';
         }
       }
     });

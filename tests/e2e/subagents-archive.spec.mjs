@@ -69,7 +69,7 @@ async function assertNarrowWorkbench(page) {
     return {
       center: box('.col-center').width,
       right: box('[data-testid=right-panel]').width,
-      stop: box('[data-testid=btn-stop]').height,
+      send: box('[data-testid=chat-send]').height,
       agent: box('[data-testid=composer-agent]').height,
       context: box('.chip-runtime-meta').height,
     };
@@ -79,7 +79,7 @@ async function assertNarrowWorkbench(page) {
   // Below 1180px the right panel floats over the chat instead of squeezing it.
   const floating = await page.evaluate(() => getComputedStyle(document.querySelector('[data-testid=right-panel]')).position === 'absolute');
   if (!floating) expect(measured.right).toBeLessThanOrEqual(340);
-  for (const key of ['stop', 'agent', 'context']) {
+  for (const key of ['send', 'agent', 'context']) {
     expect(measured[key], key).toBeLessThanOrEqual(32);
   }
 }
@@ -162,8 +162,8 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(background.getByTestId('subagent-background')).toHaveText('后台');
     await expect(foreground.locator('.status-dot')).toBeVisible();
     await expect(page.getByTestId('message').filter({ hasText: '主对话已汇总。' })).toBeVisible({ timeout: 20000 });
-    const mainSender = page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-sender]').first();
-    await expect(mainSender).toHaveText('主 Agent');
+    await expect(page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-sender]')).toHaveCount(0);
+    await expect(page.locator('#center-thread')).not.toContainText('主 Agent');
     await expect(page.locator('body')).not.toContainText('sk-scout-test');
     await shot(page, 'sidebar-subagents-light-1440');
 
@@ -182,7 +182,7 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await switchLanguage(page, 'en');
     await expect(page.locator('.agent-pane-tag')).toHaveText('Sub-agent');
     await expect(page.getByTestId('subagent-back')).toHaveAttribute('aria-label', 'Back to main chat');
-    await expect(mainSender).toHaveText('Main agent');
+    await expect(page.locator('#center-thread')).not.toContainText('Main agent');
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await expect(background.getByTestId('subagent-background')).toHaveText('Background');
     await switchLanguage(page, 'zh');
@@ -200,9 +200,9 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
 
     await page.setViewportSize({ width: 1000, height: 760 });
     await assertNarrowWorkbench(page);
-    await expect(page.getByTestId('btn-stop')).toHaveAttribute('aria-label', '终止');
-    await expect(page.getByTestId('btn-stop')).toHaveAttribute('title', '终止这次运行');
-    await expect(page.locator('[data-testid=btn-stop] .btn-ctrl-label')).toBeHidden();
+    await expect(page.getByTestId('run-bar')).toHaveCount(0);
+    await expect(page.getByTestId('btn-stop')).toHaveCount(0);
+    await expect(page.getByTestId('chat-send')).toBeVisible();
     await shot(page, 'sidebar-subagents-light-1000');
     await foreground.click();
     await expect(page.getByTestId('subagent-banner')).toBeVisible();
