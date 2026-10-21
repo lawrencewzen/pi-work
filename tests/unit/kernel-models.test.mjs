@@ -123,7 +123,6 @@ function childEnv(dataDir, extra = {}) {
     PI_WORK_DATA_DIR: dataDir,
     PI_WORK_TOKEN: TOKEN,
     PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_GROK_CLIENT_VERSION: '1.0.50',
     PI_WORK_RETRY_BASE_MS: '20',
     PI_WORK_RETRY_MAX: '5',
@@ -365,22 +364,6 @@ test('kernel models call each source, refresh Grok once, and hide keys', { timeo
     assert.equal(accepted.grokModel, 'grok-build');
     assert.equal(accepted.tokenAuth, 'xai-grok-cli');
     assert.equal(grokFake.seen.filter((hit) => hit.path.endsWith('/oauth2/token')).length, 1);
-
-    const report = {
-      default: defaultFake.seen.map((hit) => ({ method: hit.method, path: hit.path, keyTail: hit.keyTail })),
-      coder: coderFake.seen.map((hit) => ({ method: hit.method, path: hit.path, keyTail: hit.keyTail })),
-      grok: grokFake.seen.map((hit) => ({
-        method: hit.method,
-        path: hit.path,
-        tokenGen: hit.tokenGen,
-        grokIdentifier: hit.grokIdentifier,
-        grokVersion: hit.grokVersion,
-        grokModel: hit.grokModel,
-        tokenAuth: hit.tokenAuth,
-      })),
-      refreshes: grokFake.refreshCount(),
-    };
-    console.log(`KERNEL_MODELS_REQUESTS ${JSON.stringify(report)}`);
 
     assert.equal((await request(base, 'DELETE', `/api/sources/${createdCoder.body.id}`)).status, 200);
     assert.equal((await request(base, 'DELETE', `/api/sources/${createdDefault.body.id}`)).status, 200);

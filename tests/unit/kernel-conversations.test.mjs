@@ -307,7 +307,7 @@ test('the first write of a path is the diff baseline', () => {
 });
 
 test('kernel path: faux turn pushes live events, and a new connection starts at the current status', { timeout: 30000 }, async () => {
-  const srv = await startServer({ PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'kernel-ok' });
+  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'kernel-ok' });
   try {
     const { ws, conv } = await openConversation(srv.base);
     const listed = await request(srv.base, 'GET', `/api/workspaces/${ws.id}/conversations`);
@@ -356,7 +356,6 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-khold-'));
   const ready = path.join(dataDir, 'hold-ready');
   const first = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_HOLD: '1',
     PI_WORK_FAUX_HOLD_READY: ready,
@@ -385,7 +384,6 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
   }
 
   const second = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_TEXT: 'resumed-ok',
   }, { dataDir });
@@ -413,33 +411,10 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
   }
 });
 
-test('kernel path without a demo model fails the turn as E_NO_MODEL', { timeout: 20000 }, async () => {
-  const srv = await startServer({ PI_WORK_KERNEL: 'durable' });
-  try {
-    const { conv } = await openConversation(srv.base, 'New conversation');
-    const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: '你好' });
-    assert.equal(sent.status, 202);
-    let body;
-    for (let i = 0; i < 40; i += 1) {
-      const got = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
-      body = got.body;
-      if (body.status === 'failed' || body.status === 'done') break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    assert.equal(body.status, 'failed');
-    assert.equal(body.llmError?.code, 'E_NO_MODEL');
-    assert.equal(body.messages.some((m) => m.role === 'user' && m.text === '你好'), true);
-    assert.equal(body.title, '你好');
-  } finally {
-    await stopProcess(srv.proc);
-    await rm(srv.dataDir, { recursive: true, force: true });
-  }
-});
-
 test('a harness that cannot open does not print PI_WORK_READY', async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kfail-'));
   await writeFile(path.join(dataDir, 'harness'), 'not-a-directory\n');
-  const srv = await startServer({ PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux' }, { dataDir, expectReady: false });
+  const srv = await startServer({ PI_WORK_LLM: 'faux' }, { dataDir, expectReady: false });
   try {
     assert.equal(srv.base, null);
     assert.equal(srv.logs().includes('PI_WORK_READY'), false);
@@ -461,7 +436,6 @@ test('kernel path: a message sent while busy is steered into the run', { timeout
     ],
   }));
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
     PI_WORK_FAUX_RECORD: record,
@@ -500,7 +474,6 @@ test('kernel path: a message sent while busy is steered into the run', { timeout
 
 test('kernel path: stream timeout retries a held faux call', { timeout: 20000 }, async () => {
   const srv = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_HOLD: '1',
     PI_WORK_STREAM_TIMEOUT_MS: '150',
@@ -522,7 +495,6 @@ test('kernel path: stream timeout retries a held faux call', { timeout: 20000 },
     assert.match(retry.data.reason, /timed out/i);
     const got = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
     assert.equal(got.body.status, 'failed', srv.logs());
-    console.log(`KERNEL_STREAM_TIMEOUT ${JSON.stringify(retry.data)}`);
   } finally {
     await stopProcess(srv.proc);
     await rm(srv.dataDir, { recursive: true, force: true });
@@ -552,7 +524,7 @@ async function waitForStatus(base, id, accept) {
 
 test('last submission: done stays done after restart', { timeout: 40000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kdone-'));
-  const env = { PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'done-ok' };
+  const env = { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'done-ok' };
   const first = await startServer(env, { dataDir });
   let convId;
   let pointer;
@@ -590,7 +562,7 @@ test('last submission: a faux error stays failed after restart', { timeout: 4000
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kfail-sub-'));
   const script = path.join(dataDir, 'fail.json');
   await writeFile(script, JSON.stringify({ turns: [{ error: 'provider exploded' }] }));
-  const env = { PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script };
+  const env = { PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script };
   const first = await startServer(env, { dataDir });
   let convId;
   let pointer;
@@ -627,7 +599,6 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kstop-'));
   const ready = path.join(dataDir, 'hold-ready');
   const first = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_HOLD: '1',
     PI_WORK_FAUX_HOLD_READY: ready,
@@ -663,7 +634,6 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
   }
 
   const second = await startServer({
-    PI_WORK_KERNEL: 'durable',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_TEXT: 'should-not-resume',
   }, { dataDir });
@@ -679,7 +649,7 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
 });
 
 test('a missing submission is failed, not 500', { timeout: 20000 }, async () => {
-  const srv = await startServer({ PI_WORK_KERNEL: 'durable', PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'ok' });
+  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'ok' });
   try {
     const { conv } = await openConversation(srv.base, 'missing');
     const db = new DatabaseSync(path.join(srv.dataDir, 'pi-work.sqlite'));

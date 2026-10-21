@@ -93,26 +93,10 @@ export async function openKernel({ dataDir, models, registry, settings } = {}) {
           if (openSlot === slot) openSlot = null;
         }
       },
-      async submit({ conversation, content, requestId, model } = {}) {
-        if (typeof requestId !== 'string' || requestId.length === 0) throw new Error('requestId is required');
-        if (content === undefined) throw new Error('content is required');
-        const target = conversation ?? await createOwnerless(harness, model);
-        const submission = await target.submit({ type: 'input', content, requestId }, context);
-        const settled = await submission.wait(context);
-        return { conversation: target, submission, settled };
-      },
     };
   } catch (error) {
     if (openSlot === slot) openSlot = null;
     if (storage) await storage.close(context).catch(() => {});
     throw error;
   }
-}
-
-async function createOwnerless(harness, model) {
-  if (!model?.provider || !model?.modelId) throw new Error('model { provider, modelId } is required');
-  return harness.createConversation({
-    ownership: { kind: 'ownerless' },
-    agent: { model },
-  }, context);
 }

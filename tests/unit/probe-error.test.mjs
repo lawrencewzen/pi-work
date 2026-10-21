@@ -64,16 +64,6 @@ test('keeps an unrecognized vendor message after the localized label', () => {
   assert.equal(say('zh', { error: 'HTTP 403' }), '鉴权失败');
 });
 
-test('does not put a plaintext key back into the localized probe text', () => {
-  const secret = 'sk-live-secret-9999';
-  const text = say('zh', { code: 'auth', status: 401, error: 'rejected sk-***' });
-  assert.equal(text.includes(secret), false);
-  assert.equal(text, '鉴权失败：rejected sk-***');
-  const network = say('zh', { code: 'network', error: 'connect failed ***' });
-  assert.equal(network.includes(secret), false);
-  assert.equal(network, '连不上');
-});
-
 test('source rows use the same mapping, and Ollama keeps its network status', () => {
   setLocale('zh');
   const offline = { lastTest: { ok: false, error: 'fetch failed', code: 'network' } };

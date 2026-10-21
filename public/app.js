@@ -1072,7 +1072,7 @@ export function connectSSE(cid) {
           const item = state.conversations.find((c) => c.id === cid);
           if (item) item.title = data.title;
         }
-        if (data.status && data.status !== 'failed' && data.status !== 'recovering' && state.activeConversationData.llmError) {
+        if (data.status && data.status !== 'failed' && state.activeConversationData.llmError) {
           state.activeConversationData.llmError = null;
           renderChatThread();
         }
