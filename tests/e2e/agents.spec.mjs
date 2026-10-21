@@ -202,7 +202,7 @@ test('restores a preset, keeps its model, and hides delete on built-ins', async 
   expect(restored.systemPrompt).not.toContain('临时改动 WF');
 });
 
-test('refuses to delete a custom agent that a pipeline or conversation uses', async ({ page }) => {
+test('refuses to delete a custom agent that a conversation uses', async ({ page }) => {
   page.on('dialog', async (dialog) => {
     throw new Error(`native dialog should not open: ${dialog.message()}`);
   });
@@ -216,12 +216,13 @@ test('refuses to delete a custom agent that a pipeline or conversation uses', as
   }, token);
   expect(created.status).toBe(201);
   expect(created.body.id).toMatch(/^agent-/);
-  const pipe = await api(srv.url, 'POST', '/pipelines', {
-    id: 'review',
-    name: '复核检查',
-    steps: [{ role: created.body.id, input: 'user' }],
+  const ws = await api(srv.url, 'POST', '/workspaces', { name: '复核区' }, token);
+  expect(ws.status).toBe(201);
+  const conv = await api(srv.url, 'POST', `/workspaces/${ws.body.id}/conversations`, {
+    title: '用复核',
+    roleId: created.body.id,
   }, token);
-  expect(pipe.status).toBe(201);
+  expect(conv.status).toBe(201);
 
   await openSettings(page);
   await openAgents(page);
@@ -234,22 +235,6 @@ test('refuses to delete a custom agent that a pipeline or conversation uses', as
   await expect(dialog).toHaveAttribute('data-danger', 'true');
   await expect(dialog.getByTestId('confirm-message')).toHaveText('删除这个 Agent「复核」？');
   await dialog.getByTestId('confirm-ok').click();
-  await expect(page.locator('.toast-msg')).toContainText('这个 Agent 正在被流水线使用：复核检查');
-  await expect(page.locator(`[data-testid=agent-item][data-role-id="${created.body.id}"]`)).toBeVisible();
-
-  const removed = await api(srv.url, 'DELETE', '/pipelines/review', null, token);
-  expect(removed.status).toBe(200);
-  const ws = await api(srv.url, 'POST', '/workspaces', { name: '复核区' }, token);
-  expect(ws.status).toBe(201);
-  const conv = await api(srv.url, 'POST', `/workspaces/${ws.body.id}/conversations`, {
-    title: '用复核',
-    roleId: created.body.id,
-  }, token);
-  expect(conv.status).toBe(201);
-
-  await page.getByTestId('agent-delete').click();
-  await expect(page.getByTestId('confirm-dialog')).toBeVisible();
-  await page.getByTestId('confirm-ok').click();
   await expect(page.locator('.toast-msg')).toContainText('已有对话在使用这个 Agent');
   await expect(page.locator(`[data-testid=agent-item][data-role-id="${created.body.id}"]`)).toBeVisible();
 
@@ -317,7 +302,7 @@ test('saves a searched skill subset and can turn plugin tools off', async ({ pag
   expect(planner.systemPrompt).toBe(plannerBefore.systemPrompt);
 });
 
-test('model page keeps only the default row and workflow has no role cards', async ({ page }) => {
+test('model page keeps only the default row', async ({ page }) => {
   await openSettings(page);
   await page.locator('[data-tab=models]').click();
   await expect(page.getByTestId('models-page')).toBeVisible();
@@ -325,19 +310,10 @@ test('model page keeps only the default row and workflow has no role cards', asy
   await expect(page.locator('[data-testid=model-role]')).toHaveAttribute('data-role-id', 'default');
   await expect(page.getByText('默认模型', { exact: true })).toBeVisible();
   await expect(page.getByTestId('model-agents-link')).toHaveText('Agent 页');
-  await expect(page.locator('#wf-role-model, [data-testid=workflow-role-model], [data-testid=workflow-role-card]')).toHaveCount(0);
   await page.getByTestId('model-agents-link').click();
   await expect(page.getByTestId('agents-page')).toBeVisible();
   await expect(page.locator('.sm-nav div.on')).toHaveAttribute('data-tab', 'agents');
-
-  await page.getByTestId('settings-tab-workflow').click();
-  await expect(page.locator('[data-testid=workflow-role-card]')).toHaveCount(0);
-  await expect(page.getByTestId('workflow-section-roles')).toHaveCount(0);
-  await expect(page.getByTestId('workflow-role-id')).toHaveCount(0);
-  await expect(page.locator('#wf-role-model')).toHaveCount(0);
-  await expect(page.locator('[data-testid=workflow-pipeline-card][data-id=feature]')).toContainText('功能交付');
-  await expect(page.locator('[data-testid=workflow-pipeline-card][data-id=demo]')).toContainText('演示');
-  await expect(page.getByRole('button', { name: '去 Agent 页新建' })).toHaveCount(0);
+  await expect(page.getByTestId('settings-tab-workflow')).toHaveCount(0);
 });
 
 test('skills pop stays inside the settings modal at 1440x900', async ({ page }) => {

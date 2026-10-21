@@ -1,7 +1,6 @@
 // Settings → Agent. Sub-agent models, tools, skills, and prompts live here.
 // The default model binding is edited on the Models page and on the main agent.
 
-import { roleTitle } from './workflow-settings.js';
 import {
   AGENT_DRAFT_ROLE,
   ensureRoleBindings,
@@ -12,6 +11,21 @@ import {
   closeModelPop,
   noteSettingsReloaded,
 } from './model-settings.js';
+
+const CANONICAL_ROLE_NAMES = {
+  coder: 'Coder',
+  tester: 'Tester',
+  auditor: 'Auditor',
+  default: 'Default',
+  planner: 'Planner',
+};
+
+function roleTitle(role, ctx) {
+  if (!role) return ctx.t('agent_name');
+  const canonical = CANONICAL_ROLE_NAMES[role.id];
+  if (canonical && role.name === canonical) return ctx.localizeRoleLabel(role.id);
+  return role.name || ctx.localizeRoleLabel(role.id || '');
+}
 
 const TOOL_ORDER = ['read', 'write', 'edit', 'ls', 'grep', 'bash'];
 const PRESET_ORDER = ['planner', 'coder', 'tester', 'auditor'];
@@ -737,7 +751,6 @@ async function reloadCatalog(ctx) {
   ctx.state.roles = roles;
   ctx.state.settings = settings;
   noteSettingsReloaded(ctx.state);
-  try { ctx.state.pipelines = await ctx.api('/api/pipelines'); } catch { /* keep */ }
   try { ctx.state.skills = await ctx.api('/api/skills'); } catch { /* keep */ }
   try { ctx.state.plugins = await ctx.api('/api/plugins'); } catch { /* keep */ }
 }
@@ -758,13 +771,6 @@ function deleteError(err, ctx) {
   const body = err?.body || {};
   if (body.error === 'protected') return ctx.t('ag_err_protected');
   if (body.error === 'role_in_conversations') return ctx.t('ag_err_in_conversations');
-  if (body.error === 'role_in_use') {
-    const names = (body.pipelines || []).map((id) => {
-      const pipe = (ctx.state.pipelines || []).find((item) => item.id === id);
-      return pipe?.name || id;
-    });
-    return ctx.t('ag_err_in_use', { names: names.join(ctx.t('ag_field_sep')) });
-  }
   return ctx.t('ag_err_delete');
 }
 

@@ -133,15 +133,13 @@ test('a role template model prefers a source that lists it', () => {
   }), 'from-template');
 });
 
-test('pipeline step selects that role model', () => {
-  const conv = { roleId: null, pipelineId: 'demo', pipelineStep: 1 };
-  const pipelines = [{ id: 'demo', steps: [{ role: 'coder' }, { role: 'tester' }] }];
-  const target = activeDispatchTarget({ conv, roles, pipelines });
+test('conversation role selects that role model', () => {
+  const conv = { roleId: 'tester' };
+  const target = activeDispatchTarget({ conv, roles });
   assert.equal(target.roleId, 'tester');
   const view = composerAgentPresentation({
     conv,
     roles,
-    pipelines,
     models: { tester: { sourceId: 'ds', model: 'deepseek-reasoner' }, default: { sourceId: 'grok', model: 'grok-build' } },
     sources: [grok, deepseek],
     grokSignedIn: true,

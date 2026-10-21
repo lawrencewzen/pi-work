@@ -143,20 +143,13 @@ export function needsFreshKey({ previousUrl = '', nextUrl = '', apiKey = '', mas
   return isMaskedOrEmptyKey(apiKey, maskedKey);
 }
 
-/** Role that the next (or current pipeline) step will dispatch. */
-export function activeDispatchTarget({ conv, roles, pipelines } = {}) {
+/** Role that the next turn will dispatch. */
+export function activeDispatchTarget({ conv, roles } = {}) {
   const list = Array.isArray(roles) ? roles : [];
-  if (!conv) return { roleId: '', pipelineId: '', role: null };
-  let roleId = trimmed(conv.roleId);
-  const pipelineId = trimmed(conv.pipelineId);
-  if (pipelineId) {
-    const pipe = (Array.isArray(pipelines) ? pipelines : []).find((p) => p && p.id === pipelineId);
-    const idx = Number(conv.pipelineStep) || 0;
-    const step = pipe?.steps?.[idx] || pipe?.steps?.[0];
-    if (step?.role) roleId = String(step.role);
-  }
+  if (!conv) return { roleId: '', role: null };
+  const roleId = trimmed(conv.roleId);
   const role = list.find((r) => r && r.id === roleId) || null;
-  return { roleId, pipelineId, role };
+  return { roleId, role };
 }
 
 /** Visible chip text: `编码 · grok-build`, or `Agent · grok-build` for the default role. */
@@ -173,14 +166,13 @@ export function composerAgentText({ agentName = 'Agent', model = '', roleLabel =
 export function composerAgentPresentation({
   conv,
   roles,
-  pipelines,
   models,
   sources,
   grokSignedIn = false,
   agentName = 'Agent',
   roleLabel = '',
 } = {}) {
-  const target = activeDispatchTarget({ conv, roles, pipelines });
+  const target = activeDispatchTarget({ conv, roles });
   const model = resolveDispatchModel({
     role: target.role,
     roleId: target.roleId,
@@ -192,6 +184,5 @@ export function composerAgentPresentation({
     text: composerAgentText({ agentName, model, roleLabel }),
     model,
     roleId: target.roleId,
-    pipelineId: target.pipelineId,
   };
 }

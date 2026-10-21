@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { startServer } from './helpers/server.mjs';
 import { login } from './helpers/ui.mjs';
 
-const TABS = ['general', 'models', 'git', 'agents', 'plugins', 'skills', 'workflow', 'about'];
+const TABS = ['general', 'models', 'git', 'agents', 'plugins', 'skills', 'about'];
 
 let srv;
 

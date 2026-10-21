@@ -68,7 +68,6 @@
 - bash 工具结果出现后，树里有 `qa-file-bash.txt`。本步或本轮完成时它也在。
 - 预览正文含 `QA-LIVE-1`。磁盘上两个文件的内容分别是 `QA-LIVE-1` 和 `QA-LIVE-BASH`。
 - 从 Diff 回到「文件」后，树里仍是这两个文件，不是打开页签时的旧列表。
-- 流水线同样如此。测试步用 write、edit 或 bash 落下的文件（例如 `test_pipeline_confirmation.py`、`test_minimal_hello.py`）在该工具结果到达时、以及该步完成时就出现在树里，不必等到整条流水线结束。
 
 ## FL-5 无实际变更不进 Diff 列表
 
@@ -87,11 +86,11 @@
 
 ### 步骤
 
-1. 新建对话，发送：`在工作区创建 test_pipeline_confirmation.py，正文只有一行 print("ok")。不要改其他文件。`
+1. 新建对话，发送：`在工作区创建 test_long_filename_confirmation.py，正文只有一行 print("ok")。不要改其他文件。`
 2. 等到完成。点右侧「文件」。
-3. 在左侧文件列表里找到 `test_pipeline_confirmation.py`，把鼠标停在文件名上。
+3. 在左侧文件列表里找到 `test_long_filename_confirmation.py`，把鼠标停在文件名上。
 
 ### 预期
 
 - 文件名在列宽内以省略号截断，不溢出到预览区，也不把列表撑出横向滚动。
-- 悬停时提示（title）是完整文件名 `test_pipeline_confirmation.py`。
+- 悬停时提示（title）是完整文件名 `test_long_filename_confirmation.py`。
