@@ -1,90 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { ROOT } from './_root.mjs';
+import { request as serverRequest, startServer, stopServer } from './_server.mjs';
 
 const TOKEN = 'unit-no-model-token';
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-];
-
-function childEnv(dataDir, authFile, extra = {}) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_TOKEN: TOKEN,
-    PI_WORK_GROK_AUTH: authFile,
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '5',
-    ...extra,
-  };
-}
-
-async function startServer(extra = {}) {
-  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-nomodel-'));
-  const authFile = path.join(dataDir, 'auth.json');
-  await fs.writeFile(authFile, '{}\n', { mode: 0o600 });
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, authFile, extra),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 15000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited ${code}:\n${log}`));
-    });
-  });
-  proc.removeAllListeners('exit');
-  return { proc, base, dataDir };
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => proc.kill('SIGKILL'), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
-
-async function request(base, method, apiPath, body) {
-  const res = await fetch(base + apiPath, {
-    method,
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null };
-}
+const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
 
 async function openConversation(base, title = 'hi') {
   const ws = await request(base, 'POST', '/api/workspaces', { name: 'bare' });
@@ -104,7 +25,7 @@ async function waitFinished(base, id) {
 }
 
 test('unconfigured server refuses a turn instead of answering with the faux script', async () => {
-  const srv = await startServer();
+  const srv = await startServer({ token: TOKEN });
   try {
     const settings = await request(srv.base, 'GET', '/api/settings');
     assert.equal(settings.status, 200);
@@ -123,13 +44,13 @@ test('unconfigured server refuses a turn instead of answering with the faux scri
     assert.equal(done.messages.some((message) => message.role === 'user' && message.text === '你好'), true);
     assert.equal(done.title, '你好');
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
   }
 });
 
 test('an explicit faux script still answers and is marked as the demo runtime', async () => {
   const script = path.join(ROOT, 'tests/fixtures/usage.json');
-  const srv = await startServer({ PI_WORK_FAUX_SCRIPT: script });
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_FAUX_SCRIPT: script } });
   try {
     const settings = await request(srv.base, 'GET', '/api/settings');
     assert.equal(settings.body.runtime, 'faux');
@@ -140,12 +61,12 @@ test('an explicit faux script still answers and is marked as the demo runtime', 
     assert.equal(done.status, 'done');
     assert.equal(done.messages.some((message) => message.role === 'assistant' && message.text === 'reported usage'), true);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
   }
 });
 
 test('LLM_API=faux opts into the demo runtime without loading a user-facing script', async () => {
-  const srv = await startServer({ LLM_API: 'faux' });
+  const srv = await startServer({ token: TOKEN, env: { LLM_API: 'faux' } });
   try {
     const settings = await request(srv.base, 'GET', '/api/settings');
     assert.equal(settings.body.runtime, 'faux');
@@ -156,6 +77,6 @@ test('LLM_API=faux opts into the demo runtime without loading a user-facing scri
     assert.equal(done.messages.some((message) => message.role === 'assistant'), false);
     assert.equal(done.messages.some((message) => String(message.text || '').includes('reported usage')), false);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
   }
 });

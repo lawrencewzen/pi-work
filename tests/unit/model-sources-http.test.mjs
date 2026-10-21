@@ -1,91 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
-import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { ROOT } from './_root.mjs';
+import { request as serverRequest, startServer, stopServer } from './_server.mjs';
 
 const TOKEN = 'unit-model-sources-token';
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-];
-
-function childEnv(dataDir, authFile) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_TOKEN: TOKEN,
-    PI_WORK_GROK_AUTH: authFile,
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '2',
-  };
-}
-
-async function startServer() {
-  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-sources-'));
-  const authFile = path.join(dataDir, 'auth.json');
-  await fs.writeFile(authFile, '{}\n', { mode: 0o600 });
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, authFile),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 15000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited ${code}:\n${log}`));
-    });
-  });
-  proc.removeAllListeners('exit');
-  return { proc, base, dataDir };
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => proc.kill('SIGKILL'), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
-
-async function request(base, method, apiPath, body) {
-  const res = await fetch(base + apiPath, {
-    method,
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null, text };
-}
+const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
 
 function chatCompletionSse(text) {
   const chunk = (delta, finish) => JSON.stringify({
@@ -178,7 +99,7 @@ function chatHits(fake) {
 
 test('default and coder turns hit their own sources with their own keys', async () => {
   const [alpha, beta] = await Promise.all([startFake('alpha'), startFake('beta')]);
-  const srv = await startServer();
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
   try {
     const sourceA = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -234,14 +155,14 @@ test('default and coder turns hit their own sources with their own keys', async 
     assert.equal(JSON.parse(chatHits(beta)[0].body).model, 'beta');
     assert.equal(chatHits(alpha).length, 1);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await Promise.all([alpha.close(), beta.close()]);
   }
 });
 
 test('settings ignore legacy fields and source tests keep unsaved origin rules', async () => {
   const [alpha, beta] = await Promise.all([startFake('alpha'), startFake('beta')]);
-  const srv = await startServer();
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
   try {
     const created = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -310,14 +231,14 @@ test('settings ignore legacy fields and source tests keep unsaved origin rules',
     const authHit = alpha.hits.find((hit) => hit.url.endsWith('/models') && hit.authorization === 'Bearer key-alpha-secret');
     assert.ok(authHit);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await Promise.all([alpha.close(), beta.close()]);
   }
 });
 
 test('a legacy settings row is migrated once and the old key is not kept at the top level', async () => {
-  const srv = await startServer();
-  await stopProcess(srv.proc);
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  await stopServer(srv);
   writeSettings(srv.dataDir, {
     provider: 'openai',
     baseUrl: 'https://api.openai.com/v1',
@@ -326,35 +247,14 @@ test('a legacy settings row is migrated once and the old key is not kept at the 
     language: 'en',
   });
 
-  const authFile = path.join(srv.dataDir, 'auth.json');
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(srv.dataDir, authFile),
-    stdio: ['ignore', 'pipe', 'pipe'],
+  const restarted = await startServer({
+    token: TOKEN,
+    dataDir: srv.dataDir,
+    env: { PI_WORK_RETRY_MAX: '2' },
+    authJson: false,
   });
-  let log = '';
-  let base;
   try {
-    base = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 15000);
-      const onData = (buf) => {
-        log += buf;
-        const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-        if (match) {
-          clearTimeout(timer);
-          resolve(match[1]);
-        }
-      };
-      proc.stdout.on('data', onData);
-      proc.stderr.on('data', onData);
-      proc.once('exit', (code) => {
-        clearTimeout(timer);
-        reject(new Error(`server exited ${code}:\n${log}`));
-      });
-    });
-    proc.removeAllListeners('exit');
-
-    const settings = await request(base, 'GET', '/api/settings');
+    const settings = await request(restarted.base, 'GET', '/api/settings');
     assert.equal(settings.status, 200);
     assert.equal(settings.body.provider, undefined);
     assert.equal(settings.body.baseUrl, undefined);
@@ -372,13 +272,13 @@ test('a legacy settings row is migrated once and the old key is not kept at the 
     assert.equal(row.baseUrl, undefined);
     assert.equal(row.sources[0].apiKey, 'sk-legacy-secret-value');
   } finally {
-    await stopProcess(proc);
+    await stopServer(restarted);
   }
 });
 
 test('an untouched legacy preset does not create a source or keep string models', async () => {
-  const srv = await startServer();
-  await stopProcess(srv.proc);
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  await stopServer(srv);
   writeSettings(srv.dataDir, {
     provider: 'openai',
     baseUrl: '',
@@ -386,33 +286,14 @@ test('an untouched legacy preset does not create a source or keep string models'
     models: { default: 'gpt-4o-leftover' },
     language: 'zh',
   });
-  const authFile = path.join(srv.dataDir, 'auth.json');
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(srv.dataDir, authFile),
-    stdio: ['ignore', 'pipe', 'pipe'],
+  const restarted = await startServer({
+    token: TOKEN,
+    dataDir: srv.dataDir,
+    env: { PI_WORK_RETRY_MAX: '2' },
+    authJson: false,
   });
-  let log = '';
   try {
-    const base = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 15000);
-      const onData = (buf) => {
-        log += buf;
-        const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-        if (match) {
-          clearTimeout(timer);
-          resolve(match[1]);
-        }
-      };
-      proc.stdout.on('data', onData);
-      proc.stderr.on('data', onData);
-      proc.once('exit', (code) => {
-        clearTimeout(timer);
-        reject(new Error(`server exited ${code}:\n${log}`));
-      });
-    });
-    proc.removeAllListeners('exit');
-    const settings = await request(base, 'GET', '/api/settings');
+    const settings = await request(restarted.base, 'GET', '/api/settings');
     assert.equal(settings.status, 200);
     assert.deepEqual(settings.body.sources, []);
     assert.deepEqual(settings.body.models, {});
@@ -421,7 +302,7 @@ test('an untouched legacy preset does not create a source or keep string models'
     assert.equal(JSON.stringify(row).includes('gpt-4o-leftover'), false);
     assert.equal(row.apiKey, undefined);
   } finally {
-    await stopProcess(proc);
+    await stopServer(restarted);
   }
 });
 
@@ -434,7 +315,7 @@ test('POST /api/sources/test keeps the redacted error and stores a probe code', 
   const baseUrl = await new Promise((resolve) => {
     fake.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${fake.address().port}/v1`));
   });
-  const srv = await startServer();
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
   try {
     const created = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -460,7 +341,7 @@ test('POST /api/sources/test keeps the redacted error and stores a probe code', 
     assert.equal(stored.catalog, undefined);
     assert.equal(JSON.stringify(settings.body).includes(secret), false);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await new Promise((resolve) => fake.close(resolve));
   }
 });
@@ -483,7 +364,7 @@ function modelsServer(ids) {
 test('POST /api/sources/test enables fetched models when none are enabled, and keeps every name already enabled', async () => {
   const emptyUpstream = await modelsServer(['deepseek-chat', 'deepseek-reasoner']);
   const keptUpstream = await modelsServer(['new-one', 'keep-me']);
-  const srv = await startServer();
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
   try {
     const empty = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -528,7 +409,7 @@ test('POST /api/sources/test enables fetched models when none are enabled, and k
     const untouched = afterOverride.body.sources.find((source) => source.id === empty.body.id);
     assert.deepEqual(untouched.models, ['deepseek-chat', 'deepseek-reasoner']);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await emptyUpstream.close();
     await keptUpstream.close();
   }

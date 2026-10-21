@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import http from 'node:http';
@@ -7,26 +6,10 @@ import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSSE } from '../../src/core/sse.mjs';
-import { ROOT } from './_root.mjs';
+import { killChild, request as serverRequest, startServer, stopServer } from './_server.mjs';
 
 const TOKEN = 'unit-kernel-subagents-token';
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_TEXT',
-  'PI_WORK_FAUX_PLAN',
-  'PI_WORK_FAUX_RECORD',
-  'PI_WORK_FAUX_HOLD',
-  'PI_WORK_FAUX_HOLD_READY',
-  'PI_WORK_KERNEL',
-  'PI_WORK_MAX_SUBAGENTS',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-];
+const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
 
 const SCOUT = {
   id: 'scout',
@@ -37,42 +20,6 @@ const SCOUT = {
   pluginTools: false,
   skills: ['commit-message'],
 };
-
-function childEnv(dataDir, extra = {}) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_TOKEN: TOKEN,
-    PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '2',
-    ...extra,
-  };
-}
-
-function killChild(child) {
-  if (!child || child.exitCode != null || child.signalCode != null) return;
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    return;
-  }
-  child.kill('SIGKILL');
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (!proc || proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => killChild(proc), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
 
 function killed(proc) {
   return new Promise((resolve) => {
@@ -87,50 +34,6 @@ function killed(proc) {
     proc.once('exit', (code, signal) => resolve({ code, signal, out }));
     killChild(proc);
   });
-}
-
-async function startServer(extra = {}, { dataDir, expectReady = true } = {}) {
-  dataDir ??= await mkdtemp(path.join(tmpdir(), 'piw-ksub-'));
-  await writeFile(path.join(dataDir, 'auth.json'), '{}\n');
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, extra),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      killChild(proc);
-      reject(new Error(`server not ready:\n${log}`));
-    }, 20000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match && expectReady) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      if (expectReady) reject(new Error(`server exited ${code}:\n${log}`));
-      else resolve(null);
-    });
-  });
-  if (expectReady) proc.removeAllListeners('exit');
-  return { proc, base, dataDir, logs: () => log };
-}
-
-async function request(base, method, apiPath, body) {
-  const res = await fetch(base + apiPath, {
-    method,
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null, text };
 }
 
 function parseChunk(part) {
@@ -349,7 +252,10 @@ async function bindScout(base, fake) {
 }
 
 test('subagent messages 404 for an unknown conversation or agent', { timeout: 30000 }, async () => {
-  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'still-here' });
+  const srv = await startServer({
+    token: TOKEN,
+    env: { PI_WORK_RETRY_MAX: '2', PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'still-here' },
+  });
   try {
     const missing = await request(srv.base, 'GET', '/api/conversations/none/agents/none/messages');
     assert.equal(missing.status, 404);
@@ -367,7 +273,7 @@ test('subagent messages 404 for an unknown conversation or agent', { timeout: 30
     assert.equal(done.status, 'done');
     assert.equal(subagentsOf(done).length, 0);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(srv.dataDir, { recursive: true, force: true });
   }
 });
@@ -383,10 +289,15 @@ test('foreground delegate returns the child answer and lists roles in its descri
   let proc = null;
   try {
     const srv = await startServer({
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-      PI_WORK_FAUX_RECORD: record,
-    }, { dataDir });
+      token: TOKEN,
+      dataDir,
+      env: {
+        PI_WORK_RETRY_MAX: '2',
+        PI_WORK_LLM: 'faux',
+        PI_WORK_FAUX_SCRIPT: script,
+        PI_WORK_FAUX_RECORD: record,
+      },
+    });
     proc = srv.proc;
     await bindScout(srv.base, fake);
     const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'fg' });
@@ -443,7 +354,7 @@ test('foreground delegate returns the child answer and lists roles in its descri
       assert.equal(ev.data.mode, undefined);
     }
   } finally {
-    if (proc) await stopProcess(proc);
+    await stopServer(proc);
     await fake.close();
     await rm(dataDir, { recursive: true, force: true });
   }
@@ -459,9 +370,14 @@ test('background spawn reports the answer back to the main conversation', { time
   let proc = null;
   try {
     const srv = await startServer({
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-    }, { dataDir });
+      token: TOKEN,
+      dataDir,
+      env: {
+        PI_WORK_RETRY_MAX: '2',
+        PI_WORK_LLM: 'faux',
+        PI_WORK_FAUX_SCRIPT: script,
+      },
+    });
     proc = srv.proc;
     await bindScout(srv.base, fake);
     const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'bg' });
@@ -490,7 +406,7 @@ test('background spawn reports the answer back to the main conversation', { time
     const agentEvent = events.find((ev) => ev.event === 'agent' && ev.data?.id === scout.id);
     assert.equal(agentEvent?.data?.mode, 'background');
   } finally {
-    if (proc) await stopProcess(proc);
+    await stopServer(proc);
     await fake.close();
     await rm(dataDir, { recursive: true, force: true });
   }
@@ -508,9 +424,14 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
   let proc = null;
   try {
     const srv = await startServer({
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-    }, { dataDir });
+      token: TOKEN,
+      dataDir,
+      env: {
+        PI_WORK_RETRY_MAX: '2',
+        PI_WORK_LLM: 'faux',
+        PI_WORK_FAUX_SCRIPT: script,
+      },
+    });
     proc = srv.proc;
     await bindScout(srv.base, fake);
     const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'stop' });
@@ -539,7 +460,7 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
     assert.equal(messages.status, 200);
     assert.equal(messages.body.messages.some((message) => message.text === 'SHOULD_NOT_FINISH'), false);
   } finally {
-    if (proc) await stopProcess(proc);
+    await stopServer(proc);
     await fake.close();
     await rm(dataDir, { recursive: true, force: true });
   }
@@ -555,12 +476,13 @@ test('a killed foreground subagent resumes the same child without a second submi
   ]);
   const fake = await startScoutModel({ text: 'RESUMED_CHILD', readyPath: ready, releasePath: release });
   const env = {
+    PI_WORK_RETRY_MAX: '2',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
   };
   let proc = null;
   try {
-    const first = await startServer(env, { dataDir });
+    const first = await startServer({ token: TOKEN, env, dataDir });
     proc = first.proc;
     await bindScout(first.base, fake);
     const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'recover' });
@@ -570,7 +492,7 @@ test('a killed foreground subagent resumes the same child without a second submi
     const death = await killed(proc);
     proc = null;
     assert.ok(death.signal === 'SIGKILL' || death.code !== 0 || process.platform === 'win32');
-    const second = await startServer(env, { dataDir });
+    const second = await startServer({ token: TOKEN, env, dataDir });
     proc = second.proc;
     await writeFile(release, 'go');
     const done = await waitFor(second.base, conv.body.id, (body) => (
@@ -591,7 +513,7 @@ test('a killed foreground subagent resumes the same child without a second submi
     const calls = fake.seen.filter((hit) => hit.path.endsWith('/chat/completions')).length;
     assert.ok(calls >= 1 && calls <= 3, `child model calls ${calls}`);
   } finally {
-    if (proc) await stopProcess(proc);
+    await stopServer(proc);
     await fake.close();
     await rm(dataDir, { recursive: true, force: true });
   }
@@ -607,12 +529,13 @@ test('a background subagent continues after restart and reports once', { timeout
   ]);
   const fake = await startScoutModel({ text: 'BG_ANSWER', readyPath: ready, releasePath: release });
   const env = {
+    PI_WORK_RETRY_MAX: '2',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
   };
   let proc = null;
   try {
-    const first = await startServer(env, { dataDir });
+    const first = await startServer({ token: TOKEN, env, dataDir });
     proc = first.proc;
     await bindScout(first.base, fake);
     const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'bgrecover' });
@@ -626,7 +549,7 @@ test('a background subagent continues after restart and reports once', { timeout
     const death = await killed(proc);
     proc = null;
     assert.ok(death.signal === 'SIGKILL' || death.code !== 0 || process.platform === 'win32');
-    const second = await startServer(env, { dataDir });
+    const second = await startServer({ token: TOKEN, env, dataDir });
     proc = second.proc;
     await writeFile(release, 'go');
     const reported = await waitFor(second.base, conv.body.id, (body) => (
@@ -636,16 +559,16 @@ test('a background subagent continues after restart and reports once', { timeout
     const reports = (reported.messages || []).filter((message) => String(message.text || '').includes('BG_ANSWER'));
     assert.equal(reports.length, 1, `${second.logs()}\n${JSON.stringify(reported?.messages)}`);
     assert.match(reports[0].text, /\[subagent bg answered, no reply needed] BG_ANSWER/);
-    await stopProcess(proc);
+    await stopServer(proc);
     proc = null;
-    const third = await startServer(env, { dataDir });
+    const third = await startServer({ token: TOKEN, env, dataDir });
     proc = third.proc;
     await new Promise((resolve) => setTimeout(resolve, 1500));
     const again = await request(third.base, 'GET', `/api/conversations/${conv.body.id}`);
     const againReports = (again.body.messages || []).filter((message) => String(message.text || '').includes('BG_ANSWER'));
     assert.equal(againReports.length, 1, JSON.stringify(again.body.messages));
   } finally {
-    if (proc) await stopProcess(proc);
+    await stopServer(proc);
     await fake.close();
     await rm(dataDir, { recursive: true, force: true });
   }
@@ -661,6 +584,7 @@ test('a killed foreground subagent writes the file once after restart', { timeou
     { when: 'WRITE_ONCE', text: 'child-wrote' },
   ]);
   const env = {
+    PI_WORK_RETRY_MAX: '2',
     PI_WORK_LLM: 'faux',
     PI_WORK_FAUX_SCRIPT: script,
     PI_WORK_FAUX_HOLD_READY: ready,
@@ -669,7 +593,7 @@ test('a killed foreground subagent writes the file once after restart', { timeou
   let wsPath;
   let convId;
   try {
-    const first = await startServer(env, { dataDir });
+    const first = await startServer({ token: TOKEN, env, dataDir });
     proc = first.proc;
     const ws = await request(first.base, 'POST', '/api/workspaces', { name: 'write-child' });
     assert.equal(ws.status, 201, JSON.stringify(ws.body));
@@ -683,7 +607,7 @@ test('a killed foreground subagent writes the file once after restart', { timeou
     proc = null;
     assert.ok(death.signal === 'SIGKILL' || death.code !== 0 || process.platform === 'win32');
     await rm(ready, { force: true });
-    const second = await startServer(env, { dataDir });
+    const second = await startServer({ token: TOKEN, env, dataDir });
     proc = second.proc;
     const done = await waitFor(second.base, convId, (body) => (
       body.status === 'done' && assistantTexts(body).includes('parent-done')
@@ -698,7 +622,7 @@ test('a killed foreground subagent writes the file once after restart', { timeou
     const writes = (messages.body.messages || []).filter((message) => message.role === 'tool' && message.tool?.name === 'write');
     assert.equal(writes.length, 1, JSON.stringify(messages.body.messages));
   } finally {
-    if (proc) await stopProcess(proc);
+    await stopServer(proc);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
