@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,108 +8,13 @@ import { createMapContext, mapHarnessBatch } from '../../src/kernel/events.mjs';
 import { fauxTurnFromScript } from '../../src/kernel/faux-script.mjs';
 import { applyStampedUsage, latestCallUsage } from '../../src/kernel/usage.mjs';
 import { ROOT } from './_root.mjs';
+import { request as serverRequest, startServer, stopServer } from './_server.mjs';
 
 const TOKEN = 'unit-kernel-usage-token';
 const EM = '—';
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_TEXT',
-  'PI_WORK_FAUX_PLAN',
-  'PI_WORK_FAUX_RECORD',
-  'PI_WORK_FAUX_HOLD',
-  'PI_WORK_FAUX_HOLD_READY',
-  'PI_WORK_KERNEL',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'LLM_CONTEXT_WINDOW',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-];
-
 const FIRST = { prompt_tokens: 1000, completion_tokens: 10, total_tokens: 1010 };
 const SECOND = { prompt_tokens: 1500, completion_tokens: 20, total_tokens: 1520 };
-
-function childEnv(dataDir, extra = {}) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_TOKEN: TOKEN,
-    PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '5',
-    ...extra,
-  };
-}
-
-function killChild(child) {
-  if (child.exitCode != null || child.signalCode != null) return;
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    return;
-  }
-  child.kill('SIGKILL');
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => killChild(proc), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
-
-async function startServer(extra = {}, dataDir) {
-  dataDir ??= await mkdtemp(path.join(tmpdir(), 'piw-kuse-'));
-  await writeFile(path.join(dataDir, 'auth.json'), '{}\n');
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, extra),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      killChild(proc);
-      reject(new Error(`server not ready:\n${log}`));
-    }, 20000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited ${code}:\n${log}`));
-    });
-  });
-  proc.removeAllListeners('exit');
-  return { proc, base, dataDir, logs: () => log };
-}
-
-async function request(base, method, apiPath, body) {
-  const res = await fetch(base + apiPath, {
-    method,
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null };
-}
+const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
 
 async function openConversation(base) {
   const ws = await request(base, 'POST', '/api/workspaces', { name: 'usage' });
@@ -228,10 +132,14 @@ async function kernelPresented(script, window) {
   const scriptPath = path.join(dataDir, 'faux.json');
   await writeFile(scriptPath, JSON.stringify(script));
   const srv = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: scriptPath,
-    LLM_CONTEXT_WINDOW: window,
-  }, dataDir);
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_SCRIPT: scriptPath,
+      LLM_CONTEXT_WINDOW: window,
+    },
+  });
   try {
     const conv = await openConversation(srv.base);
     const bodies = [];
@@ -246,7 +154,7 @@ async function kernelPresented(script, window) {
     }
     return bodies;
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(dataDir, { recursive: true, force: true });
   }
 }
@@ -342,10 +250,14 @@ test('importing and toggling a plugin applies on the next request; a running cal
   }));
   const folder = await writeHoldPlugin(srcRoot, 'v1');
   const srv = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: scriptPath,
-    PI_WORK_FAUX_RECORD: record,
-  }, dataDir);
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_SCRIPT: scriptPath,
+      PI_WORK_FAUX_RECORD: record,
+    },
+  });
   try {
     const conv = await openConversation(srv.base);
     const imported = await request(srv.base, 'POST', '/api/plugins', { path: folder });
@@ -366,7 +278,7 @@ test('importing and toggling a plugin applies on the next request; a running cal
     assert.equal(toolNames(calls[0]).includes('hold'), true);
     assert.equal(toolNames(calls[calls.length - 1]).includes('hold'), false);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(dataDir, { recursive: true, force: true });
     await rm(srcRoot, { recursive: true, force: true });
   }
@@ -387,9 +299,13 @@ test('replacing a plugin module keeps the running call and serves the new code n
   }));
   const folder = await writeHoldPlugin(srcRoot, 'v1');
   const srv = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: scriptPath,
-  }, dataDir);
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_SCRIPT: scriptPath,
+    },
+  });
   try {
     const conv = await openConversation(srv.base);
     const imported = await request(srv.base, 'POST', '/api/plugins', { path: folder });
@@ -406,7 +322,7 @@ test('replacing a plugin module keeps the running call and serves the new code n
     const outputs = (done.messages || []).filter((msg) => msg.role === 'tool').map((msg) => msg.text);
     assert.deepEqual(outputs, ['v1', 'v2']);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(dataDir, { recursive: true, force: true });
     await rm(srcRoot, { recursive: true, force: true });
   }

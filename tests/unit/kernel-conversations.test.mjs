@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,103 +13,10 @@ import {
   messagesFromEntries,
   statusFromSubmission,
 } from '../../src/kernel/events.mjs';
-import { ROOT } from './_root.mjs';
+import { killChild, request as serverRequest, startServer, stopServer } from './_server.mjs';
 
 const TOKEN = 'unit-kernel-conv-token';
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_TEXT',
-  'PI_WORK_FAUX_HOLD',
-  'PI_WORK_FAUX_HOLD_READY',
-  'PI_WORK_KERNEL',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-];
-
-function childEnv(dataDir, extra = {}) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_TOKEN: TOKEN,
-    PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '5',
-    ...extra,
-  };
-}
-
-function killChild(child) {
-  if (child.exitCode != null || child.signalCode != null) return;
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    return;
-  }
-  child.kill('SIGKILL');
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => killChild(proc), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
-
-async function startServer(extra = {}, { dataDir, expectReady = true } = {}) {
-  dataDir ??= await mkdtemp(path.join(tmpdir(), 'piw-kconv-'));
-  await writeFile(path.join(dataDir, 'auth.json'), '{}\n');
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, extra),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      killChild(proc);
-      reject(new Error(`server not ready:\n${log}`));
-    }, 20000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match && expectReady) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      if (expectReady) reject(new Error(`server exited ${code}:\n${log}`));
-      else resolve(null);
-    });
-  });
-  if (expectReady) proc.removeAllListeners('exit');
-  return { proc, base, dataDir, logs: () => log };
-}
-
-async function request(base, method, apiPath, body) {
-  const res = await fetch(base + apiPath, {
-    method,
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null };
-}
+const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
 
 function parseChunk(part) {
   return parseSSE(`${part}\n\n`).filter((ev) => ev.event);
@@ -307,7 +213,7 @@ test('the first write of a path is the diff baseline', () => {
 });
 
 test('kernel path: faux turn pushes live events, and a new connection starts at the current status', { timeout: 30000 }, async () => {
-  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'kernel-ok' });
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'kernel-ok' } });
   try {
     const { ws, conv } = await openConversation(srv.base);
     const listed = await request(srv.base, 'GET', `/api/workspaces/${ws.id}/conversations`);
@@ -347,7 +253,7 @@ test('kernel path: faux turn pushes live events, and a new connection starts at 
     assert.equal(got.body.messages.some((m) => m.role === 'assistant' && m.text === 'kernel-ok'), true);
     assert.equal(got.body.contextLabel.includes('/'), true);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(srv.dataDir, { recursive: true, force: true });
   }
 });
@@ -356,10 +262,14 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-khold-'));
   const ready = path.join(dataDir, 'hold-ready');
   const first = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_HOLD: '1',
-    PI_WORK_FAUX_HOLD_READY: ready,
-  }, { dataDir });
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_HOLD: '1',
+      PI_WORK_FAUX_HOLD_READY: ready,
+    },
+  });
   let convId;
   try {
     const opened = await openConversation(first.base, 'hold');
@@ -384,9 +294,13 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
   }
 
   const second = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_TEXT: 'resumed-ok',
-  }, { dataDir });
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_TEXT: 'resumed-ok',
+    },
+  });
   try {
     let body;
     for (let i = 0; i < 40; i += 1) {
@@ -406,7 +320,7 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
     assert.equal(statuses.includes('recovering'), false);
     assert.equal(statuses.includes('done'), true);
   } finally {
-    await stopProcess(second.proc);
+    await stopServer(second);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
@@ -414,13 +328,13 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
 test('a harness that cannot open does not print PI_WORK_READY', async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kfail-'));
   await writeFile(path.join(dataDir, 'harness'), 'not-a-directory\n');
-  const srv = await startServer({ PI_WORK_LLM: 'faux' }, { dataDir, expectReady: false });
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux' }, dataDir, expectReady: false });
   try {
     assert.equal(srv.base, null);
     assert.equal(srv.logs().includes('PI_WORK_READY'), false);
     assert.match(srv.logs(), /PI_WORK_KERNEL_OPEN_FAILED/);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
@@ -436,10 +350,14 @@ test('kernel path: a message sent while busy is steered into the run', { timeout
     ],
   }));
   const srv = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
-    PI_WORK_FAUX_RECORD: record,
-  }, { dataDir });
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_SCRIPT: script,
+      PI_WORK_FAUX_RECORD: record,
+    },
+  });
   try {
     const { conv } = await openConversation(srv.base, 'steer');
     const events = collectSse(srv.base, conv.id, {
@@ -467,18 +385,21 @@ test('kernel path: a message sent while busy is steered into the run', { timeout
     const lines = (await readFile(record, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
     assert.equal(lines.some((row) => (row.users || []).includes('please-steer')), true, JSON.stringify(lines));
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
 
 test('kernel path: stream timeout retries a held faux call', { timeout: 20000 }, async () => {
   const srv = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_HOLD: '1',
-    PI_WORK_STREAM_TIMEOUT_MS: '150',
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '3',
+    token: TOKEN,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_HOLD: '1',
+      PI_WORK_STREAM_TIMEOUT_MS: '150',
+      PI_WORK_RETRY_BASE_MS: '20',
+      PI_WORK_RETRY_MAX: '3',
+    },
   });
   try {
     const { conv } = await openConversation(srv.base, 'timeout');
@@ -496,7 +417,7 @@ test('kernel path: stream timeout retries a held faux call', { timeout: 20000 },
     const got = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
     assert.equal(got.body.status, 'failed', srv.logs());
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(srv.dataDir, { recursive: true, force: true });
   }
 });
@@ -525,7 +446,7 @@ async function waitForStatus(base, id, accept) {
 test('last submission: done stays done after restart', { timeout: 40000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kdone-'));
   const env = { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'done-ok' };
-  const first = await startServer(env, { dataDir });
+  const first = await startServer({ token: TOKEN, env, dataDir });
   let convId;
   let pointer;
   try {
@@ -546,14 +467,14 @@ test('last submission: done stays done after restart', { timeout: 40000 }, async
     await new Promise((resolve) => first.proc.once('exit', resolve));
   }
 
-  const second = await startServer(env, { dataDir });
+  const second = await startServer({ token: TOKEN, env, dataDir });
   try {
     const got = await request(second.base, 'GET', `/api/conversations/${convId}`);
     assert.equal(got.body.status, 'done', second.logs());
     assert.equal(got.body.messages.some((message) => message.role === 'assistant' && message.text === 'done-ok'), true);
     assert.equal(appPointer(dataDir, convId), pointer);
   } finally {
-    await stopProcess(second.proc);
+    await stopServer(second);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
@@ -563,7 +484,7 @@ test('last submission: a faux error stays failed after restart', { timeout: 4000
   const script = path.join(dataDir, 'fail.json');
   await writeFile(script, JSON.stringify({ turns: [{ error: 'provider exploded' }] }));
   const env = { PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script };
-  const first = await startServer(env, { dataDir });
+  const first = await startServer({ token: TOKEN, env, dataDir });
   let convId;
   let pointer;
   try {
@@ -582,7 +503,7 @@ test('last submission: a faux error stays failed after restart', { timeout: 4000
     await new Promise((resolve) => first.proc.once('exit', resolve));
   }
 
-  const second = await startServer(env, { dataDir });
+  const second = await startServer({ token: TOKEN, env, dataDir });
   try {
     const got = await request(second.base, 'GET', `/api/conversations/${convId}`);
     assert.equal(got.body.status, 'failed', second.logs());
@@ -590,7 +511,7 @@ test('last submission: a faux error stays failed after restart', { timeout: 4000
     assert.match(got.body.llmError?.message || '', /provider exploded/);
     assert.equal(appPointer(dataDir, convId), pointer);
   } finally {
-    await stopProcess(second.proc);
+    await stopServer(second);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
@@ -599,10 +520,14 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kstop-'));
   const ready = path.join(dataDir, 'hold-ready');
   const first = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_HOLD: '1',
-    PI_WORK_FAUX_HOLD_READY: ready,
-  }, { dataDir });
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_HOLD: '1',
+      PI_WORK_FAUX_HOLD_READY: ready,
+    },
+  });
   let convId;
   let pointer;
   try {
@@ -634,22 +559,26 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
   }
 
   const second = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_TEXT: 'should-not-resume',
-  }, { dataDir });
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_TEXT: 'should-not-resume',
+    },
+  });
   try {
     const got = await request(second.base, 'GET', `/api/conversations/${convId}`);
     assert.equal(got.body.status, 'stopped', second.logs());
     assert.equal(got.body.messages.some((message) => message.text === 'should-not-resume'), false);
     assert.equal(appPointer(dataDir, convId), pointer);
   } finally {
-    await stopProcess(second.proc);
+    await stopServer(second);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
 
 test('a missing submission is failed, not 500', { timeout: 20000 }, async () => {
-  const srv = await startServer({ PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'ok' });
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'ok' } });
   try {
     const { conv } = await openConversation(srv.base, 'missing');
     const db = new DatabaseSync(path.join(srv.dataDir, 'pi-work.sqlite'));
@@ -668,7 +597,7 @@ test('a missing submission is failed, not 500', { timeout: 20000 }, async () => 
     assert.equal(events[0].event, 'status');
     assert.equal(events[0].data.status, 'failed');
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(srv.dataDir, { recursive: true, force: true });
   }
 });

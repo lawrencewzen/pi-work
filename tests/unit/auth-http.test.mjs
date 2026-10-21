@@ -1,89 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ROOT } from './_root.mjs';
 import { resolveAuthToken, unauthenticatedHostsWarning } from '../../src/core/auth.mjs';
+import { startServer, stopServer } from './_server.mjs';
 
 const TOKEN = 'unit-optional-auth-token';
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_TEXT',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-  'PI_WORK_TOKEN',
-  'PI_WORK_ALLOWED_HOSTS',
-];
-
-function childEnv(dataDir, extra = {}) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_GROK_AUTH: path.join(dataDir, 'grok-auth.json'),
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '5',
-    ...extra,
-  };
-}
-
-async function startServer(extra = {}, { dataDir } = {}) {
-  dataDir ??= await fs.mkdtemp(path.join(os.tmpdir(), 'piw-auth-'));
-  await fs.writeFile(path.join(dataDir, 'grok-auth.json'), '{}\n', { mode: 0o600 });
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, extra),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 20000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited ${code}:\n${log}`));
-    });
-  });
-  proc.removeAllListeners('exit');
-  return {
-    proc,
-    base,
-    dataDir,
-    port: Number(new URL(base).port),
-    logs: () => log,
-  };
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => proc.kill('SIGKILL'), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
 
 function raw({ port, method = 'GET', path: reqPath = '/', headers = {}, body }) {
   return new Promise((resolve, reject) => {
@@ -167,13 +91,13 @@ test('acceptance 1: fresh data dir serves /api without credentials and does not 
     });
     assert.equal(created.status, 201);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
   }
 
   const plantedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-auth-plant-'));
   const planted = 'planted-file-token\n';
   await fs.writeFile(path.join(plantedDir, 'auth.token'), planted, { mode: 0o600 });
-  const again = await startServer({}, { dataDir: plantedDir });
+  const again = await startServer({ dataDir: plantedDir });
   try {
     const settings = await raw({ port: again.port, path: '/api/settings' });
     assert.equal(settings.status, 200);
@@ -181,14 +105,14 @@ test('acceptance 1: fresh data dir serves /api without credentials and does not 
     assert.doesNotMatch(again.logs(), /PI_WORK_LOGIN/);
     assert.doesNotMatch(again.logs(), /planted-file-token/);
   } finally {
-    await stopProcess(again.proc);
+    await stopServer(again);
   }
 });
 
 test('acceptance 2: PI_WORK_TOKEN keeps 401, cookie login, and SSE tickets', async () => {
   const srv = await startServer({
-    PI_WORK_TOKEN: TOKEN,
-    PI_WORK_ALLOWED_HOSTS: 'lab.example',
+    token: TOKEN,
+    env: { PI_WORK_ALLOWED_HOSTS: 'lab.example' },
   });
   try {
     const open = await raw({ port: srv.port, path: '/api/settings' });
@@ -261,7 +185,7 @@ test('acceptance 2: PI_WORK_TOKEN keeps 401, cookie login, and SSE tickets', asy
     assert.doesNotMatch(log, new RegExp(TOKEN));
     await assert.rejects(fs.access(path.join(srv.dataDir, 'auth.token')), (err) => err.code === 'ENOENT');
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
   }
 });
 
@@ -302,12 +226,12 @@ test('acceptance 3: Host, Origin, and Content-Type guards stay on without a toke
     assert.equal(plain.json?.error, 'unsupported media type');
     assertSecurityHeaders(plain.headers);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
   }
 });
 
 test('acceptance 4: PI_WORK_ALLOWED_HOSTS without a token prints a warning', async () => {
-  const srv = await startServer({ PI_WORK_ALLOWED_HOSTS: 'lab.example,other.internal' });
+  const srv = await startServer({ env: { PI_WORK_ALLOWED_HOSTS: 'lab.example,other.internal' } });
   try {
     const settings = await raw({ port: srv.port, path: '/api/settings' });
     assert.equal(settings.status, 200);
@@ -317,6 +241,6 @@ test('acceptance 4: PI_WORK_ALLOWED_HOSTS without a token prints a warning', asy
     assert.doesNotMatch(log, /PI_WORK_LOGIN/);
     assert.doesNotMatch(log, /PI_WORK_TOKEN/);
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
   }
 });

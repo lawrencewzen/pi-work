@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,6 +10,7 @@ import { createSqliteStore } from '../../src/store/sqlite.mjs';
 import { createKernelModels, explicitDemo, providerIdForSource } from '../../src/kernel/models.mjs';
 import { startFakeModel } from './kernel-models-fake.mjs';
 import { ROOT } from './_root.mjs';
+import { request as serverRequest, startServer, stopServer } from './_server.mjs';
 
 const TOKEN = 'unit-kernel-models-token';
 const KEY_DEFAULT = 'sk-default-secret-1111';
@@ -19,24 +19,7 @@ const KEY_CODER = 'sk-coder-secret-2222';
 const ACCESS_1 = 'access-1';
 const REFRESH_1 = 'refresh-1';
 const SECRETS = [KEY_DEFAULT, KEY_DEFAULT_NEXT, KEY_CODER, REFRESH_1];
-
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_TEXT',
-  'PI_WORK_FAUX_HOLD',
-  'PI_WORK_FAUX_HOLD_READY',
-  'PI_WORK_KERNEL',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-  'PI_WORK_GROK_PROXY',
-  'PI_WORK_GROK_CLIENT_VERSION',
-  'PI_WORK_TEST_GROK_TOKEN_URL',
-];
+const HOOK = pathToFileURL(path.join(ROOT, 'tests/unit/kernel-models-token-hook.mjs')).href;
 
 test('explicit demo is only the three switches', () => {
   assert.equal(explicitDemo({}), false);
@@ -113,43 +96,6 @@ test('role routing follows bindings and refreshes providers when a source change
   assert.equal(models.getModel(main.provider, main.modelId), undefined);
 });
 
-function childEnv(dataDir, extra = {}) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_TOKEN: TOKEN,
-    PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
-    PI_WORK_GROK_CLIENT_VERSION: '1.0.50',
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '5',
-    ...extra,
-  };
-}
-
-function killChild(child) {
-  if (child.exitCode != null || child.signalCode != null) return;
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    return;
-  }
-  child.kill('SIGKILL');
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => killChild(proc), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
-
 function scrub(text) {
   let out = String(text ?? '');
   for (const secret of SECRETS) {
@@ -166,14 +112,9 @@ function assertClean(text, label) {
 }
 
 async function request(base, method, apiPath, body) {
-  const res = await fetch(base + apiPath, {
-    method,
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  assertClean(text, `${method} ${apiPath}`);
-  return { status: res.status, body: text ? JSON.parse(text) : null, text };
+  const res = await serverRequest(base, method, apiPath, body, TOKEN);
+  assertClean(res.text, `${method} ${apiPath}`);
+  return res;
 }
 
 async function seedGrok(dataDir) {
@@ -208,38 +149,6 @@ async function seedGrok(dataDir) {
   db.close();
 }
 
-async function startServer(dataDir, extra) {
-  const hook = pathToFileURL(path.join(ROOT, 'tests/unit/kernel-models-token-hook.mjs')).href;
-  const proc = spawn(process.execPath, ['--import', hook, 'server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, extra),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      killChild(proc);
-      reject(new Error(`server not ready:\n${scrub(log)}`));
-    }, 20000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited ${code}:\n${scrub(log)}`));
-    });
-  });
-  proc.removeAllListeners('exit');
-  return { proc, base, logs: () => log };
-}
-
 async function waitTurn(base, cid, pred, attempts = 80) {
   let last = null;
   for (let i = 0; i < attempts; i += 1) {
@@ -263,9 +172,17 @@ test('kernel models call each source, refresh Grok once, and hide keys', { timeo
   let proc = null;
   try {
     await seedGrok(dataDir);
-    const srv = await startServer(dataDir, {
-      PI_WORK_GROK_PROXY: grokFake.baseUrl,
-      PI_WORK_TEST_GROK_TOKEN_URL: grokFake.tokenUrl,
+    const srv = await startServer({
+      dataDir,
+      token: TOKEN,
+      authJson: false,
+      nodeArgs: ['--import', HOOK],
+      formatLog: scrub,
+      env: {
+        PI_WORK_GROK_CLIENT_VERSION: '1.0.50',
+        PI_WORK_GROK_PROXY: grokFake.baseUrl,
+        PI_WORK_TEST_GROK_TOKEN_URL: grokFake.tokenUrl,
+      },
     });
     proc = srv.proc;
     const { base } = srv;
@@ -377,7 +294,7 @@ test('kernel models call each source, refresh Grok once, and hide keys', { timeo
     assertClean(JSON.stringify(failed), 'failed conversation');
     assertClean(srv.logs(), 'server log');
   } finally {
-    if (proc) await stopProcess(proc);
+    await stopServer(proc);
     await defaultFake.close();
     await coderFake.close();
     await grokFake.close();

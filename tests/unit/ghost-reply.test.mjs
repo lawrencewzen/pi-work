@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,7 +11,7 @@ import {
   mergeRefreshedMessages,
   statusKeepsStreaming,
 } from '../../public/stream.js';
-import { ROOT } from './_root.mjs';
+import { request as serverRequest, startServer, stopServer } from './_server.mjs';
 
 test('a refresh keeps a local running tool the server has not stored yet', () => {
   const local = [
@@ -33,101 +32,7 @@ test('a refresh keeps a local running tool the server has not stored yet', () =>
 const TOKEN = 'unit-ghost-reply-token';
 const TEXT_A = '这是一个 TypeScript/Node.js 项目，用于开发相关。';
 const TEXT_B = '第二轮已经看完，结论里有顿号、和的字。';
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_TEXT',
-  'PI_WORK_FAUX_PLAN',
-  'PI_WORK_FAUX_HOLD',
-  'PI_WORK_FAUX_HOLD_READY',
-  'PI_WORK_FAUX_TPS',
-  'PI_WORK_KERNEL',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-];
-
-function childEnv(dataDir, extra = {}) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_TOKEN: TOKEN,
-    PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '5',
-    ...extra,
-  };
-}
-
-function killChild(child) {
-  if (child.exitCode != null || child.signalCode != null) return;
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    return;
-  }
-  child.kill('SIGKILL');
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => killChild(proc), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
-
-async function startServer(extra = {}) {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ghost-'));
-  await writeFile(path.join(dataDir, 'auth.json'), '{}\n');
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, extra),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      killChild(proc);
-      reject(new Error(`server not ready:\n${log}`));
-    }, 20000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited ${code}:\n${log}`));
-    });
-  });
-  proc.removeAllListeners('exit');
-  return { proc, base, dataDir, logs: () => log };
-}
-
-async function request(base, method, apiPath, body) {
-  const res = await fetch(base + apiPath, {
-    method,
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null };
-}
+const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
 
 function parseChunk(part) {
   return parseSSE(`${part}\n\n`).filter((ev) => ev.event);
@@ -289,9 +194,12 @@ test('faux two turns: folded events match the transcript and leave no stream', {
     ],
   }));
   const srv = await startServer({
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
-    PI_WORK_FAUX_TPS: '4',
+    token: TOKEN,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_SCRIPT: script,
+      PI_WORK_FAUX_TPS: '4',
+    },
   });
   try {
     const { ws, conv } = await openConversation(srv.base);
@@ -342,7 +250,7 @@ test('faux two turns: folded events match the transcript and leave no stream', {
     assert.equal(merged.some((message) => message.id === 'live' || String(message.id).startsWith('live-')), false);
     assert.equal(assistantsOf(replayed).map((message) => message.text).join('\n'), expected.join('\n'));
   } finally {
-    await stopProcess(srv.proc);
+    await stopServer(srv);
     await rm(srv.dataDir, { recursive: true, force: true });
     await rm(dataDir, { recursive: true, force: true });
   }

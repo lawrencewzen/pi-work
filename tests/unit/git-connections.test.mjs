@@ -5,97 +5,15 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { ROOT } from './_root.mjs';
 import { startFakeGitlab } from '../helpers/fake-gitlab.mjs';
 import { buildConnectionCloneArgs, buildConnectionCloneEnv, sanitizeConnectionCloneUrl } from '../../src/core/git-connection-clone.mjs';
 import { matchConnectionByUrl } from '../../src/core/git-connections.mjs';
+import { request as serverRequest, startServer, stopServer } from './_server.mjs';
 
 const AUTH = 'unit-git-conn-token';
 const PAT = 'glpat-unit-secret-9k3q';
 const BAD = 'glpat-unit-secret-bad1';
-const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'LLM_API',
-  'LLM_API_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
-  'GROK_HOME',
-];
-
-function childEnv(dataDir, extra = {}) {
-  const env = { ...process.env };
-  for (const key of STRIP) delete env[key];
-  for (const key of Object.keys(env)) {
-    if (/^GIT_CONFIG_(COUNT|KEY_|VALUE_)/.test(key)) delete env[key];
-  }
-  return {
-    ...env,
-    PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_TOKEN: AUTH,
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '2',
-    ...extra,
-  };
-}
-
-async function startServer(extraEnv = {}) {
-  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-gitconn-'));
-  const proc = spawn(process.execPath, ['server.mjs'], {
-    cwd: ROOT,
-    env: childEnv(dataDir, extraEnv),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  const base = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 15000);
-    const onData = (buf) => {
-      log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited ${code}:\n${log}`));
-    });
-  });
-  proc.removeAllListeners('exit');
-  return {
-    proc,
-    base,
-    dataDir,
-    logs: () => log,
-  };
-}
-
-function stopProcess(proc) {
-  return new Promise((resolve) => {
-    if (proc.exitCode != null) return resolve();
-    const timer = setTimeout(() => proc.kill('SIGKILL'), 2000);
-    proc.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    proc.kill('SIGTERM');
-  });
-}
-
-async function request(base, method, apiPath, body) {
-  const res = await fetch(base + apiPath, {
-    method,
-    headers: { authorization: `Bearer ${AUTH}`, 'content-type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null, text };
-}
+const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, AUTH);
 
 function readSettings(dataDir) {
   const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'), { readOnly: true });
@@ -166,7 +84,7 @@ test('GitLab connection API masks tokens and lists projects', async () => {
       },
     ],
   });
-  const server = await startServer();
+  const server = await startServer({ token: AUTH, env: { PI_WORK_RETRY_MAX: '2' } });
   try {
     const unsaved = await request(server.base, 'POST', '/api/git/connections/test', {
       kind: 'gitlab-self',
@@ -307,7 +225,7 @@ test('GitLab connection API masks tokens and lists projects', async () => {
     assert.equal(notGitlab.status, 400);
     assert.equal(notGitlab.body.code, 'not_gitlab');
   } finally {
-    await stopProcess(server.proc);
+    await stopServer(server);
     gitlab.close();
     await fs.rm(server.dataDir, { recursive: true, force: true });
   }
@@ -367,9 +285,13 @@ test('import uses the connection token and does not persist it', async () => {
     ],
   });
   const server = await startServer({
-    GIT_CONFIG_GLOBAL: config,
-    GIT_CONFIG_NOSYSTEM: '1',
-    HELPER_LOG: log,
+    token: AUTH,
+    env: {
+      PI_WORK_RETRY_MAX: '2',
+      GIT_CONFIG_GLOBAL: config,
+      GIT_CONFIG_NOSYSTEM: '1',
+      HELPER_LOG: log,
+    },
   });
   try {
     const created = await request(server.base, 'POST', '/api/git/connections', {
@@ -427,7 +349,7 @@ test('import uses the connection token and does not persist it', async () => {
     const rowsAfter = readWorkspaces(server.dataDir);
     assert.equal(rowsAfter.length, 1);
   } finally {
-    await stopProcess(server.proc);
+    await stopServer(server);
     gitlab.close();
     await fs.rm(server.dataDir, { recursive: true, force: true });
     await fs.rm(helperDir, { recursive: true, force: true });
@@ -447,7 +369,7 @@ test('address import uses a saved connection for the same host', async () => {
       },
     ],
   });
-  const server = await startServer();
+  const server = await startServer({ token: AUTH, env: { PI_WORK_RETRY_MAX: '2' } });
   try {
     const created = await request(server.base, 'POST', '/api/git/connections', {
       kind: 'gitlab-self',
@@ -468,7 +390,7 @@ test('address import uses a saved connection for the same host', async () => {
     assertNoSecret(gitConfig, [PAT], '.git/config');
     assert.equal(created.body.hasToken, true);
   } finally {
-    await stopProcess(server.proc);
+    await stopServer(server);
     gitlab.close();
     await fs.rm(server.dataDir, { recursive: true, force: true });
   }
