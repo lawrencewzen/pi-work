@@ -83,7 +83,7 @@ function builtinTool(name) {
     replay: readOnly ? 'safe' : 'unsafe',
     async execute() {
       return {
-        content: [{ type: 'text', text: `${name} is not available` }],
+        output: [{ type: 'text', text: `${name} is not available` }],
         isError: true,
       };
     },

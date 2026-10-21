@@ -28,14 +28,14 @@ function pluginTool(spec, store, byHarness) {
         });
       } catch (err) {
         return {
-          content: [{ type: 'text', text: String(err?.message || 'plugin tool failed').slice(0, 32_000) }],
+          output: [{ type: 'text', text: String(err?.message || 'plugin tool failed').slice(0, 32_000) }],
           isError: true,
         };
       }
-      const output = typeof result === 'string' ? result : result?.output ?? '';
-      const text = typeof output === 'string' ? output : JSON.stringify(output ?? '');
+      const payload = typeof result === 'string' ? result : result?.output ?? '';
+      const text = typeof payload === 'string' ? payload : JSON.stringify(payload ?? '');
       return {
-        content: [{ type: 'text', text: text.slice(0, 32_000) }],
+        output: [{ type: 'text', text: text.slice(0, 32_000) }],
         isError: result?.status === 'error',
       };
     },
