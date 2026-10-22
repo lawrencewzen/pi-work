@@ -20,6 +20,7 @@ import {
   validateRoleModels,
   createApiSource,
   applySourcePatch,
+  contextWindowForConversation,
   grokSourceTemplate,
   sourceFromEnv,
   probeModels,
@@ -69,7 +70,7 @@ import {
 } from './src/core/auth.mjs';
 import { resolveAllowedWorkspacePath, defaultWorkspaceRoot, listBrowsableDirs } from './src/core/workspace-guard.mjs';
 import { acquireDataDirLock } from './src/core/lock.mjs';
-import { presentContext } from './src/core/usage.mjs';
+import { presentConversationContext } from './src/core/usage.mjs';
 import { openConversationKernel } from './src/kernel/conversations.mjs';
 import fs from 'node:fs/promises';
 
@@ -1083,7 +1084,12 @@ async function routeApi(req, res, url) {
       ...(await agentsFor(live, messages)),
       ...(await kernelApi.listSubagents(live)),
     ];
-    const context = presentContext(live.usage);
+    const settings = await ensureSettings();
+    const grok = await currentGrok();
+    const context = presentConversationContext(
+      live.usage,
+      contextWindowForConversation(settings, live, { grokSignedIn: Boolean(grok?.signedIn) }),
+    );
     sendJson(res, 200, {
       id: live.id,
       title: live.title,

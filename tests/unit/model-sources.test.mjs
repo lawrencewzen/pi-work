@@ -4,6 +4,7 @@ import { load } from './_root.mjs';
 
 const sources = await load('src/core/model-sources.mjs');
 const settings = await load('src/core/settings.mjs');
+const usage = await load('src/core/usage.mjs');
 
 const {
   migrateLegacySettings,
@@ -15,6 +16,9 @@ const {
   probeModels,
   probeFailurePayload,
   modelsAfterProbe,
+  normalizeSources,
+  contextWindowForModel,
+  contextWindowForConversation,
   GROK_SOURCE_ID,
 } = sources;
 
@@ -439,6 +443,96 @@ test('stored lastTest keeps probe code and status and still redacts the error', 
     error: 'timeout',
     code: 'timeout',
   });
+});
+
+test('contextWindows are kept, merged, deleted, and invalid patch values error', () => {
+  const kept = normalizeSources([apiSource({
+    contextWindows: {
+      ' gpt-4o ': 256000,
+      'bad': 12,
+      '': 8000,
+      'gpt-4.1': 200000,
+      nope: '128000',
+      proto: null,
+    },
+  })]);
+  assert.deepEqual(kept[0].contextWindows, { 'gpt-4o': 256000, 'gpt-4.1': 200000 });
+
+  const missing = normalizeSources([apiSource()]);
+  assert.equal(missing[0].contextWindows, undefined);
+
+  const grok = normalizeSources([{
+    id: GROK_SOURCE_ID,
+    kind: 'grok',
+    models: ['grok-build'],
+    contextWindows: { 'grok-build': 256000, skip: 1 },
+  }]);
+  assert.deepEqual(grok[0].contextWindows, { 'grok-build': 256000 });
+
+  const merged = applySourcePatch(apiSource({
+    models: ['gpt-4o', 'gpt-4.1'],
+    contextWindows: { 'gpt-4o': 256000, 'gpt-4.1': 200000 },
+  }), { contextWindows: { 'gpt-4o': 512000, extra: 64000 } });
+  assert.equal(merged.error, undefined);
+  assert.deepEqual(merged.source.contextWindows, {
+    'gpt-4o': 512000,
+    'gpt-4.1': 200000,
+    extra: 64000,
+  });
+
+  const cleared = applySourcePatch(merged.source, { contextWindows: { extra: null, 'gpt-4.1': null } });
+  assert.deepEqual(cleared.source.contextWindows, { 'gpt-4o': 512000 });
+
+  const emptied = applySourcePatch(cleared.source, { contextWindows: { 'gpt-4o': null } });
+  assert.equal(emptied.error, undefined);
+  assert.equal(emptied.source.contextWindows, undefined);
+
+  const grokPatched = applySourcePatch(grok[0], { contextWindows: { 'grok-build': 256000 } });
+  assert.equal(grokPatched.error, undefined);
+  assert.equal(grokPatched.source.contextWindows['grok-build'], 256000);
+
+  assert.equal(applySourcePatch(apiSource(), { contextWindows: { 'gpt-4o': 12 } }).error, 'invalid context window');
+  assert.equal(applySourcePatch(apiSource(), { contextWindows: { 'gpt-4o': 10000001 } }).error, 'invalid context window');
+  assert.equal(applySourcePatch(apiSource(), { contextWindows: { 'gpt-4o': 256000.5 } }).error, 'invalid context window');
+  assert.equal(applySourcePatch(apiSource(), { contextWindows: { 'gpt-4o': '256000' } }).error, 'invalid context window');
+  assert.equal(applySourcePatch(apiSource(), { contextWindows: ['gpt-4o'] }).error, 'invalid context window');
+  assert.equal(applySourcePatch(apiSource(), { contextWindows: null }).error, 'invalid context window');
+});
+
+test('publicSource returns stored contextWindows and defaultContextWindow', () => {
+  const pub = publicSource(apiSource({
+    models: ['gpt-4o'],
+    contextWindows: { 'gpt-4o': 256000 },
+  }));
+  assert.deepEqual(pub.contextWindows, { 'gpt-4o': 256000 });
+  assert.equal(pub.defaultContextWindow, usage.contextWindowFromEnv());
+
+  const plain = publicSource(apiSource());
+  assert.equal(plain.contextWindows, undefined);
+  assert.equal(plain.defaultContextWindow, usage.contextWindowFromEnv());
+});
+
+test('conversation context window follows the resolved model, else stays unset', () => {
+  const alpha = apiSource({ id: 'aaaa', models: ['alpha'], contextWindows: { alpha: 256000 } });
+  const beta = apiSource({
+    id: 'bbbb',
+    name: 'B',
+    baseUrl: 'http://127.0.0.1:2/v1',
+    apiKey: 'key-b',
+    models: ['beta'],
+  });
+  const settings = {
+    sources: [alpha, beta],
+    models: { default: { sourceId: 'aaaa', model: 'alpha' } },
+  };
+  assert.equal(contextWindowForModel(alpha, 'alpha'), 256000);
+  assert.equal(contextWindowForModel(alpha, 'other'), 128000);
+  assert.equal(contextWindowForConversation(settings, { roleId: null }), 256000);
+  assert.equal(contextWindowForConversation(settings, {
+    modelSourceId: 'bbbb',
+    modelId: 'beta',
+  }), 128000);
+  assert.equal(contextWindowForConversation({ sources: [] }, { roleId: null }), null);
 });
 
 test('conversation model patch accepts a listed pair and rejects unknown source or model', () => {

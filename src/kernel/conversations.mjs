@@ -10,6 +10,7 @@ import { liveDiff } from '../core/diff.mjs';
 import { redactAuthText } from '../core/grok-auth.mjs';
 import { resolveInWorkspace } from '../core/paths.mjs';
 import { formatSSE } from '../core/sse.mjs';
+import { contextWindowForConversation } from '../core/model-sources.mjs';
 import { presentContext } from '../core/usage.mjs';
 import {
   baselinesFromEntries,
@@ -178,7 +179,23 @@ export async function openConversationKernel({
     }
   }
 
+  async function conversationWindow(conv) {
+    if (!conv || typeof getSettings !== 'function') return null;
+    const settings = await getSettings();
+    let grokSignedIn = false;
+    if (typeof grokAuth?.status === 'function') {
+      try {
+        grokSignedIn = Boolean((await grokAuth.status())?.signedIn);
+      } catch {
+        grokSignedIn = false;
+      }
+    }
+    return contextWindowForConversation(settings, conv, { grokSignedIn, env });
+  }
+
   async function applyBatch(cid, batch, mapCtx) {
+    const conv = await store.getConversation(cid);
+    mapCtx.contextWindow = await conversationWindow(conv);
     const mapped = mapHarnessBatch(batch, mapCtx);
     for (const ev of mapped.events) await deliver(cid, ev);
     if (mapped.refresh) {

@@ -50,7 +50,7 @@
 | `GET /workspaces` | | `[{id,name,path}]` |
 | `POST /workspaces/:wid/conversations` | `{title?, roleId?, modelSourceId?, modelId?}` | `201 {id, workspaceId, title, status:'idle', modelSourceId, modelId}`。`modelSourceId`/`modelId` 成对可选；都缺或都为 `null` 表示跟随默认角色绑定。来源不存在、或该来源模型列表里没有这个模型 → 400 `{errors}`。若仍带 `pipelineId` 则忽略、不报错 |
 | `GET /workspaces/:wid/conversations?q=` | | 列表，按更新时间倒序 |
-| `GET /conversations/:cid` | | `{id,title,status,roleId,modelSourceId,modelId,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 优先用 usage 里的窗口，否则为 `LLM_CONTEXT_WINDOW`（默认 128000）。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
+| `GET /conversations/:cid` | | `{id,title,status,roleId,modelSourceId,modelId,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 为该对话实际模型（与 `modelFor` 相同的源 + 模型名）在来源 `contextWindows` 里的设置，没有则用 `defaultContextWindow`（`LLM_CONTEXT_WINDOW`，默认 128000）。用户设置优先于 usage 里报的窗口。对话没有可用模型时仍是 usage 窗口或环境默认值。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
 | `POST /conversations/:cid/messages` | `{text}` | `202 {runId, status:'running'}`。对话忙时用 `whenBusy:'steer'` 插入当前运行，不返回 409 |
 | `PATCH /conversations/:cid` | `{roleId?, modelSourceId?, modelId?}` | `200 {id, roleId, modelSourceId, modelId, status, agents}`。`agents` 是切换后的侧栏角色列表，客户端应立刻用它刷新，不必整页刷新。空 `roleId` 表示默认 Agent。`modelSourceId`/`modelId` 为 `null` 表示跟随默认绑定。来源不存在或模型不在该来源列表里 → 400 `{errors}`。若仍带 `pipelineId` 则忽略、不报错。改 `roleId` 且 `running` 时 409 `{error:'err_role_busy'}`。只改模型时运行中也可改，下一轮生效。未知角色 400 |
 | `POST /conversations/:cid/stop` | | `200 {status:'stopped'}`。中止当前运行，并停掉后台子 Agent |
@@ -144,13 +144,13 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...
 - 已登录 Grok 时，字符串模型挂到 Grok 来源；否则挂到新建的那条 API 来源。
 - 迁移后顶层 `apiKey`、`baseUrl` 清空，`provider` 回到 `openai`，库里的 JSON 不再保留这三个字段。
 
-来源对象：`{ id, kind:'api'|'grok', vendor, name, baseUrl, apiKey, hasApiKey, models:string[], catalog?:string[], lastTest?:{ ok, at, error?, code?, status? } }`。`models` 是已启用、会出现在角色下拉里的名字。`catalog` 只在来源行探测成功后出现，是这次拉到的完整列表；编辑抽屉用它把还没启用的新模型显示成未勾选。Grok 的 id 固定为 `grok`，并带 `session:{ signedIn, email, expiresAt }`。`lastTest.error` 与探测失败文本都要去掉密钥（`sk-***`、以及原文里的完整 key）。`lastTest.code` 与下面探测响应的 `code` 相同；`lastTest.status` 只在 HTTP 响应失败时出现。
+来源对象：`{ id, kind:'api'|'grok', vendor, name, baseUrl, apiKey, hasApiKey, models:string[], catalog?:string[], lastTest?:{ ok, at, error?, code?, status? }, contextWindows?:{ [模型名]: number }, defaultContextWindow: number }`。`models` 是已启用、会出现在角色下拉里的名字。`catalog` 只在来源行探测成功后出现，是这次拉到的完整列表；编辑抽屉用它把还没启用的新模型显示成未勾选。`contextWindows` 只含用户改过的模型上限（正整数 token 数）；没有改过则省略。`defaultContextWindow` 等于 `contextWindowFromEnv()`（`LLM_CONTEXT_WINDOW`，默认 128000）。Grok 的 id 固定为 `grok`，并带 `session:{ signedIn, email, expiresAt }`。`lastTest.error` 与探测失败文本都要去掉密钥（`sk-***`、以及原文里的完整 key）。`lastTest.code` 与下面探测响应的 `code` 相同；`lastTest.status` 只在 HTTP 响应失败时出现。
 
 | 方法 路径 | 请求 | 响应 |
 |---|---|---|
 | `GET /api/sources` | 无单独列表接口 | 来源在 `GET /api/settings` 的 `sources` |
 | `POST /api/sources` | `{ vendor, name?, baseUrl?, apiKey?, models? }` | `201` 公开来源。`vendor` 必须是预设 id |
-| `PUT /api/sources/:id` | 局部更新 `name` / `vendor` / `baseUrl` / `apiKey` / `models` | `200` 公开来源。掩码或空的 `apiKey` 表示不改密钥 |
+| `PUT /api/sources/:id` | 局部更新 `name` / `vendor` / `baseUrl` / `apiKey` / `models` / `contextWindows` | `200` 公开来源。掩码或空的 `apiKey` 表示不改密钥。`contextWindows` 与已有值合并；某模型值为 `null` 表示删除该项（恢复默认）。Grok 来源也支持 |
 | `DELETE /api/sources/:id` | | `200 {ok:true,id}`。引用该来源的角色绑定被去掉。删除 Grok 来源会退出登录 |
 | `POST /api/sources/test` | `{ vendor, baseUrl?, apiKey? }` 或 `{ sourceId, vendor?, baseUrl?, apiKey? }` | `200 { ok, models?, error?, code?, status? }` |
 
@@ -160,6 +160,7 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...
 |---|---|---|
 | 400 | `unknown vendor` | `vendor` 不在预设里 |
 | 400 | `invalid models` | `models` 不是字符串数组 |
+| 400 | `invalid context window` | `contextWindows` 不是对象，或某个值不是 `null` 且不是 1000–10000000 的整数 |
 | 400 | `base url required` | 没有可用的 base URL |
 | 400 | `api key required` | 该厂商需要密钥，但没有新密钥。改 `baseUrl` 时，新地址的 origin（协议 + 主机 + 端口）和旧地址不同，且这次没有带新密钥，也是这个错误：旧密钥先被丢掉。只改路径、origin 不变，旧密钥保留。Ollama 不需要密钥，换 origin 会清空旧密钥并成功 |
 | 400 | `invalid model binding` | `models` 不是对象，或某个值不是 `{ sourceId, model }` / `null` |
