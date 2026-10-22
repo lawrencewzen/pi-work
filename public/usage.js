@@ -208,6 +208,32 @@ export function hasCustomContextWindow(source, model) {
   return positiveToken(map[name]) != null;
 }
 
+/** Page-local override key. Two sources can share a model name. */
+export function contextOverrideKey(sourceId, model) {
+  const sid = typeof sourceId === 'string' ? sourceId.trim() : '';
+  const name = typeof model === 'string' ? model.trim() : '';
+  if (!sid || !name) return '';
+  return `${sid}\x1f${name}`;
+}
+
+export function parseContextOverrideKey(key) {
+  const text = typeof key === 'string' ? key : '';
+  const i = text.indexOf('\x1f');
+  if (i < 1) return null;
+  const sourceId = text.slice(0, i);
+  const model = text.slice(i + 1);
+  if (!sourceId || !model) return null;
+  return { sourceId, model };
+}
+
+function overrideFor(overrides, source, model) {
+  const sid = typeof source?.id === 'string' ? source.id : '';
+  const key = contextOverrideKey(sid, model);
+  if (!key || !overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return { present: false };
+  if (!Object.prototype.hasOwnProperty.call(overrides, key)) return { present: false };
+  return { present: true, value: overrides[key] };
+}
+
 /**
  * Window for the composer chip.
  * Page-local override (including restore-to-default) wins, then the conversation
@@ -221,9 +247,8 @@ export function resolveContextWindow({
   overrides,
 } = {}) {
   const name = typeof model === 'string' ? model.trim() : '';
-  if (name && overrides && typeof overrides === 'object' && Object.prototype.hasOwnProperty.call(overrides, name)) {
-    return positiveToken(overrides[name]) ?? sourceModelContextWindow(source, name);
-  }
+  const local = overrideFor(overrides, source, name);
+  if (local.present) return positiveToken(local.value) ?? sourceModelContextWindow(source, name);
   const belongs = !conversationWindowModel || !name || String(conversationWindowModel) === name;
   if (belongs) {
     const fromConv = positiveToken(conversationWindow);

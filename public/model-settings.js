@@ -11,6 +11,7 @@ import {
 } from './agent-chip.js';
 import { formatProbeFailure, sourceProbeStatus } from './probe-error.js';
 import {
+  contextOverrideKey,
   contextWindowPresetOptions,
   formatTokenCount,
   hasCustomContextWindow,
@@ -694,8 +695,9 @@ function renderContextWindowRows(ctx) {
   return rows.map(({ source, model }) => {
     const overrides = state.contextWindowOverrides || {};
     const current = resolveContextWindow({ model, source, overrides });
-    const custom = Object.prototype.hasOwnProperty.call(overrides, model)
-      ? overrides[model] != null
+    const overrideKey = contextOverrideKey(source.id, model);
+    const custom = overrideKey && Object.prototype.hasOwnProperty.call(overrides, overrideKey)
+      ? overrides[overrideKey] != null
       : hasCustomContextWindow(source, model);
     const note = custom
       ? t('ctx_custom', { window: formatTokenCount(sourceDefaultContextWindow(source)) })

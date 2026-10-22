@@ -18,6 +18,7 @@ const {
   resolveContextWindow,
   sourceModelContextWindow,
   hasCustomContextWindow,
+  contextOverrideKey,
   contextWindowPresetOptions,
   CONTEXT_WINDOW_PRESETS,
   DEFAULT_CONTEXT_WINDOW,
@@ -122,6 +123,7 @@ test('composer chip treats missing usage as 0% and warns at 80%', () => {
 
 test('window priority is override, then conversation for that model, then settings', () => {
   const source = {
+    id: 'src-a',
     defaultContextWindow: 128000,
     contextWindows: { 'grok-4.6': 64000, 'grok-4': 256000 },
   };
@@ -136,15 +138,15 @@ test('window priority is override, then conversation for that model, then settin
     source,
     conversationWindow: 200000,
     conversationWindowModel: 'grok-4.6',
-    overrides: { 'grok-4.6': 256000 },
+    overrides: { [contextOverrideKey(source.id, 'grok-4.6')]: 256000 },
   }), 256000);
 
   assert.equal(resolveContextWindow({
     model: 'grok-4.6',
-    source: { defaultContextWindow: 128000, contextWindows: {} },
+    source: { id: 'src-a', defaultContextWindow: 128000, contextWindows: {} },
     conversationWindow: 200000,
     conversationWindowModel: 'grok-4.6',
-    overrides: { 'grok-4.6': null },
+    overrides: { [contextOverrideKey('src-a', 'grok-4.6')]: null },
   }), 128000);
 
   assert.equal(resolveContextWindow({
@@ -176,6 +178,27 @@ test('window priority is override, then conversation for that model, then settin
   const presets = contextWindowPresetOptions(192000);
   assert.equal(presets.some((row) => row.custom && row.tokens === 192000 && row.selected), true);
   assert.equal(contextWindowPresetOptions(128000).some((row) => row.custom), false);
+});
+
+test('two sources with the same model name keep separate windows', () => {
+  const a = { id: 'src-a', defaultContextWindow: 128000, contextWindows: { shared: 64000 } };
+  const b = { id: 'src-b', defaultContextWindow: 128000, contextWindows: { shared: 256000 } };
+  assert.equal(resolveContextWindow({ model: 'shared', source: a }), 64000);
+  assert.equal(resolveContextWindow({ model: 'shared', source: b }), 256000);
+
+  const overrides = {
+    [contextOverrideKey('src-a', 'shared')]: 32000,
+    [contextOverrideKey('src-b', 'shared')]: 400000,
+  };
+  assert.equal(resolveContextWindow({ model: 'shared', source: a, overrides }), 32000);
+  assert.equal(resolveContextWindow({ model: 'shared', source: b, overrides }), 400000);
+  assert.equal(resolveContextWindow({
+    model: 'shared',
+    source: a,
+    conversationWindow: 200000,
+    conversationWindowModel: 'shared',
+    overrides,
+  }), 32000);
 });
 
 test('sqlite keeps the latest usage across later conversation updates', async () => {

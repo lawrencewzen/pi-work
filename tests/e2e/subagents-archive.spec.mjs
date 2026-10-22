@@ -57,15 +57,21 @@ async function assertNarrowWorkbench(page) {
   const measured = await page.evaluate(() => {
     const box = (sel) => {
       const el = document.querySelector(sel);
+      if (!el) return { width: 0, height: 0 };
       const rect = el.getBoundingClientRect();
       return { width: rect.width, height: rect.height };
     };
+    const chip = document.querySelector('[data-testid=composer-context]');
+    const remain = chip?.querySelector('.ctx-remain');
     return {
       center: box('.col-center').width,
       right: box('[data-testid=right-panel]').width,
       send: box('[data-testid=chat-send]').height,
       agent: box('[data-testid=composer-agent]').height,
-      context: box('.chip-runtime-meta').height,
+      context: box('[data-testid=composer-context]').height,
+      chipWrap: chip ? getComputedStyle(chip).whiteSpace : '',
+      remainHidden: remain ? getComputedStyle(remain).display === 'none' : true,
+      overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
     };
   });
   console.log(`NARROW_1000 ${JSON.stringify(measured)}`);
@@ -76,6 +82,9 @@ async function assertNarrowWorkbench(page) {
   for (const key of ['send', 'agent', 'context']) {
     expect(measured[key], key).toBeLessThanOrEqual(32);
   }
+  expect(measured.chipWrap).toBe('nowrap');
+  expect(measured.remainHidden).toBe(true);
+  expect(measured.overflowX).toBe(false);
 }
 
 async function switchLanguage(page, lang) {

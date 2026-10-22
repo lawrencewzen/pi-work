@@ -20,8 +20,11 @@ import {
 } from './tool-groups.js';
 import {
   composerContextChip,
+  contextOverrideKey,
   contextWindowPresetOptions,
+  parseContextOverrideKey,
   resolveContextWindow,
+  sourceDefaultContextWindow,
 } from './usage.js';
 import {
   composerAgentPresentation,
@@ -1559,7 +1562,23 @@ function renderComposerContext() {
   const ring = document.getElementById('composer-context-ring');
   if (!el) return;
   const { target, view } = composerContextView();
-  el.textContent = t('ctx_chip', { used: view.usedPct, left: view.remainPct, window: view.windowText });
+  el.replaceChildren();
+  const used = document.createElement('span');
+  used.className = 'ctx-used';
+  used.textContent = t('ctx_used_short', { used: view.usedPct });
+  const remainSep = document.createElement('span');
+  remainSep.className = 'ctx-remain-sep';
+  remainSep.textContent = ' · ';
+  const remain = document.createElement('span');
+  remain.className = 'ctx-remain';
+  remain.textContent = t('ctx_left_short', { left: view.remainPct });
+  const winSep = document.createElement('span');
+  winSep.className = 'ctx-win-sep';
+  winSep.textContent = ' · ';
+  const win = document.createElement('span');
+  win.className = 'ctx-window';
+  win.textContent = view.windowText;
+  el.append(used, remainSep, remain, winSep, win);
   if (btn) {
     btn.title = t('ctx_title', {
       used: view.usedText,
@@ -1703,40 +1722,44 @@ function applyContextOverridesToSettings() {
   const overrides = state.contextWindowOverrides;
   const sources = state.settings?.sources;
   if (!overrides || !Array.isArray(sources)) return;
-  for (const source of sources) {
-    const names = Array.isArray(source.models) ? source.models : [];
-    for (const [model, tokens] of Object.entries(overrides)) {
-      if (!names.includes(model)) continue;
-      if (!source.contextWindows || typeof source.contextWindows !== 'object' || Array.isArray(source.contextWindows)) {
-        source.contextWindows = {};
-      }
-      if (tokens == null) delete source.contextWindows[model];
-      else source.contextWindows[model] = tokens;
+  for (const [key, tokens] of Object.entries(overrides)) {
+    const parsed = parseContextOverrideKey(key);
+    if (!parsed) continue;
+    const source = sources.find((item) => item.id === parsed.sourceId);
+    if (!source) continue;
+    if (!source.contextWindows || typeof source.contextWindows !== 'object' || Array.isArray(source.contextWindows)) {
+      source.contextWindows = {};
     }
+    if (tokens == null) delete source.contextWindows[parsed.model];
+    else source.contextWindows[parsed.model] = tokens;
   }
 }
 
 function applyReturnedContextWindows(sourceId, res) {
-  if (!res || typeof res !== 'object') return;
+  if (!res || typeof res !== 'object') return false;
   const src = res.id === sourceId ? res : (Array.isArray(res.sources) ? res.sources.find((item) => item.id === sourceId) : null);
   const live = (state.settings?.sources || []).find((item) => item.id === sourceId);
-  if (!src || !live) return;
+  if (!src || !live) return false;
   if (src.contextWindows && typeof src.contextWindows === 'object' && !Array.isArray(src.contextWindows)) {
     live.contextWindows = { ...src.contextWindows };
+  } else {
+    delete live.contextWindows;
   }
   if (src.defaultContextWindow != null) live.defaultContextWindow = src.defaultContextWindow;
+  return true;
 }
 
 export async function setSourceContextWindow(sourceId, model, tokens) {
   const name = typeof model === 'string' ? model.trim() : '';
+  const key = contextOverrideKey(sourceId, name);
   const sources = Array.isArray(state.settings?.sources) ? state.settings.sources : [];
   const source = sources.find((item) => item.id === sourceId);
-  if (!source || !name) return;
+  if (!source || !key) return;
   const prevMap = source.contextWindows && typeof source.contextWindows === 'object' && !Array.isArray(source.contextWindows)
     ? { ...source.contextWindows }
     : {};
-  const hadOverride = Object.prototype.hasOwnProperty.call(state.contextWindowOverrides, name);
-  const prevOverride = hadOverride ? state.contextWindowOverrides[name] : undefined;
+  const hadOverride = Object.prototype.hasOwnProperty.call(state.contextWindowOverrides, key);
+  const prevOverride = hadOverride ? state.contextWindowOverrides[key] : undefined;
   if (!source.contextWindows || typeof source.contextWindows !== 'object' || Array.isArray(source.contextWindows)) {
     source.contextWindows = {};
   }
@@ -1744,7 +1767,7 @@ export async function setSourceContextWindow(sourceId, model, tokens) {
   if (nextTokens != null && !(Number.isFinite(nextTokens) && nextTokens > 0)) return;
   if (nextTokens == null) delete source.contextWindows[name];
   else source.contextWindows[name] = nextTokens;
-  state.contextWindowOverrides[name] = nextTokens;
+  state.contextWindowOverrides[key] = nextTokens;
   closeContextMenu();
   renderStatusBar();
   const settingsOpen = document.getElementById('settings-overlay')?.style.display === 'flex' && state.activeSettingsTab === 'models';
@@ -1753,11 +1776,22 @@ export async function setSourceContextWindow(sourceId, model, tokens) {
     const res = await api(`/api/sources/${encodeURIComponent(sourceId)}`, 'PUT', {
       contextWindows: { [name]: nextTokens },
     });
-    applyReturnedContextWindows(sourceId, res);
+    const applied = applyReturnedContextWindows(sourceId, res);
+    if (applied) {
+      delete state.contextWindowOverrides[key];
+      const conv = state.activeConversationData;
+      const target = resolveComposerTarget();
+      if (conv && target?.source?.id === sourceId && target?.model === name) {
+        conv.contextWindow = nextTokens ?? sourceDefaultContextWindow(source);
+        conv.contextWindowModel = name;
+      }
+      renderStatusBar();
+      if (settingsOpen) renderSettingsModal();
+    }
   } catch (err) {
     source.contextWindows = prevMap;
-    if (hadOverride) state.contextWindowOverrides[name] = prevOverride;
-    else delete state.contextWindowOverrides[name];
+    if (hadOverride) state.contextWindowOverrides[key] = prevOverride;
+    else delete state.contextWindowOverrides[key];
     showToast(isToastKey(err.message) ? err.message : (err.message || 'err_context_window'));
     renderStatusBar();
     if (settingsOpen) renderSettingsModal();

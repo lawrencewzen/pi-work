@@ -472,11 +472,14 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 .chip-menu-item:disabled { cursor: not-allowed; opacity: .5; }
 .chip-menu-item[aria-selected="true"]::after { content: '✓'; color: var(--mute); }
 .chip-menu-model { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
-.composer-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.composer-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 1; min-width: 0; }
+#composer-context-wrap { min-width: 0; max-width: 100%; }
 .chip-context {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; cursor: pointer;
   border: none; background: transparent; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap;
+  flex-shrink: 1; min-width: 0; max-width: 100%;
 }
+#composer-context-value { min-width: 0; overflow: hidden; }
 .chip-context:hover:not(:disabled) { background: var(--side); }
 .chip-context:disabled { cursor: default; }
 #composer-context-wrap .chip-menu { left: auto; right: 0; min-width: 220px; }
@@ -510,6 +513,10 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 }
 .app-shell.right-closed .col-right, .app-shell.right-closed #right-divider { display: none; }
 /* Narrow windows: side panels float over the chat (same breakpoints as app.js). */
+@media (max-width: 1100px) {
+  .chip-context .ctx-remain,
+  .chip-context .ctx-remain-sep { display: none; }
+}
 @media (max-width: 859px) {
   .col-left { position: absolute; box-shadow: 0 0 40px rgba(0, 0, 0, .15); }
   #left-divider { display: none; }

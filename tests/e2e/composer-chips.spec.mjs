@@ -129,7 +129,7 @@ test('agent chip lists models by source and switches the conversation model', as
   await createWorkspace(page, 'dispatch', ws);
   await createConversation(page);
   await expect(chip(page)).toHaveText('grok-4.6');
-  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_128);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
 
   await page.getByTestId('composer-agent').click();
   await expect(menu(page)).toBeVisible();
@@ -227,35 +227,21 @@ test('agent chip stays usable while a run is busy', async ({ page }) => {
   expect(conv.body.modelId).toBe('grok-4');
 });
 
-test('context chip menu sets the model window and sends PUT', async ({ page }) => {
+test('context chip menu sets the model window and keeps it after refresh', async ({ page }) => {
   const { ws, token, sourceId } = await boot({
     script: 'usage.json',
     models: { default: { model: 'grok-4.6' } },
   });
   const puts = [];
-  await page.route('**/api/sources/**', async (route) => {
-    const req = route.request();
-    if (req.method() === 'PUT') {
-      const body = JSON.parse(req.postData() || '{}');
-      puts.push({ url: req.url(), body });
-      const windows = body.contextWindows && typeof body.contextWindows === 'object' ? body.contextWindows : {};
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          id: sourceId,
-          contextWindows: windows,
-          defaultContextWindow: 128000,
-        }),
-      });
-      return;
+  page.on('request', (req) => {
+    if (req.method() === 'PUT' && /\/api\/sources\//.test(req.url())) {
+      puts.push({ url: req.url(), body: JSON.parse(req.postData() || '{}') });
     }
-    await route.continue();
   });
   await openApp(page, token);
   await createWorkspace(page, 'ctx-window', ws);
   await createConversation(page);
-  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_128);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
   await expect(page.getByTestId('composer-context')).toBeEnabled();
 
   await send(page, 'count tokens');
@@ -273,7 +259,9 @@ test('context chip menu sets the model window and sends PUT', async ({ page }) =
     await expect(page.locator('.toast-msg')).toHaveCount(0);
     await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/composer-context-menu.png' });
   }
+  const putDone = page.waitForResponse((res) => res.request().method() === 'PUT' && /\/api\/sources\//.test(res.url()) && res.ok());
   await ctxMenu.locator('[data-action=pick-context-window][data-tokens="256000"]').click();
+  await putDone;
   await expect(ctxMenu).toBeHidden();
   await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_256);
   expect(puts).toHaveLength(1);
@@ -285,8 +273,17 @@ test('context chip menu sets the model window and sends PUT', async ({ page }) =
   await expect(page.getByTestId('context-window-section')).toBeVisible();
   const row = page.getByTestId('context-window-row').filter({ hasText: 'grok-4.6' });
   await expect(row.getByTestId('context-window-pick')).toContainText('256k');
-  await expect(row).toContainText(/已改，默认 128k|Custom, default 128k/);
+  await expect(row).toContainText(/已改，默认 200k|Custom, default 200k/);
   if (process.env.T17_2_SHOTS) {
     await page.locator('[data-testid=models-page]').screenshot({ path: '/opt/cursor/artifacts/screenshots/settings-context-windows.png' });
   }
+
+  await page.locator('[data-action=close-settings]').click();
+  await expect(page.getByTestId('models-page')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_256);
+  const settings = await api(srv.url, 'GET', '/settings', null, token);
+  expect(settings.status).toBe(200);
+  const saved = (settings.body.sources || []).find((item) => item.id === sourceId);
+  expect(saved?.contextWindows?.['grok-4.6']).toBe(256000);
 });
