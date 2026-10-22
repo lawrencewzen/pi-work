@@ -13,6 +13,14 @@ const {
   formatContextValue,
   presentContext,
   composerContextText,
+  contextPercents,
+  composerContextChip,
+  resolveContextWindow,
+  sourceModelContextWindow,
+  hasCustomContextWindow,
+  contextWindowPresetOptions,
+  CONTEXT_WINDOW_PRESETS,
+  DEFAULT_CONTEXT_WINDOW,
 } = await load('public/usage.js');
 const { createSqliteStore } = await load('src/store/sqlite.mjs');
 
@@ -75,6 +83,99 @@ test('latest provider usage is shown against the reported or configured window',
   assert.equal(presented.contextLabel, '1.2k / 200k');
   assert.equal(presentContext(null, {}).contextLabel, '—');
   assert.equal(formatContextValue({ total: 0 }, 128000), '0 / 128k');
+});
+
+test('context percents round and always sum to 100', () => {
+  assert.deepEqual(contextPercents(0, 128000), { usedPct: 0, remainPct: 100, ratio: 0 });
+  assert.deepEqual(contextPercents(null, 128000), { usedPct: 0, remainPct: 100, ratio: 0 });
+  const mid = contextPercents(16400, 200000);
+  assert.equal(mid.usedPct, 8);
+  assert.equal(mid.remainPct, 92);
+  assert.equal(mid.usedPct + mid.remainPct, 100);
+  const warn = contextPercents(102400, 128000);
+  assert.equal(warn.usedPct, 80);
+  assert.equal(warn.remainPct, 20);
+  const full = contextPercents(300000, 256000);
+  assert.equal(full.usedPct, 100);
+  assert.equal(full.remainPct, 0);
+  assert.equal(full.ratio, 1);
+});
+
+test('composer chip treats missing usage as 0% and warns at 80%', () => {
+  const idle = composerContextChip({ usage: null, window: 128000 });
+  assert.equal(idle.usedPct, 0);
+  assert.equal(idle.remainPct, 100);
+  assert.equal(idle.windowText, '128k');
+  assert.equal(idle.warn, false);
+  const used = composerContextChip({
+    usage: { prompt_tokens: 16000, completion_tokens: 400, total_tokens: 16400 },
+    window: 200000,
+  });
+  assert.equal(used.usedPct, 8);
+  assert.equal(used.remainPct, 92);
+  assert.equal(used.windowText, '200k');
+  assert.equal(used.usedText, '16.4k');
+  const hot = composerContextChip({ usage: { total: 102400 }, window: 128000 });
+  assert.equal(hot.warn, true);
+  assert.equal(hot.usedPct, 80);
+});
+
+test('window priority is override, then conversation for that model, then settings', () => {
+  const source = {
+    defaultContextWindow: 128000,
+    contextWindows: { 'grok-4.6': 64000, 'grok-4': 256000 },
+  };
+  assert.equal(sourceModelContextWindow(source, 'grok-4.6'), 64000);
+  assert.equal(sourceModelContextWindow(source, 'other'), 128000);
+  assert.equal(hasCustomContextWindow(source, 'grok-4.6'), true);
+  assert.equal(hasCustomContextWindow(source, 'other'), false);
+  assert.equal(DEFAULT_CONTEXT_WINDOW, 128000);
+
+  assert.equal(resolveContextWindow({
+    model: 'grok-4.6',
+    source,
+    conversationWindow: 200000,
+    conversationWindowModel: 'grok-4.6',
+    overrides: { 'grok-4.6': 256000 },
+  }), 256000);
+
+  assert.equal(resolveContextWindow({
+    model: 'grok-4.6',
+    source: { defaultContextWindow: 128000, contextWindows: {} },
+    conversationWindow: 200000,
+    conversationWindowModel: 'grok-4.6',
+    overrides: { 'grok-4.6': null },
+  }), 128000);
+
+  assert.equal(resolveContextWindow({
+    model: 'grok-4.6',
+    source,
+    conversationWindow: 200000,
+    conversationWindowModel: 'grok-4.6',
+    overrides: {},
+  }), 200000);
+
+  assert.equal(resolveContextWindow({
+    model: 'grok-4',
+    source,
+    conversationWindow: 200000,
+    conversationWindowModel: 'grok-4.6',
+    overrides: {},
+  }), 256000);
+
+  assert.equal(resolveContextWindow({
+    model: 'grok-4.6',
+    source,
+  }), 64000);
+
+  assert.equal(formatTokenCount(32000), '32k');
+  assert.equal(formatTokenCount(256000), '256k');
+  assert.equal(formatTokenCount(400000), '400k');
+  assert.equal(formatTokenCount(1_000_000), '1M');
+  assert.deepEqual(CONTEXT_WINDOW_PRESETS, [32000, 64000, 128000, 200000, 256000, 400000, 1_000_000]);
+  const presets = contextWindowPresetOptions(192000);
+  assert.equal(presets.some((row) => row.custom && row.tokens === 192000 && row.selected), true);
+  assert.equal(contextWindowPresetOptions(128000).some((row) => row.custom), false);
 });
 
 test('sqlite keeps the latest usage across later conversation updates', async () => {

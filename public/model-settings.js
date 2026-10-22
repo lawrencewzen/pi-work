@@ -10,6 +10,13 @@ import {
   httpOrigin,
 } from './agent-chip.js';
 import { formatProbeFailure, sourceProbeStatus } from './probe-error.js';
+import {
+  contextWindowPresetOptions,
+  formatTokenCount,
+  hasCustomContextWindow,
+  resolveContextWindow,
+  sourceDefaultContextWindow,
+} from './usage.js';
 
 const FALLBACK_VENDORS = [
   { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', needsKey: true },
@@ -67,6 +74,7 @@ function defaultUi() {
     tick: null,
     savingRoles: false,
     rowProbes: {},
+    contextPicker: null,
   };
 }
 
@@ -392,9 +400,11 @@ export function mountModelsPane(state, t) {
       clearTimeout(arm);
       scroller.removeEventListener('scroll', onScroll);
       closeModelPop(state);
+      closeContextWindowPop(state);
     };
     scroller.addEventListener('scroll', onScroll, { passive: true });
   }
+  positionContextWindowPop(state);
 }
 
 export function closeModelPop(state) {
@@ -403,6 +413,13 @@ export function closeModelPop(state) {
   ui.pickerRole = null;
   ui.pickerQuery = '';
   document.getElementById('model-pop')?.classList.remove('open');
+}
+
+export function closeContextWindowPop(state) {
+  const ui = state.modelsUi;
+  if (!ui?.contextPicker) return;
+  ui.contextPicker = null;
+  document.getElementById('context-window-pop')?.classList.remove('open');
 }
 
 export function syncModelPop(state) {
@@ -659,6 +676,109 @@ export function renderModelPop(ctx) {
   return `<div class="model-pop open" id="model-pop" data-testid="model-pop" role="listbox">${renderPop(ctx)}</div>`;
 }
 
+function listedContextModels(state) {
+  const rows = [];
+  for (const source of sourcesOf(state)) {
+    const names = (source.models || []).filter((name) => typeof name === 'string' && name.trim());
+    for (const name of names) {
+      rows.push({ source, model: name.trim() });
+    }
+  }
+  return rows;
+}
+
+function renderContextWindowRows(ctx) {
+  const { t, escapeHtml, state } = ctx;
+  const rows = listedContextModels(state);
+  if (!rows.length) return `<div class="ms-empty">${escapeHtml(t('src_models_none'))}</div>`;
+  return rows.map(({ source, model }) => {
+    const overrides = state.contextWindowOverrides || {};
+    const current = resolveContextWindow({ model, source, overrides });
+    const custom = Object.prototype.hasOwnProperty.call(overrides, model)
+      ? overrides[model] != null
+      : hasCustomContextWindow(source, model);
+    const note = custom
+      ? t('ctx_custom', { window: formatTokenCount(sourceDefaultContextWindow(source)) })
+      : t('ctx_default');
+    return (
+      `<div class="ms-ctx-row" data-testid="context-window-row" data-source-id="${escapeHtml(source.id)}" data-model="${escapeHtml(model)}">` +
+      `<div><div class="ms-ctx-name mono">${escapeHtml(model)}</div><div class="ms-ctx-note">${escapeHtml(note)}</div></div>` +
+      `<button type="button" class="ms-pick-btn" data-action="ms-toggle-context-window" data-source-id="${escapeHtml(source.id)}" data-model="${escapeHtml(model)}" data-testid="context-window-pick" aria-expanded="${ctx.state.modelsUi?.contextPicker?.sourceId === source.id && ctx.state.modelsUi?.contextPicker?.model === model ? 'true' : 'false'}">` +
+      `<span class="m mono">${escapeHtml(formatTokenCount(current) || String(current))}</span><span class="ms-caret"></span>` +
+      `</button></div>`
+    );
+  }).join('');
+}
+
+function renderContextWindowsSection(ctx) {
+  const { t, escapeHtml } = ctx;
+  return (
+    `<div class="ms-section ms-section-ctx" data-testid="context-window-section"><div><b>${escapeHtml(t('ctx_section'))}</b>` +
+    `<span class="ms-section-desc">${escapeHtml(t('ctx_section_desc'))}</span></div></div>` +
+    `<div class="ms-ctx">${renderContextWindowRows(ctx)}</div>`
+  );
+}
+
+function renderContextWindowPopHtml(ctx) {
+  const { t, escapeHtml, state } = ctx;
+  const pick = ensureModelsUi(state).contextPicker;
+  if (!pick) return '';
+  const source = sourcesOf(state).find((item) => item.id === pick.sourceId);
+  const current = resolveContextWindow({
+    model: pick.model,
+    source,
+    overrides: state.contextWindowOverrides,
+  });
+  const options = contextWindowPresetOptions(current);
+  const parts = options.map((option) => (
+    `<button type="button" class="ms-opt mono${option.selected ? ' on' : ''}" data-action="ms-set-context-window" data-source-id="${escapeHtml(pick.sourceId)}" data-model="${escapeHtml(pick.model)}" data-tokens="${option.tokens}" data-testid="context-window-option">` +
+    `${escapeHtml(option.label)}${option.selected ? `<span class="x">${escapeHtml(t('src_selected_mark'))}</span>` : ''}` +
+    `</button>`
+  ));
+  parts.push(
+    `<hr><button type="button" class="ms-opt sec" data-action="ms-reset-context-window" data-source-id="${escapeHtml(pick.sourceId)}" data-model="${escapeHtml(pick.model)}" data-testid="context-window-reset">${escapeHtml(t('ctx_restore'))}</button>`
+  );
+  return parts.join('');
+}
+
+export function renderContextWindowPop(ctx) {
+  const ui = ensureModelsUi(ctx.state);
+  if (!ui.contextPicker) return '';
+  return `<div class="model-pop open" id="context-window-pop" data-testid="context-window-pop" role="listbox">${renderContextWindowPopHtml(ctx)}</div>`;
+}
+
+function positionContextWindowPop(state) {
+  const ui = ensureModelsUi(state);
+  const pick = ui.contextPicker;
+  if (!pick) return;
+  const pop = document.getElementById('context-window-pop');
+  const btn = document.querySelector(`[data-action="ms-toggle-context-window"][data-source-id="${CSS.escape(pick.sourceId)}"][data-model="${CSS.escape(pick.model)}"]`);
+  if (!pop || !btn) return;
+  pop.classList.add('open');
+  const rect = btn.getBoundingClientRect();
+  const modal = document.querySelector('.sm')?.getBoundingClientRect();
+  const limitBottom = (modal?.bottom ?? window.innerHeight) - 8;
+  const limitTop = (modal?.top ?? 0) + 8;
+  const limitLeft = (modal?.left ?? 0) + 8;
+  const limitRight = (modal?.right ?? window.innerWidth) - 8;
+  const width = Math.min(240, Math.max(160, limitRight - limitLeft));
+  pop.style.width = `${width}px`;
+  let left = rect.right - width;
+  left = Math.max(limitLeft, Math.min(left, limitRight - width));
+  pop.style.left = `${left}px`;
+  pop.style.maxHeight = '';
+  let height = pop.offsetHeight;
+  let top = rect.bottom + 4;
+  if (top + height > limitBottom) top = rect.top - 4 - height;
+  if (top < limitTop) {
+    const available = Math.max(160, limitBottom - limitTop);
+    pop.style.maxHeight = `${available}px`;
+    height = pop.offsetHeight;
+    top = Math.max(limitTop, Math.min(rect.bottom + 4, limitBottom - height));
+  }
+  pop.style.top = `${top}px`;
+}
+
 function renderCheckboxes(names, checked, escapeHtml) {
   return names.map((name) => (
     `<label class="ms-chk"><input type="checkbox" data-action="ms-toggle-model" data-model="${escapeHtml(name)}"${checked[name] ? ' checked' : ''}><span class="mono">${escapeHtml(name)}</span></label>`
@@ -846,6 +966,7 @@ export function renderModelsPane(ctx) {
     `<div class="ms-section"><div><b>${escapeHtml(t('src_sources'))}</b><span>${escapeHtml(t('src_count'))}</span></div>` +
     `<button type="button" class="btn btn-sm" data-action="ms-open-add" data-testid="model-add">${escapeHtml(t('src_add'))}</button></div>` +
     `<div class="ms-src" data-testid="model-source-list">${rows}</div>` +
+    renderContextWindowsSection(ctx) +
     `<div class="ms-section ms-section-roles"><div><b>${escapeHtml(t('src_default_title'))}</b><span>${escapeHtml(t('src_default_hint'))}</span></div></div>` +
     `<div class="ms-roles">${renderDefaultRow(ctx)}</div>` +
     `</div>` +
@@ -1142,12 +1263,36 @@ export async function handleModelsAction(action, el, ctx) {
   if (action === 'toggle-model-pick') {
     const roleId = el.getAttribute('data-role-id') || '';
     if (ctx.state.agentsUi) ctx.state.agentsUi.skillsOpen = false;
+    closeContextWindowPop(ctx.state);
     if (ui.pickerRole === roleId) closeModelPop(ctx.state);
     else {
       ui.pickerRole = roleId;
       ui.pickerQuery = '';
       ctx.render();
     }
+    return true;
+  }
+  if (action === 'ms-toggle-context-window') {
+    const model = el.getAttribute('data-model') || '';
+    closeModelPop(ctx.state);
+    if (ui.contextPicker?.sourceId === sourceId && ui.contextPicker?.model === model) closeContextWindowPop(ctx.state);
+    else {
+      ui.contextPicker = { sourceId, model };
+      ctx.render();
+    }
+    return true;
+  }
+  if (action === 'ms-set-context-window') {
+    const model = el.getAttribute('data-model') || '';
+    const tokens = Number(el.getAttribute('data-tokens'));
+    closeContextWindowPop(ctx.state);
+    if (ctx.setContextWindow) await ctx.setContextWindow(sourceId, model, tokens);
+    return true;
+  }
+  if (action === 'ms-reset-context-window') {
+    const model = el.getAttribute('data-model') || '';
+    closeContextWindowPop(ctx.state);
+    if (ctx.setContextWindow) await ctx.setContextWindow(sourceId, model, null);
     return true;
   }
   if (action === 'ms-open-add' || action === 'ms-pop-add') {

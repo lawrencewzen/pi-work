@@ -18,8 +18,18 @@ import {
   TOOL_ERROR_PREVIEW_LINES,
   toolGroupPreview,
 } from './tool-groups.js';
-import { composerContextText } from './usage.js';
-import { composerAgentPresentation, resolveDispatchModel, sourceUsable } from './agent-chip.js';
+import {
+  composerContextChip,
+  contextWindowPresetOptions,
+  resolveContextWindow,
+} from './usage.js';
+import {
+  composerAgentPresentation,
+  resolveConversationModel,
+  resolveDispatchModel,
+  resolveRoleTarget,
+  sourceUsable,
+} from './agent-chip.js';
 import {
   renderModelsPane,
   renderModelPop,
@@ -28,6 +38,8 @@ import {
   onModelsField,
   onModelsToggle,
   closeModelPop,
+  closeContextWindowPop,
+  renderContextWindowPop,
   noteSettingsReloaded,
 } from './model-settings.js';
 import { renderGitPane, handleGitAction, onGitField, onGitTokenFocus } from './git-settings.js';
@@ -114,6 +126,7 @@ const state = {
   openProjects: new Set(readJson('piwork_open_projects', [])),
   diffs: {},
   closedChangeFiles: new Set(),
+  contextWindowOverrides: {},
 };
 
 function readPref(key, fallback) {
@@ -862,6 +875,9 @@ export async function refreshConversationMeta(cid) {
     if ('roleId' in conv) state.activeConversationData.roleId = conv.roleId || null;
     if ('modelSourceId' in conv) state.activeConversationData.modelSourceId = conv.modelSourceId || null;
     if ('modelId' in conv) state.activeConversationData.modelId = conv.modelId || null;
+    if (conv.contextWindow != null) {
+      state.activeConversationData.contextWindowModel = resolveComposerTarget()?.model || '';
+    }
     if (conv.agents) state.activeConversationData.agents = conv.agents;
     if (Array.isArray(conv.messages)) {
       const local = state.activeConversationData.messages || [];
@@ -1029,7 +1045,10 @@ export function connectSSE(cid) {
       const data = JSON.parse(ev.data);
       if (!state.activeConversationData || state.activeConversationId !== cid) return;
       if (data.usage) state.activeConversationData.usage = data.usage;
-      if (data.contextWindow != null) state.activeConversationData.contextWindow = data.contextWindow;
+      if (data.contextWindow != null) {
+        state.activeConversationData.contextWindow = data.contextWindow;
+        state.activeConversationData.contextWindowModel = resolveComposerTarget()?.model || '';
+      }
       renderStatusBar();
     } catch { /* ignore */ }
   });
@@ -1501,10 +1520,62 @@ export function renderRunningOverview() {
   renderSidebarWorkspaces();
 }
 
+function resolveComposerTarget() {
+  const ctx = dispatchContext();
+  const pinned = resolveConversationModel(ctx);
+  if (pinned) return pinned;
+  const conv = ctx.conv || {};
+  const list = Array.isArray(ctx.roles) ? ctx.roles : [];
+  const roleId = typeof conv.roleId === 'string' ? conv.roleId.trim() : '';
+  const role = list.find((item) => item && item.id === roleId) || list.find((item) => item?.id === 'default') || null;
+  return resolveRoleTarget({
+    role,
+    roleId: role?.id || roleId || 'default',
+    models: ctx.models,
+    sources: ctx.sources,
+    grokSignedIn: ctx.grokSignedIn,
+  });
+}
+
+function composerContextView() {
+  const target = resolveComposerTarget();
+  const conv = state.activeConversationId ? state.activeConversationData : null;
+  const window = resolveContextWindow({
+    model: target?.model || '',
+    source: target?.source,
+    conversationWindow: conv?.contextWindow,
+    conversationWindowModel: conv?.contextWindowModel,
+    overrides: state.contextWindowOverrides,
+  });
+  return {
+    target,
+    view: composerContextChip({ usage: conv?.usage, window }),
+  };
+}
+
 function renderComposerContext() {
   const el = document.getElementById('composer-context-value');
+  const btn = document.getElementById('composer-context-btn');
+  const ring = document.getElementById('composer-context-ring');
   if (!el) return;
-  el.textContent = composerContextText(state.activeConversationData);
+  const { target, view } = composerContextView();
+  el.textContent = t('ctx_chip', { used: view.usedPct, left: view.remainPct, window: view.windowText });
+  if (btn) {
+    btn.title = t('ctx_title', {
+      used: view.usedText,
+      window: view.windowText,
+      usedPct: view.usedPct,
+      leftPct: view.remainPct,
+    });
+    btn.disabled = !target?.model || !target?.source;
+    btn.classList.toggle('is-warn', view.warn);
+  }
+  if (ring) {
+    const c = 2 * Math.PI * 5;
+    ring.setAttribute('stroke-dasharray', `${view.ratio * c} ${c}`);
+  }
+  const menu = document.getElementById('composer-context-menu');
+  if (menu?.classList.contains('is-open')) menu.innerHTML = renderContextMenuHtml();
 }
 
 function dispatchContext() {
@@ -1589,6 +1660,110 @@ function closeAgentMenu() {
   document.getElementById('composer-agent-chip-btn')?.setAttribute('aria-expanded', 'false');
 }
 
+function closeContextMenu() {
+  document.getElementById('composer-context-menu')?.classList.remove('is-open');
+  document.getElementById('composer-context-btn')?.setAttribute('aria-expanded', 'false');
+}
+
+function renderContextMenuHtml() {
+  const { target, view } = composerContextView();
+  const model = target?.model || '';
+  const options = contextWindowPresetOptions(view.window);
+  const rows = [
+    `<div class="chip-menu-title">${escapeHtml(t('ctx_menu_title', { model }))}</div>`,
+    `<div class="chip-menu-stat">${escapeHtml(t('ctx_menu_used', { count: view.usedText, pct: view.usedPct }))}</div>`,
+    `<div class="chip-menu-stat">${escapeHtml(t('ctx_menu_remain', { count: view.remainText, pct: view.remainPct }))}</div>`,
+    '<div class="chip-menu-sep"></div>',
+  ];
+  for (const option of options) {
+    rows.push(
+      `<button type="button" class="chip-menu-item" role="menuitem" aria-selected="${option.selected ? 'true' : 'false'}" data-action="pick-context-window" data-source-id="${escapeHtml(target?.source?.id || '')}" data-model="${escapeHtml(model)}" data-tokens="${option.tokens}" data-testid="composer-context-option">` +
+      `<span>${escapeHtml(option.label)}</span>` +
+      `</button>`
+    );
+  }
+  return rows.join('');
+}
+
+function toggleContextMenu() {
+  const menu = document.getElementById('composer-context-menu');
+  const btn = document.getElementById('composer-context-btn');
+  if (!menu || !btn || btn.disabled) return;
+  if (menu.classList.contains('is-open')) {
+    closeContextMenu();
+    return;
+  }
+  closeAgentMenu();
+  menu.innerHTML = renderContextMenuHtml();
+  menu.classList.add('is-open');
+  btn.setAttribute('aria-expanded', 'true');
+}
+
+function applyContextOverridesToSettings() {
+  const overrides = state.contextWindowOverrides;
+  const sources = state.settings?.sources;
+  if (!overrides || !Array.isArray(sources)) return;
+  for (const source of sources) {
+    const names = Array.isArray(source.models) ? source.models : [];
+    for (const [model, tokens] of Object.entries(overrides)) {
+      if (!names.includes(model)) continue;
+      if (!source.contextWindows || typeof source.contextWindows !== 'object' || Array.isArray(source.contextWindows)) {
+        source.contextWindows = {};
+      }
+      if (tokens == null) delete source.contextWindows[model];
+      else source.contextWindows[model] = tokens;
+    }
+  }
+}
+
+function applyReturnedContextWindows(sourceId, res) {
+  if (!res || typeof res !== 'object') return;
+  const src = res.id === sourceId ? res : (Array.isArray(res.sources) ? res.sources.find((item) => item.id === sourceId) : null);
+  const live = (state.settings?.sources || []).find((item) => item.id === sourceId);
+  if (!src || !live) return;
+  if (src.contextWindows && typeof src.contextWindows === 'object' && !Array.isArray(src.contextWindows)) {
+    live.contextWindows = { ...src.contextWindows };
+  }
+  if (src.defaultContextWindow != null) live.defaultContextWindow = src.defaultContextWindow;
+}
+
+export async function setSourceContextWindow(sourceId, model, tokens) {
+  const name = typeof model === 'string' ? model.trim() : '';
+  const sources = Array.isArray(state.settings?.sources) ? state.settings.sources : [];
+  const source = sources.find((item) => item.id === sourceId);
+  if (!source || !name) return;
+  const prevMap = source.contextWindows && typeof source.contextWindows === 'object' && !Array.isArray(source.contextWindows)
+    ? { ...source.contextWindows }
+    : {};
+  const hadOverride = Object.prototype.hasOwnProperty.call(state.contextWindowOverrides, name);
+  const prevOverride = hadOverride ? state.contextWindowOverrides[name] : undefined;
+  if (!source.contextWindows || typeof source.contextWindows !== 'object' || Array.isArray(source.contextWindows)) {
+    source.contextWindows = {};
+  }
+  const nextTokens = tokens == null || tokens === '' ? null : Number(tokens);
+  if (nextTokens != null && !(Number.isFinite(nextTokens) && nextTokens > 0)) return;
+  if (nextTokens == null) delete source.contextWindows[name];
+  else source.contextWindows[name] = nextTokens;
+  state.contextWindowOverrides[name] = nextTokens;
+  closeContextMenu();
+  renderStatusBar();
+  const settingsOpen = document.getElementById('settings-overlay')?.style.display === 'flex' && state.activeSettingsTab === 'models';
+  if (settingsOpen) renderSettingsModal();
+  try {
+    const res = await api(`/api/sources/${encodeURIComponent(sourceId)}`, 'PUT', {
+      contextWindows: { [name]: nextTokens },
+    });
+    applyReturnedContextWindows(sourceId, res);
+  } catch (err) {
+    source.contextWindows = prevMap;
+    if (hadOverride) state.contextWindowOverrides[name] = prevOverride;
+    else delete state.contextWindowOverrides[name];
+    showToast(isToastKey(err.message) ? err.message : (err.message || 'err_context_window'));
+    renderStatusBar();
+    if (settingsOpen) renderSettingsModal();
+  }
+}
+
 function toggleAgentMenu() {
   const menu = document.getElementById('composer-agent-menu');
   if (!menu) return;
@@ -1596,6 +1771,7 @@ function toggleAgentMenu() {
     closeAgentMenu();
     return;
   }
+  closeContextMenu();
   if (!state.activeConversationId && !state.activeWorkspaceId) {
     showToast('err_select_workspace');
     return;
@@ -1619,6 +1795,7 @@ export async function pickComposerModel(el) {
   if (!cid) {
     state.draft = { modelSourceId: modelSourceId || '', modelId: modelId || '' };
     closeAgentMenu();
+    closeContextMenu();
     renderStatusBar();
     return;
   }
@@ -1634,6 +1811,7 @@ export async function pickComposerModel(el) {
       item.modelId = res.modelId ?? null;
     }
     closeAgentMenu();
+    closeContextMenu();
     renderStatusBar();
   } catch (err) {
     showToast(isToastKey(err.message) ? err.message : (err.message || 'err_model_switch'));
@@ -2787,6 +2965,7 @@ function modelsCtx() {
       renderStatusBar();
       renderChatThread();
     },
+    setContextWindow: setSourceContextWindow,
     startGrokSignIn,
   };
 }
@@ -2803,6 +2982,7 @@ async function refreshGrokStatus() {
     const settings = await api('/api/settings');
     state.settings = settings;
     noteSettingsReloaded(state);
+    applyContextOverridesToSettings();
     if (settings?.grok?.pending?.loginId) {
       state.grokPending = settings.grok.pending;
       scheduleGrokPoll(settings.grok.pending.interval);
@@ -2958,6 +3138,7 @@ export function renderSettingsModal() {
       ${pane}
     </div>
     ${models || agents ? renderModelPop(ctx) : ''}
+    ${models ? renderContextWindowPop(ctx) : ''}
     ${agents ? renderAgentSkillsPop(agentCtx()) : ''}
   `;
   if (models) mountModelsPane(state, t);
@@ -4173,6 +4354,9 @@ document.addEventListener('click', (e) => {
   if (ui?.pickerRole && !e.target.closest?.('.model-pop') && !e.target.closest?.('[data-action="toggle-model-pick"]')) {
     closeModelPop(state);
   }
+  if (ui?.contextPicker && !e.target.closest?.('#context-window-pop') && !e.target.closest?.('[data-action="ms-toggle-context-window"]')) {
+    closeContextWindowPop(state);
+  }
   const agentsUi = state.agentsUi;
   if (agentsUi?.skillsOpen && !e.target.closest?.('.ag-skpop') && !e.target.closest?.('[data-action="ag-skills-open"]')) {
     agentsUi.skillsOpen = false;
@@ -4181,6 +4365,10 @@ document.addEventListener('click', (e) => {
   const agentMenu = document.getElementById('composer-agent-menu');
   if (agentMenu?.classList.contains('is-open') && !e.target.closest('#composer-agent-wrap')) {
     closeAgentMenu();
+  }
+  const contextMenu = document.getElementById('composer-context-menu');
+  if (contextMenu?.classList.contains('is-open') && !e.target.closest('#composer-context-wrap')) {
+    closeContextMenu();
   }
   if (e.target.id === 'settings-overlay') {
     closeSettings();
@@ -4401,6 +4589,16 @@ document.addEventListener('click', (e) => {
     case 'pick-model':
       pickComposerModel(actionEl);
       break;
+    case 'toggle-context-menu':
+      toggleContextMenu();
+      break;
+    case 'pick-context-window':
+      void setSourceContextWindow(
+        actionEl.getAttribute('data-source-id') || '',
+        actionEl.getAttribute('data-model') || '',
+        actionEl.getAttribute('data-tokens'),
+      );
+      break;
     default:
       if (action === 'toggle-model-pick' || (action && action.startsWith('ms-'))) {
         void handleModelsAction(action, actionEl, modelsCtx()).catch((err) => {
@@ -4494,6 +4692,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         return;
       }
       closeAgentMenu();
+      closeContextMenu();
       closeSettings();
       closeModal();
     }
