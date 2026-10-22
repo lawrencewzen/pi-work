@@ -279,11 +279,15 @@ test('context chip menu sets the model window and keeps it after refresh', async
   }
 
   await page.locator('[data-action=close-settings]').click();
-  await expect(page.getByTestId('models-page')).toHaveCount(0);
+  await expect(page.locator('#settings-overlay')).toBeHidden();
   await page.reload();
   await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_256);
+  const afterReload = (await page.getByTestId('composer-context').innerText()).replace(/\s+/g, ' ').trim();
+  console.log(`PERSIST_AFTER_RELOAD ${JSON.stringify(afterReload)}`);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/composer-context-256k-after-reload.png' });
   const settings = await api(srv.url, 'GET', '/settings', null, token);
   expect(settings.status).toBe(200);
   const saved = (settings.body.sources || []).find((item) => item.id === sourceId);
   expect(saved?.contextWindows?.['grok-4.6']).toBe(256000);
+  console.log(`PERSIST_SETTINGS ${JSON.stringify(saved?.contextWindows)}`);
 });
