@@ -255,10 +255,6 @@ test('context chip menu sets the model window and keeps it after refresh', async
   await expect(ctxMenu).toContainText(/设置上下文上限|Set context window/);
   await expect(ctxMenu).toContainText(/已用\s+16\.4k · 8%|Used\s+16\.4k · 8%/);
   await expect(ctxMenu).toContainText(/剩余\s+184k · 92%|Left\s+184k · 92%/);
-  if (process.env.T17_2_SHOTS) {
-    await expect(page.locator('.toast-msg')).toHaveCount(0);
-    await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/composer-context-menu.png' });
-  }
   const putDone = page.waitForResponse((res) => res.request().method() === 'PUT' && /\/api\/sources\//.test(res.url()) && res.ok());
   await ctxMenu.locator('[data-action=pick-context-window][data-tokens="256000"]').click();
   await putDone;
@@ -274,20 +270,13 @@ test('context chip menu sets the model window and keeps it after refresh', async
   const row = page.getByTestId('context-window-row').filter({ hasText: 'grok-4.6' });
   await expect(row.getByTestId('context-window-pick')).toContainText('256k');
   await expect(row).toContainText(/已改，默认 200k|Custom, default 200k/);
-  if (process.env.T17_2_SHOTS) {
-    await page.locator('[data-testid=models-page]').screenshot({ path: '/opt/cursor/artifacts/screenshots/settings-context-windows.png' });
-  }
 
   await page.locator('[data-action=close-settings]').click();
   await expect(page.locator('#settings-overlay')).toBeHidden();
   await page.reload();
   await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_256);
-  const afterReload = (await page.getByTestId('composer-context').innerText()).replace(/\s+/g, ' ').trim();
-  console.log(`PERSIST_AFTER_RELOAD ${JSON.stringify(afterReload)}`);
-  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/composer-context-256k-after-reload.png' });
   const settings = await api(srv.url, 'GET', '/settings', null, token);
   expect(settings.status).toBe(200);
   const saved = (settings.body.sources || []).find((item) => item.id === sourceId);
   expect(saved?.contextWindows?.['grok-4.6']).toBe(256000);
-  console.log(`PERSIST_SETTINGS ${JSON.stringify(saved?.contextWindows)}`);
 });
