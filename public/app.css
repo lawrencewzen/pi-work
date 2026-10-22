@@ -453,7 +453,7 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 .chip-plain { color: var(--ink3); font-size: 12px; }
 .chip-plain svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; flex-shrink: 0; }
 .chip-plain span { overflow: hidden; text-overflow: ellipsis; }
-.chip-selector:hover, .chip-plain:hover { background: var(--side); }
+.chip-selector:hover, .chip-plain:hover, .chip-context-limit:hover:not(:disabled) { background: var(--side); }
 .chip-selector:disabled { cursor: not-allowed; opacity: .6; }
 .col-center.is-draft .chip-selector { background: var(--side); }
 .col-center.is-draft #composer-project-chip, .col-center.is-empty #composer-project-chip { display: none; }
@@ -475,15 +475,31 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 .composer-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 1; min-width: 0; }
 #composer-context-wrap { min-width: 0; max-width: 100%; }
 .chip-context {
-  display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; cursor: pointer;
-  border: none; background: transparent; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap;
-  flex-shrink: 1; min-width: 0; max-width: 100%;
+  display: inline-flex; align-items: center; gap: 0; padding: 0; border: none; background: transparent;
+  font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap;
+  flex-shrink: 1; min-width: 0; max-width: 100%; cursor: default;
+}
+.chip-context:hover, .chip-context:focus, .chip-context:focus-visible {
+  background: transparent; outline: none;
+}
+.chip-context-display {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;
+  background: transparent; cursor: default;
+}
+.chip-context-display:hover, .chip-context-display:focus, .chip-context-display:focus-visible {
+  background: transparent; outline: none;
 }
 #composer-context-value { min-width: 0; overflow: hidden; }
-.chip-context:hover:not(:disabled) { background: var(--side); }
-.chip-context:disabled { cursor: default; }
+.chip-context-limit {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 6px; cursor: pointer;
+  border: none; background: transparent; font-family: var(--mono); font-size: 11px; color: var(--faint);
+  white-space: nowrap; flex-shrink: 0;
+}
+.chip-context-limit[aria-expanded="true"]:not(:disabled) { background: var(--side); }
+.chip-context-limit:disabled { cursor: default; }
+.chip-context-limit .ctx-caret { width: 8px; height: 8px; fill: currentColor; flex-shrink: 0; }
 #composer-context-wrap .chip-menu { left: auto; right: 0; min-width: 220px; }
-.ctx-ring { display: block; flex-shrink: 0; }
+.ctx-ring { display: block; flex-shrink: 0; cursor: default; }
 .ctx-ring-track { stroke: var(--line); }
 .ctx-ring-fill {
   stroke: var(--mute); transform: rotate(-90deg); transform-origin: 7px 7px; stroke-linecap: round;
