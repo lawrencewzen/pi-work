@@ -173,3 +173,131 @@ export function composerContextText(conv) {
   if (!conv) return EMPTY;
   return formatContextValue(conv.usage, conv.contextWindow);
 }
+
+export const DEFAULT_CONTEXT_WINDOW = 128000;
+
+/** Composer menu / settings presets. */
+export const CONTEXT_WINDOW_PRESETS = [32000, 64000, 128000, 200000, 256000, 400000, 1_000_000];
+
+function contextWindowMap(source) {
+  const map = source?.contextWindows;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return null;
+  return map;
+}
+
+/** Source default when the user has not overridden a model. */
+export function sourceDefaultContextWindow(source) {
+  return positiveToken(source?.defaultContextWindow) ?? DEFAULT_CONTEXT_WINDOW;
+}
+
+/** `contextWindows[model]` when the user set one, otherwise the source default. */
+export function sourceModelContextWindow(source, model) {
+  const name = typeof model === 'string' ? model.trim() : '';
+  const map = contextWindowMap(source);
+  if (name && map && Object.prototype.hasOwnProperty.call(map, name)) {
+    const n = positiveToken(map[name]);
+    if (n != null) return n;
+  }
+  return sourceDefaultContextWindow(source);
+}
+
+export function hasCustomContextWindow(source, model) {
+  const name = typeof model === 'string' ? model.trim() : '';
+  const map = contextWindowMap(source);
+  if (!name || !map || !Object.prototype.hasOwnProperty.call(map, name)) return false;
+  return positiveToken(map[name]) != null;
+}
+
+/** Page-local override key. Two sources can share a model name. */
+export function contextOverrideKey(sourceId, model) {
+  const sid = typeof sourceId === 'string' ? sourceId.trim() : '';
+  const name = typeof model === 'string' ? model.trim() : '';
+  if (!sid || !name) return '';
+  return `${sid}\x1f${name}`;
+}
+
+export function parseContextOverrideKey(key) {
+  const text = typeof key === 'string' ? key : '';
+  const i = text.indexOf('\x1f');
+  if (i < 1) return null;
+  const sourceId = text.slice(0, i);
+  const model = text.slice(i + 1);
+  if (!sourceId || !model) return null;
+  return { sourceId, model };
+}
+
+function overrideFor(overrides, source, model) {
+  const sid = typeof source?.id === 'string' ? source.id : '';
+  const key = contextOverrideKey(sid, model);
+  if (!key || !overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return { present: false };
+  if (!Object.prototype.hasOwnProperty.call(overrides, key)) return { present: false };
+  return { present: true, value: overrides[key] };
+}
+
+/**
+ * Window for the composer chip.
+ * Page-local override (including restore-to-default) wins, then the conversation
+ * window when it still belongs to this model, then settings.
+ */
+export function resolveContextWindow({
+  model,
+  source,
+  conversationWindow,
+  conversationWindowModel,
+  overrides,
+} = {}) {
+  const name = typeof model === 'string' ? model.trim() : '';
+  const local = overrideFor(overrides, source, name);
+  if (local.present) return positiveToken(local.value) ?? sourceModelContextWindow(source, name);
+  const belongs = !conversationWindowModel || !name || String(conversationWindowModel) === name;
+  if (belongs) {
+    const fromConv = positiveToken(conversationWindow);
+    if (fromConv != null) return fromConv;
+  }
+  return sourceModelContextWindow(source, name);
+}
+
+/** Rounded percents that always sum to 100. Missing used tokens count as 0. */
+export function contextPercents(used, window) {
+  const w = positiveToken(window) ?? DEFAULT_CONTEXT_WINDOW;
+  const u = finiteToken(used) ?? 0;
+  const ratio = w > 0 ? Math.min(1, u / w) : 0;
+  const usedPct = Math.min(100, Math.round(ratio * 100));
+  return { usedPct, remainPct: 100 - usedPct, ratio };
+}
+
+/**
+ * Numbers for the composer chip. No usage still shows 0% / 100% and the window.
+ * `warn` is true when used percent is at least 80.
+ */
+export function composerContextChip({ usage, window } = {}) {
+  const used = contextUsed(usage);
+  const w = positiveToken(window) ?? DEFAULT_CONTEXT_WINDOW;
+  const tokens = used == null ? 0 : used;
+  const { usedPct, remainPct, ratio } = contextPercents(tokens, w);
+  return {
+    used: tokens,
+    remain: Math.max(0, w - tokens),
+    window: w,
+    usedPct,
+    remainPct,
+    ratio,
+    warn: usedPct >= 80,
+    usedText: formatTokenCount(tokens) || '0',
+    remainText: formatTokenCount(Math.max(0, w - tokens)) || '0',
+    windowText: formatTokenCount(w) || String(w),
+  };
+}
+
+export function contextWindowPresetOptions(current) {
+  const n = positiveToken(current);
+  const rows = CONTEXT_WINDOW_PRESETS.map((tokens) => ({
+    tokens,
+    label: formatTokenCount(tokens),
+    selected: n != null && n === tokens,
+  }));
+  if (n != null && !CONTEXT_WINDOW_PRESETS.includes(n)) {
+    rows.push({ tokens: n, label: formatTokenCount(n), selected: true, custom: true });
+  }
+  return rows;
+}

@@ -4,7 +4,10 @@ import path from 'node:path';
 import { startServer, tmpdir, api } from './helpers/server.mjs';
 import { createWorkspace, createConversation, send, statusText, login } from './helpers/ui.mjs';
 
-const EM = '—';
+const CHIP_ZERO_128 = /已用 0% · 剩 100% · 128k|Used 0% · Left 100% · 128k/;
+const CHIP_ZERO_200 = /已用 0% · 剩 100% · 200k|Used 0% · Left 100% · 200k/;
+const CHIP_USED_200 = /已用 8% · 剩 92% · 200k|Used 8% · Left 92% · 200k/;
+const CHIP_USED_256 = /已用 6% · 剩 94% · 256k|Used 6% · Left 94% · 256k/;
 
 let srv;
 
@@ -66,14 +69,14 @@ async function conversationId(page) {
 test('context chip shows reported usage over the configured window', async ({ page }) => {
   const { ws, token } = await boot({ script: 'usage.json' });
   await openApp(page, token);
-  await expect(page.getByTestId('composer-context')).toHaveText(EM);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_128);
 
   await createWorkspace(page, 'usage', ws);
   await createConversation(page);
-  await expect(page.getByTestId('composer-context')).toHaveText(EM);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_128);
 
   await send(page, 'count tokens');
-  await expect(page.getByTestId('composer-context')).toHaveText('16.4k / 200k', { timeout: 20000 });
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_200, { timeout: 20000 });
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
 
   const cid = await conversationId(page);
@@ -84,11 +87,11 @@ test('context chip shows reported usage over the configured window', async ({ pa
   expect(before.body.contextWindow).toBe(200000);
 
   await page.reload();
-  await expect(page.getByTestId('composer-context')).toHaveText('16.4k / 200k');
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_200);
   await expect(chip(page)).toHaveText(/未配置模型|No model configured/);
 });
 
-test('context chip stays an em dash when the model reports no usage', async ({ page }) => {
+test('context chip stays at 0% when the model reports no usage', async ({ page }) => {
   const { ws, token } = await boot({ script: 'no-usage.json' });
   await openApp(page, token);
   await expect(chip(page)).toHaveText(/未配置模型|No model configured/);
@@ -97,16 +100,16 @@ test('context chip stays an em dash when the model reports no usage', async ({ p
   await createConversation(page);
   await send(page, 'hello');
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
-  await expect(page.getByTestId('composer-context')).toHaveText(EM);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
   await expect(chip(page)).toHaveText(/未配置模型|No model configured/);
 
   const cid = await conversationId(page);
   const conv = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
   expect(conv.body.usage).toBeNull();
-  expect(conv.body.contextLabel).toBe(EM);
+  expect(conv.body.contextLabel).toBe('—');
 
   await page.reload();
-  await expect(page.getByTestId('composer-context')).toHaveText(EM);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
   await expect(chip(page)).toHaveText(/未配置模型|No model configured/);
 });
 
@@ -126,7 +129,7 @@ test('agent chip lists models by source and switches the conversation model', as
   await createWorkspace(page, 'dispatch', ws);
   await createConversation(page);
   await expect(chip(page)).toHaveText('grok-4.6');
-  await expect(page.getByTestId('composer-context')).toHaveText(EM);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
 
   await page.getByTestId('composer-agent').click();
   await expect(menu(page)).toBeVisible();
@@ -162,7 +165,7 @@ test('agent chip lists models by source and switches the conversation model', as
 
   await page.reload();
   await expect(chip(page)).toHaveText('grok-4.6');
-  await expect(page.getByTestId('composer-context')).toHaveText(EM);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
 });
 
 test('draft model choice is saved on the conversation and can return to default', async ({ page }) => {
@@ -222,4 +225,69 @@ test('agent chip stays usable while a run is busy', async ({ page }) => {
   const cid = await conversationId(page);
   const conv = await api(srv.url, 'GET', `/conversations/${cid}`, null, token);
   expect(conv.body.modelId).toBe('grok-4');
+});
+
+test('context chip menu sets the model window and keeps it after refresh', async ({ page }) => {
+  const { ws, token, sourceId } = await boot({
+    script: 'usage.json',
+    models: { default: { model: 'grok-4.6' } },
+  });
+  const puts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'PUT' && /\/api\/sources\//.test(req.url())) {
+      puts.push({ url: req.url(), body: JSON.parse(req.postData() || '{}') });
+    }
+  });
+  await openApp(page, token);
+  await createWorkspace(page, 'ctx-window', ws);
+  await createConversation(page);
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
+  await expect(page.getByTestId('composer-context')).toBeEnabled();
+
+  await send(page, 'count tokens');
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_200, { timeout: 20000 });
+  await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
+
+  await page.getByTestId('composer-context').click();
+  const ctxMenu = page.getByTestId('composer-context-menu');
+  await expect(ctxMenu).toBeVisible();
+  await expect(ctxMenu).toContainText(/grok-4\.6/);
+  await expect(ctxMenu).toContainText(/设置上下文上限|Set context window/);
+  await expect(ctxMenu).toContainText(/已用\s+16\.4k · 8%|Used\s+16\.4k · 8%/);
+  await expect(ctxMenu).toContainText(/剩余\s+184k · 92%|Left\s+184k · 92%/);
+  if (process.env.T17_2_SHOTS) {
+    await expect(page.locator('.toast-msg')).toHaveCount(0);
+    await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/composer-context-menu.png' });
+  }
+  const putDone = page.waitForResponse((res) => res.request().method() === 'PUT' && /\/api\/sources\//.test(res.url()) && res.ok());
+  await ctxMenu.locator('[data-action=pick-context-window][data-tokens="256000"]').click();
+  await putDone;
+  await expect(ctxMenu).toBeHidden();
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_256);
+  expect(puts).toHaveLength(1);
+  expect(puts[0].url).toContain(`/api/sources/${sourceId}`);
+  expect(puts[0].body).toEqual({ contextWindows: { 'grok-4.6': 256000 } });
+
+  await page.locator('[data-action=open-settings]').click();
+  await page.locator('[data-tab=models]').click();
+  await expect(page.getByTestId('context-window-section')).toBeVisible();
+  const row = page.getByTestId('context-window-row').filter({ hasText: 'grok-4.6' });
+  await expect(row.getByTestId('context-window-pick')).toContainText('256k');
+  await expect(row).toContainText(/已改，默认 200k|Custom, default 200k/);
+  if (process.env.T17_2_SHOTS) {
+    await page.locator('[data-testid=models-page]').screenshot({ path: '/opt/cursor/artifacts/screenshots/settings-context-windows.png' });
+  }
+
+  await page.locator('[data-action=close-settings]').click();
+  await expect(page.locator('#settings-overlay')).toBeHidden();
+  await page.reload();
+  await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_256);
+  const afterReload = (await page.getByTestId('composer-context').innerText()).replace(/\s+/g, ' ').trim();
+  console.log(`PERSIST_AFTER_RELOAD ${JSON.stringify(afterReload)}`);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/composer-context-256k-after-reload.png' });
+  const settings = await api(srv.url, 'GET', '/settings', null, token);
+  expect(settings.status).toBe(200);
+  const saved = (settings.body.sources || []).find((item) => item.id === sourceId);
+  expect(saved?.contextWindows?.['grok-4.6']).toBe(256000);
+  console.log(`PERSIST_SETTINGS ${JSON.stringify(saved?.contextWindows)}`);
 });
