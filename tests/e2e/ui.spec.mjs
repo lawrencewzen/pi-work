@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { startServer, prepareWorkspaces, api } from './helpers/server.mjs';
-import { createWorkspace, newConversation, send, statusText, openApp, visualText } from './helpers/ui.mjs';
+import { createWorkspace, newConversation, send, statusText, openApp, visualText, waitForStableLayout } from './helpers/ui.mjs';
 
 let srv, ws;
 test.beforeEach(async () => {
@@ -140,4 +140,62 @@ test('remove workspace from the project menu keeps the folder on disk', async ({
   await page.getByTestId('confirm-ok').click();
   await expect(page.getByTestId('workspace-item')).toHaveCount(0);
   await expect.poll(() => fs.stat(ws).then((st) => st.isDirectory())).toBe(true);
+});
+
+test('left top row is new chat plus collapse, 52px, aligned with center bar', async ({ page }) => {
+  await openApp(page, srv);
+  await expect(page.locator('.left-new')).toHaveCount(0);
+  const leftTop = page.locator('.left-top');
+  const newChat = leftTop.getByTestId('new-chat-top');
+  const collapse = leftTop.locator('[data-action=toggle-left]');
+  await expect(newChat).toBeVisible();
+  await expect(collapse).toBeVisible();
+  await waitForStableLayout(page, leftTop);
+
+  const layout = await page.evaluate(() => {
+    const top = document.querySelector('.left-top');
+    const bar = document.querySelector('.center-top-bar');
+    const btn = document.querySelector('.left-top [data-testid=new-chat-top]');
+    const icon = document.querySelector('.left-top [data-action=toggle-left]');
+    const kids = [...top.children];
+    return {
+      order: kids.map((el) => el.getAttribute('data-testid') || el.getAttribute('data-action')),
+      top: top.getBoundingClientRect().toJSON(),
+      bar: bar.getBoundingClientRect().toJSON(),
+      btn: btn.getBoundingClientRect().toJSON(),
+      icon: icon.getBoundingClientRect().toJSON(),
+      gap: document.querySelector('.left-section-label').getBoundingClientRect().top
+        - top.getBoundingClientRect().bottom,
+    };
+  });
+  expect(layout.order).toEqual(['new-chat-top', 'toggle-left']);
+  expect(Math.round(layout.top.height)).toBe(52);
+  expect(Math.round(layout.bar.height)).toBe(52);
+  expect(Math.round(layout.top.bottom)).toBe(Math.round(layout.bar.bottom));
+  expect(layout.btn.right).toBeLessThanOrEqual(layout.icon.left + 1);
+  expect(layout.gap).toBeGreaterThanOrEqual(0);
+  expect(layout.gap).toBeLessThanOrEqual(10);
+
+  await page.evaluate(() => {
+    document.getElementById('app-shell').style.setProperty('--left-w', '200px');
+  });
+  const min = await page.evaluate(() => {
+    const icon = document.querySelector('.left-top [data-action=toggle-left]');
+    const col = document.querySelector('.col-left');
+    return { icon: icon.getBoundingClientRect().toJSON(), col: col.getBoundingClientRect().toJSON() };
+  });
+  expect(min.icon.width).toBeGreaterThanOrEqual(29);
+  expect(min.icon.right).toBeLessThanOrEqual(min.col.right + 0.5);
+
+  await createWorkspace(page, 'demo', ws);
+  await newChat.click();
+  await expect(page.getByTestId('draft-row')).toBeVisible();
+  await expect(page.getByTestId('chat-input')).toBeVisible();
+
+  await collapse.click();
+  await expect(page.locator('#col-left')).toBeHidden();
+  await expect(page.locator('.top-left-open')).toBeVisible();
+  await page.locator('.top-left-open').click();
+  await expect(page.locator('#col-left')).toBeVisible();
+  await expect(page.getByTestId('new-chat-top')).toBeVisible();
 });
