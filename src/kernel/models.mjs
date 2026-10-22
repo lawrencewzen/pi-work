@@ -11,10 +11,13 @@ import {
   grokProxyHeaders,
   selectChatRuntime,
 } from '../core/grok-auth.mjs';
+import { contextWindowFromEnv } from '../core/usage.mjs';
 import {
   GROK_SOURCE_ID,
+  contextWindowForModel,
   effectiveBaseUrl,
   normalizeSources,
+  resolveConversationTarget,
   resolveRoleTarget,
   sourceAvailable,
 } from '../core/model-sources.mjs';
@@ -39,7 +42,7 @@ export function providerIdForSource(source) {
   return `src-${source.id}`;
 }
 
-function chatModel({ provider, id, api, baseUrl, headers }) {
+function chatModel({ provider, id, api, baseUrl, headers, contextWindow }) {
   return {
     id,
     name: id,
@@ -49,7 +52,7 @@ function chatModel({ provider, id, api, baseUrl, headers }) {
     reasoning: false,
     input: ['text'],
     cost: COST,
-    contextWindow: 128000,
+    contextWindow: contextWindow ?? contextWindowFromEnv(),
     maxTokens: 4096,
     ...(headers ? { headers } : {}),
   };
@@ -118,11 +121,12 @@ function withoutAuthorization(base) {
   });
 }
 
-function createOpenAICompatProvider({ id, baseUrl, apiKey, modelList }) {
+function createOpenAICompatProvider({ id, baseUrl, apiKey, modelList, contextWindows, env }) {
   const key = String(apiKey || '');
   const api = key
     ? { stream: completionsStream, streamSimple: completionsStreamSimple }
     : { stream: withoutAuthorization(completionsStream), streamSimple: withoutAuthorization(completionsStreamSimple) };
+  const source = { contextWindows };
   return createProvider({
     id,
     name: 'OpenAI-compatible',
@@ -143,12 +147,13 @@ function createOpenAICompatProvider({ id, baseUrl, apiKey, modelList }) {
       id: modelId,
       api: 'openai-completions',
       baseUrl,
+      contextWindow: contextWindowForModel(source, modelId, env),
     })),
     api,
   });
 }
 
-function createGrokProxyProvider({ baseUrl, modelList, version, grokAuth, fetchImpl }) {
+function createGrokProxyProvider({ baseUrl, modelList, version, grokAuth, fetchImpl, contextWindows, env }) {
   const state = {
     refreshesLeft: 1,
     fetchImpl,
@@ -183,6 +188,7 @@ function createGrokProxyProvider({ baseUrl, modelList, version, grokAuth, fetchI
         api: 'openai-responses',
         baseUrl,
         headers,
+        contextWindow: contextWindowForModel({ contextWindows }, modelId, env),
       });
     }),
     api: {
@@ -224,13 +230,15 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
       if (id && apiFingerprints.has(id)) dropApi(id);
       return;
     }
-    const fingerprint = JSON.stringify([baseUrl, source.apiKey || '', ids]);
+    const fingerprint = JSON.stringify([baseUrl, source.apiKey || '', ids, source.contextWindows || null]);
     if (apiFingerprints.get(id) === fingerprint) return;
     models.setProvider(createOpenAICompatProvider({
       id,
       baseUrl,
       apiKey: source.apiKey || '',
       modelList: ids,
+      contextWindows: source.contextWindows,
+      env,
     }));
     apiFingerprints.set(id, fingerprint);
   }
@@ -240,9 +248,17 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
     if (!ids.length) ids.push(GROK_SESSION_MODEL);
     const baseUrl = grokProxyBase(env);
     const version = grokClientVersion(env);
-    const fingerprint = JSON.stringify([baseUrl, version, ids]);
+    const fingerprint = JSON.stringify([baseUrl, version, ids, source.contextWindows || null]);
     if (grokFingerprint === fingerprint) return;
-    const built = createGrokProxyProvider({ baseUrl, modelList: ids, version, grokAuth, fetchImpl });
+    const built = createGrokProxyProvider({
+      baseUrl,
+      modelList: ids,
+      version,
+      grokAuth,
+      fetchImpl,
+      contextWindows: source.contextWindows,
+      env,
+    });
     models.setProvider(built.provider);
     grokFingerprint = fingerprint;
     armGrok = built.arm;
@@ -303,16 +319,7 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
       const settings = await getSettings();
       const grokSignedIn = await signedIn();
       const roleId = conv?.roleId || undefined;
-      const sourceId = typeof conv?.modelSourceId === 'string' ? conv.modelSourceId.trim() : '';
-      const modelId = typeof conv?.modelId === 'string' ? conv.modelId.trim() : '';
-      let target = null;
-      if (sourceId && modelId) {
-        const source = normalizeSources(settings?.sources).find((item) => item.id === sourceId);
-        if (source && sourceAvailable(source, { grokSignedIn })) {
-          target = { source, model: modelId };
-        }
-      }
-      if (!target) target = resolveRoleTarget(settings, { roleId, grokSignedIn });
+      let target = resolveConversationTarget(settings, conv, { grokSignedIn });
       if (target?.source?.kind === 'grok' && !(await tokenReady())) {
         target = resolveRoleTarget(settings, { roleId, grokSignedIn: false });
         if (target?.source?.kind === 'grok') target = null;

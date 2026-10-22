@@ -499,3 +499,96 @@ test('POST /api/sources/test enables fetched models when none are enabled, and k
     await keptUpstream.close();
   }
 });
+
+test('PUT contextWindows merges, deletes with null, rejects invalid values, and conversation GET follows the model', async () => {
+  const fake = await startFake('alpha');
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_RETRY_MAX: '2' } });
+  try {
+    const sourceA = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'custom',
+      name: 'A',
+      baseUrl: fake.baseUrl,
+      apiKey: 'key-alpha-secret',
+      models: ['alpha', 'beta'],
+    });
+    assert.equal(sourceA.status, 201);
+    assert.equal(sourceA.body.contextWindows, undefined);
+    assert.equal(sourceA.body.defaultContextWindow, 128000);
+    const sourceId = sourceA.body.id;
+
+    const bound = await request(srv.base, 'PUT', '/api/settings', {
+      models: { default: { sourceId, model: 'alpha' } },
+    });
+    assert.equal(bound.status, 200);
+    assert.equal(bound.body.sources.find((source) => source.id === sourceId).defaultContextWindow, 128000);
+
+    const patched = await request(srv.base, 'PUT', `/api/sources/${sourceId}`, {
+      contextWindows: { alpha: 256000 },
+    });
+    assert.equal(patched.status, 200);
+    assert.deepEqual(patched.body.contextWindows, { alpha: 256000 });
+    assert.equal(patched.body.defaultContextWindow, 128000);
+
+    const merged = await request(srv.base, 'PUT', `/api/sources/${sourceId}`, {
+      contextWindows: { beta: 64000 },
+    });
+    assert.equal(merged.status, 200);
+    assert.deepEqual(merged.body.contextWindows, { alpha: 256000, beta: 64000 });
+
+    const settings = await request(srv.base, 'GET', '/api/settings');
+    const listed = settings.body.sources.find((source) => source.id === sourceId);
+    assert.deepEqual(listed.contextWindows, { alpha: 256000, beta: 64000 });
+    assert.equal(listed.defaultContextWindow, 128000);
+
+    const invalid = await request(srv.base, 'PUT', `/api/sources/${sourceId}`, {
+      contextWindows: { alpha: 12 },
+    });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(invalid.body, { error: 'invalid context window' });
+    const notInt = await request(srv.base, 'PUT', `/api/sources/${sourceId}`, {
+      contextWindows: { alpha: 256000.5 },
+    });
+    assert.equal(notInt.status, 400);
+    assert.deepEqual(notInt.body, { error: 'invalid context window' });
+    const still = await request(srv.base, 'GET', '/api/settings');
+    assert.deepEqual(still.body.sources.find((source) => source.id === sourceId).contextWindows, {
+      alpha: 256000,
+      beta: 64000,
+    });
+
+    const cidDefault = await openConversation(srv.base);
+    const gotDefault = await request(srv.base, 'GET', `/api/conversations/${cidDefault}`);
+    assert.equal(gotDefault.status, 200);
+    assert.equal(gotDefault.body.contextWindow, 256000);
+
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'pinned-window' });
+    assert.equal(ws.status, 201);
+    const pinned = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, {
+      title: 'beta-window',
+      modelSourceId: sourceId,
+      modelId: 'beta',
+    });
+    assert.equal(pinned.status, 201);
+    const gotPinned = await request(srv.base, 'GET', `/api/conversations/${pinned.body.id}`);
+    assert.equal(gotPinned.body.contextWindow, 64000);
+
+    const unset = await request(srv.base, 'PUT', `/api/sources/${sourceId}`, {
+      contextWindows: { beta: null },
+    });
+    assert.equal(unset.status, 200);
+    assert.deepEqual(unset.body.contextWindows, { alpha: 256000 });
+    const afterUnset = await request(srv.base, 'GET', `/api/conversations/${pinned.body.id}`);
+    assert.equal(afterUnset.body.contextWindow, 128000);
+
+    const cleared = await request(srv.base, 'PUT', `/api/sources/${sourceId}`, {
+      contextWindows: { alpha: null },
+    });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.contextWindows, undefined);
+    const afterClear = await request(srv.base, 'GET', `/api/conversations/${cidDefault}`);
+    assert.equal(afterClear.body.contextWindow, 128000);
+  } finally {
+    await stopServer(srv);
+    await fake.close();
+  }
+});

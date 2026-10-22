@@ -3,7 +3,7 @@
 import { retryDelayMs } from '@earendil-works/pi-ai/utils/retry';
 import { DEFAULT_RETRY_POLICY } from '@earendil-works/pi-durable';
 import { redactAuthText } from '../core/grok-auth.mjs';
-import { presentContext } from '../core/usage.mjs';
+import { overlayContextWindow, presentContext } from '../core/usage.mjs';
 import { latestCallUsage, reportedUsage } from './usage.mjs';
 
 /** messageId for an assistant partial that has no transcript entry yet. */
@@ -24,12 +24,13 @@ function ensureLiveId(ctx) {
   return ctx.liveId;
 }
 
-export function createMapContext({ retry = DEFAULT_RETRY_POLICY } = {}) {
+export function createMapContext({ retry = DEFAULT_RETRY_POLICY, contextWindow = null } = {}) {
   return {
     retry,
     toolInputs: new Map(),
     liveSeq: 0,
     liveId: null,
+    contextWindow: contextWindow ?? null,
   };
 }
 
@@ -71,9 +72,12 @@ function messageDone(entry) {
   return { event: 'message.done', data };
 }
 
-function usageEvent(entry) {
+function usageEvent(entry, ctx) {
   if (entry.kind !== 'pi.assistant') return null;
-  const presented = presentContext(reportedUsage(entry.model?.[0]));
+  const presented = overlayContextWindow(
+    presentContext(reportedUsage(entry.model?.[0])),
+    ctx?.contextWindow,
+  );
   if (!presented.usage) return null;
   return { event: 'usage', data: presented };
 }
@@ -192,7 +196,7 @@ export function mapHarnessBatch(batch, ctx) {
         ctx.liveId = null;
       }
       events.push(done);
-      const usage = usageEvent(ev.entry);
+      const usage = usageEvent(ev.entry, ctx);
       if (usage) events.push(usage);
       continue;
     }

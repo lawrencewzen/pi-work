@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { maskApiKey, isMaskedOrEmptyApiKey } from './settings.mjs';
 import { redactAuthText, GROK_SESSION_MODEL } from './grok-auth.mjs';
+import { contextWindowFromEnv } from './usage.mjs';
 
 /** OpenAI-compatible vendors. Ollama is the only preset that does not need a key. */
 export const VENDOR_PRESETS = [
@@ -23,6 +24,8 @@ export const SETTINGS_VERSION = 2;
 const SOURCE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 const ROLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const BLOCKED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const CONTEXT_WINDOW_MIN = 1000;
+const CONTEXT_WINDOW_MAX = 10_000_000;
 
 export function createSourceId() {
   return randomBytes(4).toString('hex');
@@ -71,6 +74,90 @@ export function normalizeModelList(value) {
     out.push(name);
   }
   return out;
+}
+
+export function isValidContextWindow(value) {
+  return Number.isInteger(value) && value >= CONTEXT_WINDOW_MIN && value <= CONTEXT_WINDOW_MAX;
+}
+
+/**
+ * User-overridden token windows keyed by trimmed model name.
+ * Illegal entries are dropped. Returns undefined when nothing remains.
+ */
+export function normalizeContextWindows(value) {
+  if (value == null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out = {};
+  for (const [rawName, raw] of Object.entries(value)) {
+    if (BLOCKED_KEYS.has(rawName)) continue;
+    const name = String(rawName).trim();
+    if (!name || BLOCKED_KEYS.has(name) || Object.prototype.hasOwnProperty.call(out, name)) continue;
+    if (!isValidContextWindow(raw)) continue;
+    out[name] = raw;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Merge a PATCH body onto stored windows. `null` deletes a name.
+ * Invalid shape or values return `{ error: 'invalid context window' }`.
+ */
+export function mergeContextWindows(current, patch) {
+  if (patch == null || typeof patch !== 'object' || Array.isArray(patch)) {
+    return { error: 'invalid context window' };
+  }
+  const next = { ...(normalizeContextWindows(current) || {}) };
+  for (const [rawName, raw] of Object.entries(patch)) {
+    if (BLOCKED_KEYS.has(rawName)) return { error: 'invalid context window' };
+    const name = String(rawName).trim();
+    if (!name || BLOCKED_KEYS.has(name)) return { error: 'invalid context window' };
+    if (raw === null) {
+      delete next[name];
+      continue;
+    }
+    if (!isValidContextWindow(raw)) return { error: 'invalid context window' };
+    next[name] = raw;
+  }
+  return { contextWindows: Object.keys(next).length ? next : undefined };
+}
+
+/** Source override for one model, otherwise `LLM_CONTEXT_WINDOW` / 128000. */
+export function contextWindowForModel(source, modelName, env = process.env) {
+  const name = typeof modelName === 'string' ? modelName.trim() : '';
+  const windows = source?.contextWindows;
+  if (name && windows && typeof windows === 'object' && !Array.isArray(windows)
+    && Object.prototype.hasOwnProperty.call(windows, name)
+    && isValidContextWindow(windows[name])) {
+    return windows[name];
+  }
+  return contextWindowFromEnv(env);
+}
+
+/**
+ * Same source+model pair `modelFor` uses, without the Grok token check.
+ * Missing or unavailable sources return null.
+ */
+export function resolveConversationTarget(settings, conv, { grokSignedIn = false } = {}) {
+  const roleId = conv?.roleId || undefined;
+  const sourceId = typeof conv?.modelSourceId === 'string' ? conv.modelSourceId.trim() : '';
+  const modelId = typeof conv?.modelId === 'string' ? conv.modelId.trim() : '';
+  let target = null;
+  if (sourceId && modelId) {
+    const source = normalizeSources(settings?.sources).find((item) => item.id === sourceId);
+    if (source && sourceAvailable(source, { grokSignedIn })) {
+      target = { source, model: modelId };
+    }
+  }
+  if (!target) target = resolveRoleTarget(settings, { roleId, grokSignedIn });
+  if (!target?.source || !target.model) return null;
+  return target;
+}
+
+/** Configured window for a conversation's resolved model, or null when none. */
+export function contextWindowForConversation(settings, conv, { grokSignedIn = false, env = process.env } = {}) {
+  const target = resolveConversationTarget(settings, conv, { grokSignedIn });
+  if (!target) return null;
+  return contextWindowForModel(target.source, target.model, env);
 }
 
 /**
@@ -133,6 +220,8 @@ function blankSource(partial) {
   if (lastTest) source.lastTest = lastTest;
   const catalog = normalizeModelList(partial.catalog);
   if (catalog?.length) source.catalog = catalog;
+  const contextWindows = normalizeContextWindows(partial.contextWindows);
+  if (contextWindows) source.contextWindows = contextWindows;
   return source;
 }
 
@@ -157,6 +246,7 @@ export function normalizeSources(list) {
         models: models.length ? models : [GROK_SESSION_MODEL],
         lastTest: item.lastTest,
         catalog: item.catalog,
+        contextWindows: item.contextWindows,
       }));
       continue;
     }
@@ -176,6 +266,7 @@ export function normalizeSources(list) {
       models,
       lastTest: item.lastTest,
       catalog: item.catalog,
+      contextWindows: item.contextWindows,
     }));
   }
   return out;
@@ -210,6 +301,8 @@ export function publicSource(source, grokStatus) {
   };
   if (normalized.catalog?.length) body.catalog = [...normalized.catalog];
   if (normalized.lastTest) body.lastTest = { ...normalized.lastTest };
+  if (normalized.contextWindows) body.contextWindows = { ...normalized.contextWindows };
+  body.defaultContextWindow = contextWindowFromEnv();
   if (normalized.kind === 'grok') {
     body.session = {
       signedIn: Boolean(grokStatus?.signedIn),
@@ -507,12 +600,22 @@ export function createApiSource(input = {}, createId = createSourceId) {
   };
 }
 
+function applyContextWindowsPatch(next, patch) {
+  if (!Object.prototype.hasOwnProperty.call(patch, 'contextWindows')) return '';
+  const merged = mergeContextWindows(next.contextWindows, patch.contextWindows);
+  if (merged.error) return merged.error;
+  if (merged.contextWindows) next.contextWindows = merged.contextWindows;
+  else delete next.contextWindows;
+  return '';
+}
+
 export function applySourcePatch(source, patch = {}) {
   if (!source) return { error: 'not found' };
   const next = {
     ...source,
     models: [...(source.models || [])],
     ...(source.lastTest ? { lastTest: { ...source.lastTest } } : {}),
+    ...(source.contextWindows ? { contextWindows: { ...source.contextWindows } } : {}),
   };
   if (source.kind === 'grok') {
     if (typeof patch.name === 'string' && patch.name.trim()) next.name = cleanName(patch.name, source.name);
@@ -521,6 +624,8 @@ export function applySourcePatch(source, patch = {}) {
       if (!models) return { error: 'invalid models' };
       next.models = models.length ? models : [GROK_SESSION_MODEL];
     }
+    const windowError = applyContextWindowsPatch(next, patch);
+    if (windowError) return { error: windowError };
     next.id = GROK_SOURCE_ID;
     next.kind = 'grok';
     next.vendor = 'grok';
@@ -548,6 +653,8 @@ export function applySourcePatch(source, patch = {}) {
     if (!models) return { error: 'invalid models' };
     next.models = models;
   }
+  const windowError = applyContextWindowsPatch(next, patch);
+  if (windowError) return { error: windowError };
   const prevOrigin = httpOrigin(effectiveBaseUrl(source));
   const nextOrigin = httpOrigin(effectiveBaseUrl(next));
   if (prevOrigin !== nextOrigin && !suppliedNewKey) next.apiKey = '';

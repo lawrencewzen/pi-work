@@ -90,6 +90,23 @@ test('usage events keep the latest call and ignore the cumulative ledger', () =>
   assert.equal(usage[1].data.contextLabel, '1.5k / 128k');
   assert.equal(usage[1].data.contextWindow, 128000);
   assert.notEqual(usage[1].data.usage.total, 1010 + 1520);
+  const overlayCtx = createMapContext({ contextWindow: 256000 });
+  const overlay = mapHarnessBatch([
+    {
+      type: 'message_end',
+      entry: assistant('first', {
+        input: 1000,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 1010,
+        contextWindow: 200000,
+      }),
+    },
+  ], overlayCtx);
+  const overlayUsage = overlay.events.find((ev) => ev.event === 'usage');
+  assert.equal(overlayUsage.data.contextWindow, 256000);
+  assert.equal(overlayUsage.data.contextLabel, '1k / 256k');
   assert.equal(events.some((ev) => JSON.stringify(ev).includes('99999')), false);
   const entries = [
     assistant('first', { input: 1000, output: 10, totalTokens: 1010 }),

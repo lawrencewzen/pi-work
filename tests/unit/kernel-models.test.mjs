@@ -96,6 +96,43 @@ test('role routing follows bindings and refreshes providers when a source change
   assert.equal(models.getModel(main.provider, main.modelId), undefined);
 });
 
+test('chatModel uses a source context window and re-registers when it changes', async () => {
+  const models = createModels();
+  let settings = {
+    version: 2,
+    sources: [{
+      id: 'srcdefault',
+      kind: 'api',
+      vendor: 'custom',
+      name: 'Default',
+      baseUrl: 'http://127.0.0.1:4101/v1',
+      apiKey: KEY_DEFAULT,
+      models: ['model-default', 'model-wide'],
+      contextWindows: { 'model-wide': 256000 },
+    }],
+    models: { default: { sourceId: 'srcdefault', model: 'model-default' } },
+  };
+  const routes = createKernelModels({
+    models,
+    getSettings: async () => settings,
+    env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
+  });
+  const main = await routes.modelFor({ roleId: null });
+  assert.equal(models.getModel(main.provider, 'model-default').contextWindow, 128000);
+  assert.equal(models.getModel(main.provider, 'model-wide').contextWindow, 256000);
+
+  settings = {
+    ...settings,
+    sources: settings.sources.map((source) => ({
+      ...source,
+      contextWindows: { 'model-default': 512000, 'model-wide': 256000 },
+    })),
+  };
+  const refreshed = await routes.modelFor({});
+  assert.equal(models.getModel(refreshed.provider, 'model-default').contextWindow, 512000);
+  assert.equal(models.getModel(refreshed.provider, 'model-wide').contextWindow, 256000);
+});
+
 test('modelFor prefers a conversation model, falls back when that source is down, and leaves subagents on the role binding', async () => {
   const models = createModels();
   let settings = {
