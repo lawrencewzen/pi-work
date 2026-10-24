@@ -3398,17 +3398,19 @@ function renderAgentPaneHtml() {
   const name = realSubagentName(agent);
   const bits = subagentRowBits(agent);
   const msgs = dedupeMessages(state.viewingAgent?.messages || []);
+  const firstUser = msgs.find((m) => isPromptUserMessage(m));
+  const rest = firstUser ? msgs.filter((m) => m !== firstUser) : msgs;
   const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant' && m.text);
   const done = st === 'done';
   const pending = state.pendingSubagentNudges[agent.id] || [];
-  const threadMsgs = done && lastAssistant ? msgs.filter((m) => m !== lastAssistant) : msgs;
+  const threadMsgs = done && lastAssistant ? rest.filter((m) => m !== lastAssistant) : rest;
   let thread;
   if (state.viewingAgent?.loading && !msgs.length) thread = `<div class="pane-empty">${escapeHtml(t('subagent_loading'))}</div>`;
   else if (!threadMsgs.length && !pending.length && !(done && lastAssistant) && st !== 'stopped') {
     thread = `<div class="pane-empty">${escapeHtml(t('subagent_empty'))}</div>`;
   } else thread = threadBlocksHtml(threadMsgs, { senderName: name }).join('');
   const pendingHtml = pending.map(pendingNudgeHtml).join('');
-  const brief = String(agent.brief || '').trim();
+  const brief = String(agent.brief || firstUser?.text || '').trim();
   const briefHtml = brief
     ? `<div class="agent-pane-brief" data-testid="subagent-brief"><span class="k">${escapeHtml(t('subagent_brief'))}</span><span class="v">${escapeHtml(brief)}</span></div>`
     : '';

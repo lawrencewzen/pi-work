@@ -69,14 +69,27 @@ function mockedConversation(cid, bag) {
 
 function agentMessages(aid, extras = {}) {
   const known = AGENTS.find((item) => item.id === aid) || { id: aid };
+  const prompt = known.brief || '请处理 auth';
   return {
     ...known,
     ...extras,
     messages: extras.messages || [
-      { id: `${aid}-u`, role: 'user', text: '请处理 auth' },
+      { id: `${aid}-u`, role: 'user', text: prompt },
       { id: `${aid}-a`, role: 'assistant', text: '正在处理' },
     ],
   };
+}
+
+function countText(hay, needle) {
+  let n = 0;
+  let from = 0;
+  while (needle && from <= hay.length) {
+    const i = hay.indexOf(needle, from);
+    if (i < 0) return n;
+    n += 1;
+    from = i + needle.length;
+  }
+  return n;
 }
 
 async function mockSubagentApi(page, bag) {
@@ -198,6 +211,9 @@ test('right panel tabs, overview, breadcrumb, interrupt box, and narrow overflow
     await expect(page.getByTestId('subagent-banner-text')).toContainText('给登录页写测试');
     await expect(page.getByTestId('subagent-brief')).toContainText('主 Agent 分派的任务');
     await expect(page.getByTestId('subagent-brief')).toContainText('第二行不应出现在卡片摘要');
+    const testerPane = await page.getByTestId('subagent-pane').innerText();
+    expect(countText(testerPane, '第二行不应出现在卡片摘要')).toBe(1);
+    await expect(page.getByTestId('subagent-thread').locator('[data-testid=message][data-role=user]')).toHaveCount(0);
     expect(await page.locator('#right-panel .tabs-nav').innerHTML()).toBe(tabsBefore);
     await expect.poll(() => tabLabels(page)).toEqual(['变更', '文件', '子 Agent 4']);
 
@@ -245,7 +261,10 @@ test('right panel tabs, overview, breadcrumb, interrupt box, and narrow overflow
 
     await auditorCard.click();
     await expect(page.getByTestId('subagent-pane')).toBeVisible();
-    await expect(page.getByTestId('subagent-brief')).toHaveCount(0);
+    await expect(page.getByTestId('subagent-brief')).toContainText('请处理 auth');
+    const auditorPane = await page.getByTestId('subagent-pane').innerText();
+    expect(countText(auditorPane, '请处理 auth')).toBe(1);
+    await expect(page.getByTestId('subagent-thread').locator('[data-testid=message][data-role=user]')).toHaveCount(0);
     await expect(page.getByTestId('subagent-input')).toBeVisible();
     const detailText = await page.locator('#right-viewport').innerText();
     expect(detailText).not.toMatch(/NaN|undefined/);

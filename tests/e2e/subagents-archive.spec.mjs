@@ -174,7 +174,8 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(page.getByTestId('subagent-banner-text')).toHaveText(FOREGROUND_TASK);
     await expect(page.locator('.agent-pane-tag')).toHaveText('子 Agent');
     const transcript = page.getByTestId('subagent-pane');
-    await expect(transcript.locator('[data-testid=message][data-role=user]')).toContainText(FOREGROUND_TASK);
+    await expect(page.getByTestId('subagent-brief')).toContainText(FOREGROUND_TASK);
+    await expect(transcript.locator('[data-testid=subagent-thread] [data-testid=message][data-role=user]')).toHaveCount(0);
     await expect(transcript.locator('[data-testid=message][data-role=assistant]')).toContainText(CHILD_TEXT);
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await expect(page.getByTestId('chat-input')).toBeEnabled();
