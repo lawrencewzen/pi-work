@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { maskApiKey, isMaskedOrEmptyApiKey } from './settings.mjs';
 import { redactAuthText, GROK_SESSION_MODEL } from './grok-auth.mjs';
 import { contextWindowFromEnv } from './usage.mjs';
+import { catalogContextWindow, lookupModelCatalog } from '../kernel/model-catalog.mjs';
 
 /** OpenAI-compatible vendors. Ollama is the only preset that does not need a key. */
 export const VENDOR_PRESETS = [
@@ -121,8 +122,20 @@ export function mergeContextWindows(current, patch) {
   return { contextWindows: Object.keys(next).length ? next : undefined };
 }
 
-/** Source override for one model, otherwise `LLM_CONTEXT_WINDOW` / 128000. */
-export function contextWindowForModel(source, modelName, env = process.env) {
+function lookupUrlForSource(source, lookupUrl) {
+  if (lookupUrl != null && String(lookupUrl).trim()) return String(lookupUrl).trim();
+  if (!source || source.kind === 'grok') return '';
+  return effectiveBaseUrl(source) || source.baseUrl || '';
+}
+
+function defaultContextWindowForModel(modelName, baseUrl, env = process.env) {
+  const fromCatalog = catalogContextWindow(lookupModelCatalog(modelName, baseUrl));
+  if (fromCatalog != null) return fromCatalog;
+  return contextWindowFromEnv(env);
+}
+
+/** User override, else pi-ai catalog, else `LLM_CONTEXT_WINDOW` / 128000. */
+export function contextWindowForModel(source, modelName, env = process.env, lookupUrl) {
   const name = typeof modelName === 'string' ? modelName.trim() : '';
   const windows = source?.contextWindows;
   if (name && windows && typeof windows === 'object' && !Array.isArray(windows)
@@ -130,7 +143,21 @@ export function contextWindowForModel(source, modelName, env = process.env) {
     && isValidContextWindow(windows[name])) {
     return windows[name];
   }
-  return contextWindowFromEnv(env);
+  return defaultContextWindowForModel(name, lookupUrlForSource(source, lookupUrl), env);
+}
+
+/** Per-model catalog/env defaults for settings UI restore. */
+export function defaultContextWindowsForSource(source, env = process.env) {
+  const normalized = source && typeof source === 'object' ? source : {};
+  const names = Array.isArray(normalized.models) ? normalized.models : [];
+  const baseUrl = lookupUrlForSource(normalized);
+  const out = {};
+  for (const raw of names) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (!name || Object.prototype.hasOwnProperty.call(out, name)) continue;
+    out[name] = defaultContextWindowForModel(name, baseUrl, env);
+  }
+  return out;
 }
 
 /**
@@ -303,6 +330,7 @@ export function publicSource(source, grokStatus) {
   if (normalized.lastTest) body.lastTest = { ...normalized.lastTest };
   if (normalized.contextWindows) body.contextWindows = { ...normalized.contextWindows };
   body.defaultContextWindow = contextWindowFromEnv();
+  body.defaultContextWindows = defaultContextWindowsForSource(normalized);
   if (normalized.kind === 'grok') {
     body.session = {
       signedIn: Boolean(grokStatus?.signedIn),

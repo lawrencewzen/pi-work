@@ -185,8 +185,15 @@ function contextWindowMap(source) {
   return map;
 }
 
-/** Source default when the user has not overridden a model. */
-export function sourceDefaultContextWindow(source) {
+/** Source default when the user has not overridden a model. Prefers per-model catalog values. */
+export function sourceDefaultContextWindow(source, model) {
+  const name = typeof model === 'string' ? model.trim() : '';
+  const map = source?.defaultContextWindows;
+  if (name && map && typeof map === 'object' && !Array.isArray(map)
+    && Object.prototype.hasOwnProperty.call(map, name)) {
+    const n = positiveToken(map[name]);
+    if (n != null) return n;
+  }
   return positiveToken(source?.defaultContextWindow) ?? DEFAULT_CONTEXT_WINDOW;
 }
 
@@ -198,7 +205,7 @@ export function sourceModelContextWindow(source, model) {
     const n = positiveToken(map[name]);
     if (n != null) return n;
   }
-  return sourceDefaultContextWindow(source);
+  return sourceDefaultContextWindow(source, name);
 }
 
 export function hasCustomContextWindow(source, model) {

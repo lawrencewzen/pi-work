@@ -506,10 +506,22 @@ test('publicSource returns stored contextWindows and defaultContextWindow', () =
   }));
   assert.deepEqual(pub.contextWindows, { 'gpt-4o': 256000 });
   assert.equal(pub.defaultContextWindow, usage.contextWindowFromEnv());
+  assert.deepEqual(pub.defaultContextWindows, { 'gpt-4o': 128000 });
 
   const plain = publicSource(apiSource());
   assert.equal(plain.contextWindows, undefined);
   assert.equal(plain.defaultContextWindow, usage.contextWindowFromEnv());
+  assert.deepEqual(plain.defaultContextWindows, { 'gpt-4o': 128000 });
+
+  const flash = publicSource(apiSource({
+    vendor: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    models: ['deepseek-flash', 'not-a-real-model'],
+  }));
+  assert.equal(flash.defaultContextWindow, usage.contextWindowFromEnv());
+  assert.equal(flash.defaultContextWindows['deepseek-flash'], 1_000_000);
+  assert.equal(flash.defaultContextWindows['not-a-real-model'], usage.contextWindowFromEnv());
 });
 
 test('conversation context window follows the resolved model, else stays unset', () => {
@@ -527,6 +539,18 @@ test('conversation context window follows the resolved model, else stays unset',
   };
   assert.equal(contextWindowForModel(alpha, 'alpha'), 256000);
   assert.equal(contextWindowForModel(alpha, 'other'), 128000);
+  const flashSource = apiSource({
+    id: 'cccc',
+    vendor: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    models: ['deepseek-flash'],
+  });
+  assert.equal(contextWindowForModel(flashSource, 'deepseek-flash'), 1_000_000);
+  assert.equal(contextWindowForModel({
+    ...flashSource,
+    contextWindows: { 'deepseek-flash': 256000 },
+  }, 'deepseek-flash'), 256000);
   assert.equal(contextWindowForConversation(settings, { roleId: null }), 256000);
   assert.equal(contextWindowForConversation(settings, {
     modelSourceId: 'bbbb',

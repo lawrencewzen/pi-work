@@ -13,7 +13,7 @@
 | `LLM_API` | `faux` 时使用演示模型；其他值不单独打开演示模型 | 测试可设 `faux` |
 | `PI_WORK_RETRY_BASE_MS` / `PI_WORK_RETRY_MAX` | 交给 Harness `retry`。`PI_WORK_RETRY_MAX` 含第一次尝试，默认 5，`maxRetries` 为该值减 1。`baseDelayMs` 默认 200 | 50 / 5 |
 | `PI_WORK_STREAM_TIMEOUT_MS` | 交给 Harness `stream.timeoutMs`。超时后按 retry 重试。默认 120000 | 不设 |
-| `PI_WORK_MAX_OUTPUT_TOKENS` | OpenAI 兼容源和 Grok 源的 `maxTokens`。默认 32768；非正整数回落默认 | 不设 |
+| `PI_WORK_MAX_OUTPUT_TOKENS` | 显式设置且为正整数时，覆盖 pi-ai 目录里该模型的 `maxTokens`。未设或非正整数时：目录有则用目录值，否则 32768。最终不超过该模型的上下文窗口 | 不设 |
 | `PI_WORK_TOKEN` | 可选登录。不设时 `/api` 与 SSE 不鉴权，不读不写 `auth.token`，`GET /login` 一律 302 `/`，启动不打印 `PI_WORK_LOGIN` / `PI_WORK_TOKEN`。设置后所有 `/api` 需 `Authorization: Bearer` 或 cookie `pi_work_token`；SSE 可用一次性 `?ticket=`；`GET /login?token=` 校验后种 cookie 并 302 `/`，否则 401 | 不设 |
 | `PI_WORK_ALLOWED_HOSTS` | 逗号分隔的额外 Host。不设 `PI_WORK_TOKEN` 且本变量非空时，启动打印一行警告：服务对这些主机开放且没有鉴权 | 不设 |
 | `PI_WORK_KERNEL` | 已废弃，启动不再读取。运行时始终是 Pi Durable Harness | 不设 |
@@ -51,7 +51,7 @@
 | `GET /workspaces` | | `[{id,name,path}]` |
 | `POST /workspaces/:wid/conversations` | `{title?, roleId?, modelSourceId?, modelId?}` | `201 {id, workspaceId, title, status:'idle', modelSourceId, modelId}`。`modelSourceId`/`modelId` 成对可选；都缺或都为 `null` 表示跟随默认角色绑定。来源不存在、或该来源模型列表里没有这个模型 → 400 `{errors}`。若仍带 `pipelineId` 则忽略、不报错 |
 | `GET /workspaces/:wid/conversations?q=` | | 列表，按更新时间倒序 |
-| `GET /conversations/:cid` | | `{id,title,status,roleId,modelSourceId,modelId,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 为该对话实际模型（与 `modelFor` 相同的源 + 模型名）在来源 `contextWindows` 里的设置，没有则用 `defaultContextWindow`（`LLM_CONTEXT_WINDOW`，默认 128000）。用户设置优先于 usage 里报的窗口。对话没有可用模型时仍是 usage 窗口或环境默认值。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
+| `GET /conversations/:cid` | | `{id,title,status,roleId,modelSourceId,modelId,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 为该对话实际模型（与 `modelFor` 相同的源 + 模型名）的窗口：用户在来源 `contextWindows` 里的设置 > pi-ai 模型目录里该模型的 `contextWindow` > `LLM_CONTEXT_WINDOW` > 128000。用户设置优先于 usage 里报的窗口。对话没有可用模型时仍是 usage 窗口或环境默认值。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
 | `POST /conversations/:cid/messages` | `{text}` | `202 {runId, status:'running'}`。对话忙时用 `whenBusy:'steer'` 插入当前运行，不返回 409 |
 | `PATCH /conversations/:cid` | `{roleId?, modelSourceId?, modelId?}` | `200 {id, roleId, modelSourceId, modelId, status, agents}`。`agents` 是切换后的侧栏角色列表，客户端应立刻用它刷新，不必整页刷新。空 `roleId` 表示默认 Agent。`modelSourceId`/`modelId` 为 `null` 表示跟随默认绑定。来源不存在或模型不在该来源列表里 → 400 `{errors}`。若仍带 `pipelineId` 则忽略、不报错。改 `roleId` 且 `running` 时 409 `{error:'err_role_busy'}`。只改模型时运行中也可改，下一轮生效。未知角色 400 |
 | `POST /conversations/:cid/stop` | | `200 {status:'stopped'}`。中止当前运行，并停掉后台子 Agent |
@@ -147,7 +147,7 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 - 已登录 Grok 时，字符串模型挂到 Grok 来源；否则挂到新建的那条 API 来源。
 - 迁移后顶层 `apiKey`、`baseUrl` 清空，`provider` 回到 `openai`，库里的 JSON 不再保留这三个字段。
 
-来源对象：`{ id, kind:'api'|'grok', vendor, name, baseUrl, apiKey, hasApiKey, models:string[], catalog?:string[], lastTest?:{ ok, at, error?, code?, status? }, contextWindows?:{ [模型名]: number }, defaultContextWindow: number }`。`models` 是已启用、会出现在角色下拉里的名字。`catalog` 只在来源行探测成功后出现，是这次拉到的完整列表；编辑抽屉用它把还没启用的新模型显示成未勾选。`contextWindows` 只含用户改过的模型上限（正整数 token 数）；没有改过则省略。`defaultContextWindow` 等于 `contextWindowFromEnv()`（`LLM_CONTEXT_WINDOW`，默认 128000）。Grok 的 id 固定为 `grok`，并带 `session:{ signedIn, email, expiresAt }`。`lastTest.error` 与探测失败文本都要去掉密钥（`sk-***`、以及原文里的完整 key）。`lastTest.code` 与下面探测响应的 `code` 相同；`lastTest.status` 只在 HTTP 响应失败时出现。
+来源对象：`{ id, kind:'api'|'grok', vendor, name, baseUrl, apiKey, hasApiKey, models:string[], catalog?:string[], lastTest?:{ ok, at, error?, code?, status? }, contextWindows?:{ [模型名]: number }, defaultContextWindow: number, defaultContextWindows:{ [模型名]: number } }`。`models` 是已启用、会出现在角色下拉里的名字。`catalog` 只在来源行探测成功后出现，是这次拉到的完整列表；编辑抽屉用它把还没启用的新模型显示成未勾选。`contextWindows` 只含用户改过的模型上限（正整数 token 数）；没有改过则省略。`defaultContextWindow` 等于 `contextWindowFromEnv()`（`LLM_CONTEXT_WINDOW`，默认 128000），仍是整源回落。`defaultContextWindows` 给每个已启用模型一个默认上下文：pi-ai 目录里该模型的 `contextWindow`，查不到则用 `defaultContextWindow`。匹配规则：模型 id 相同且源 `baseUrl` 主机名相同；否则 id 相同且全目录唯一。前端输入框和「恢复默认」先看 `defaultContextWindows[模型]`。Grok 的 id 固定为 `grok`，并带 `session:{ signedIn, email, expiresAt }`。`lastTest.error` 与探测失败文本都要去掉密钥（`sk-***`、以及原文里的完整 key）。`lastTest.code` 与下面探测响应的 `code` 相同；`lastTest.status` 只在 HTTP 响应失败时出现。
 
 | 方法 路径 | 请求 | 响应 |
 |---|---|---|

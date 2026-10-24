@@ -104,8 +104,10 @@ export function startFakeModel({ mode, text, access1 = 'access-1', access2 = 'ac
       res.end('bad body');
       return;
     }
+    record.raw = raw;
     try {
       const parsed = JSON.parse(raw);
+      record.body = parsed;
       if (typeof parsed?.model === 'string') record.model = parsed.model;
     } catch { /* a token request is form-encoded */ }
     seen.push(record);

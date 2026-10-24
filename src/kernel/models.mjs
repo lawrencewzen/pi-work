@@ -21,15 +21,43 @@ import {
   resolveRoleTarget,
   sourceAvailable,
 } from '../core/model-sources.mjs';
+import {
+  catalogFingerprint,
+  catalogMaxTokens,
+  lookupModelCatalog,
+} from './model-catalog.mjs';
 
 const COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 export const GROK_PROVIDER_ID = 'grok-proxy';
 export const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
 
+function clonePlain(value) {
+  if (value == null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function explicitMaxOutputTokens(env = process.env) {
+  const raw = env?.PI_WORK_MAX_OUTPUT_TOKENS;
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /** Positive integer from `PI_WORK_MAX_OUTPUT_TOKENS`, otherwise 32768. */
 export function maxOutputTokensFromEnv(env = process.env) {
-  const n = Number(env?.PI_WORK_MAX_OUTPUT_TOKENS);
-  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_OUTPUT_TOKENS;
+  return explicitMaxOutputTokens(env) ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+function capMaxTokens(tokens, contextWindow) {
+  if (!Number.isInteger(contextWindow) || contextWindow <= 0) return tokens;
+  return Math.min(tokens, contextWindow);
+}
+
+function maxTokensForModel(catalog, contextWindow, env) {
+  const explicit = explicitMaxOutputTokens(env);
+  const fromCatalog = catalogMaxTokens(catalog);
+  const tokens = explicit ?? fromCatalog ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  return capMaxTokens(tokens, contextWindow);
 }
 
 /**
@@ -49,20 +77,29 @@ export function providerIdForSource(source) {
   return `src-${source.id}`;
 }
 
-function chatModel({ provider, id, api, baseUrl, headers, contextWindow, env }) {
-  return {
+function chatModel({ provider, id, api, baseUrl, headers, source, env }) {
+  const catalog = lookupModelCatalog(id, baseUrl);
+  const contextWindow = contextWindowForModel(source, id, env, baseUrl);
+  const model = {
     id,
     name: id,
     api,
     provider,
     baseUrl,
+    // Catalog reasoning/thinkingLevelMap would inject thinking fields on
+    // DeepSeek when no thinking level is selected. Keep the previous request
+    // shape; see tests that compare fake-server bodies.
     reasoning: false,
-    input: ['text'],
-    cost: COST,
-    contextWindow: contextWindow ?? contextWindowFromEnv(),
-    maxTokens: maxOutputTokensFromEnv(env),
+    input: Array.isArray(catalog?.input) && catalog.input.length ? clonePlain(catalog.input) : ['text'],
+    cost: catalog?.cost && typeof catalog.cost === 'object' ? clonePlain(catalog.cost) : COST,
+    contextWindow: contextWindow ?? contextWindowFromEnv(env),
+    maxTokens: maxTokensForModel(catalog, contextWindow, env),
     ...(headers ? { headers } : {}),
   };
+  if (catalog?.compat && typeof catalog.compat === 'object' && !Array.isArray(catalog.compat)) {
+    model.compat = clonePlain(catalog.compat);
+  }
+  return model;
 }
 
 function modelIds(source, extra) {
@@ -154,7 +191,7 @@ function createOpenAICompatProvider({ id, baseUrl, apiKey, modelList, contextWin
       id: modelId,
       api: 'openai-completions',
       baseUrl,
-      contextWindow: contextWindowForModel(source, modelId, env),
+      source,
       env,
     })),
     api,
@@ -196,7 +233,7 @@ function createGrokProxyProvider({ baseUrl, modelList, version, grokAuth, fetchI
         api: 'openai-responses',
         baseUrl,
         headers,
-        contextWindow: contextWindowForModel({ contextWindows }, modelId, env),
+        source: { contextWindows },
         env,
       });
     }),
@@ -245,6 +282,7 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
       ids,
       source.contextWindows || null,
       maxOutputTokensFromEnv(env),
+      ids.map((modelId) => catalogFingerprint(modelId, baseUrl)),
     ]);
     if (apiFingerprints.get(id) === fingerprint) return;
     models.setProvider(createOpenAICompatProvider({
@@ -269,6 +307,7 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
       ids,
       source.contextWindows || null,
       maxOutputTokensFromEnv(env),
+      ids.map((modelId) => catalogFingerprint(modelId, baseUrl)),
     ]);
     if (grokFingerprint === fingerprint) return;
     const built = createGrokProxyProvider({
