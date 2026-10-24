@@ -107,7 +107,6 @@ body { font-family: var(--font); font-size: inherit; line-height: 1.6; backgroun
 .app-shell { position: relative; background: var(--bg); min-height: 560px; }
 .app-shell.is-dragging { user-select: none; cursor: col-resize; }
 .is-hidden { display: none !important; }
-kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); background: none; border: none; }
 .caret { font-size: 10px; color: var(--faint); }
 
 /* Shared small controls */
@@ -152,13 +151,12 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 .left-top { display: flex; align-items: center; gap: 6px; height: 52px; padding: 0 8px 0 12px; flex-shrink: 0; }
 .left-top .icon-btn { flex-shrink: 0; }
 .new-chat-btn {
-  flex: 1; min-width: 0; overflow: hidden; display: flex; justify-content: space-between; align-items: center; padding: 7px 10px;
+  flex: 1; min-width: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; padding: 7px 10px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; cursor: pointer; color: var(--ink);
 }
 .new-chat-btn > span {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.new-chat-btn .kbd { flex-shrink: 0; }
 .new-chat-btn:hover { background: var(--panel-h); }
 .left-body { flex: 1; overflow: auto; padding: 0 8px 12px; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
 .left-section-label { display: flex; justify-content: space-between; align-items: center; padding: 6px 4px 6px 8px; font-size: 12px; color: var(--faint); }
@@ -677,7 +675,6 @@ button.file-tree-row:hover { background: var(--side); }
 .ctx-menu-item:hover { background: var(--hover); }
 .ctx-menu-item.is-danger { color: var(--fail); }
 .ctx-menu-item:disabled { color: var(--dis); cursor: default; background: transparent; }
-.ctx-menu-key { font-family: var(--mono); font-size: 11px; color: var(--faint); }
 .ctx-menu-sep { height: 1px; background: var(--line3); margin: 4px 2px; }
 
 @media (max-width: 860px) {
