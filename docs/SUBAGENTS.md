@@ -27,10 +27,19 @@ curl -sS http://127.0.0.1:3000/api/conversations/<cid>
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/messages
 # → {id, roleId, name, status, mode, messages}
 
+curl -sS -X POST http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/messages \
+  -H 'content-type: application/json' -d '{"text":"改用 pnpm"}'
+# → 200 {ok:true}  子 Agent 须 running；空文本 400，未知 404，非运行 409
+
+curl -sS -X POST http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/stop
+# → 200 {status:stopped}  只停这一个子对话，主 Agent 和其他子 Agent 继续
+
 curl -sN -H 'Accept: text/event-stream' \
   http://127.0.0.1:3000/api/conversations/<cid>/events
 # event: agent   data: same fields as the chip, including mode
 ```
+
+`POST .../agents/:aid/messages` 把用户的话 `steer` 进该子对话，并给主对话写一条 `app.pi-work.user-to-subagent`（带 model 的 write，不新开一轮）。主对话 GET 的 `messages` 把它映射成 `role:'note'`，文案是「你对 <名字> 说：<text>」。子 Agent 自己的记录里仍是普通 user 消息。子 Agent 只有一层，上级一律是主对话。
 
 The list is rebuilt from the Harness after a process restart: tool-result `details.conversationId`, the ownership index, the background name document, and each child's `viewState`. Child transcript events stay on the child conversation; the parent SSE does not mix in `message.delta` / `tool.*` from the child.
 

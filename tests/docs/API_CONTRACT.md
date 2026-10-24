@@ -70,7 +70,7 @@ status 取值：`idle | running | waiting | failed | done | stopped`。应用库
 
 `POST /workspaces` 请求 `{name, gitUrl, branch?}` 时把仓库克隆到数据目录，并创建 `source:'git'` 的工作区。成功 `201`，响应里的 `gitUrl` 已去掉 `user:pass@`。非法地址 `400 {error:'invalid gitUrl'}`；非法分支 `400 {error:'invalid branch'}`。克隆失败 `400 {error:'git clone failed', code}`，`code` 为 `git_not_found` | `auth_failed` | `cert_failed` | `repo_not_found` | `branch_not_found` | `network` | `timeout` | `unknown`。只有 `unknown` 另外带 `detail`（脱敏后的 stderr 末几行）。`http://` 的主机不在 `PI_WORK_GIT_HTTP_HOSTS` 里时，与非法地址相同。
 
-消息 `messages[]`：`{id, role:'user'|'assistant'|'tool', text?, model?, stopReason?, kind?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。助手消息在 transcript 里有模型名时带 `model`（这条回复实际调用的模型 id）；没有则不加该字段。用户和工具消息不加 `model`。助手消息有 `stopReason` 时带上（如 `stop`、`length`）。以 `[auto-continue]` 开头的用户消息带 `kind:'auto-continue'`，界面不画成用户气泡。
+消息 `messages[]`：`{id, role:'user'|'assistant'|'tool'|'note', text?, model?, stopReason?, kind?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。助手消息在 transcript 里有模型名时带 `model`（这条回复实际调用的模型 id）；没有则不加该字段。用户、工具和 `note` 消息不加 `model`。助手消息有 `stopReason` 时带上（如 `stop`、`length`）。以 `[auto-continue]` 开头的用户消息带 `kind:'auto-continue'`，界面不画成用户气泡。`role:'note'` 是给某个子 Agent 插话后写在主对话记录里的通知，不是用户气泡。
 
 ### 旧对话
 
@@ -210,6 +210,8 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 | 方法 路径 | 响应 |
 |---|---|
 | `GET /api/conversations/:cid/agents/:aid/messages` | `200 {id, roleId, name, status, mode, messages}`。`mode` 与芯片相同。`messages` 与父对话消息同形。对话不存在 `404 {error:'conversation not found'}`；`aid` 不是这个对话的子 Agent `404 {error:'agent not found'}` |
+| `POST /api/conversations/:cid/agents/:aid/messages` | `{text}`。`200 {ok:true}`。对运行中的子对话 `submit({type:'input', content, whenBusy:'steer'})`；再给主对话写一条 `app.pi-work.user-to-subagent`，不唤醒主对话。空文本 `400 {error:'text required'}`；未知对话或子 Agent `404`；`status` 不是 `running` `409 {error:'agent not running'}` |
+| `POST /api/conversations/:cid/agents/:aid/stop` | `200 {status:'stopped'}`。只 abort 这个子对话，不碰主对话和其他子 Agent。未知 `404`。主对话 SSE 推一条该子 Agent 的 `agent` 事件，`status` 为 `stopped` |
 | `POST /api/conversations/:cid/stop` | `200 {status:'stopped'}`。停掉这条对话里的全部工作，包括后台子 Agent |
 
 暂停仍不是本接口的停止语义。

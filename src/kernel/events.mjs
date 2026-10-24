@@ -5,6 +5,7 @@ import { DEFAULT_RETRY_POLICY } from '@earendil-works/pi-durable';
 import { redactAuthText } from '../core/grok-auth.mjs';
 import { overlayContextWindow, presentContext } from '../core/usage.mjs';
 import { isAutoContinueText } from './continuation.mjs';
+import { parentNoteText, USER_TO_SUBAGENT_KIND } from './subagent-control.mjs';
 import { latestCallUsage, reportedUsage } from './usage.mjs';
 
 /** messageId for an assistant partial that has no transcript entry yet. */
@@ -278,6 +279,19 @@ export function messagesFromEntries(entries) {
   const answered = new Set();
   const messages = [];
   for (const entry of entries || []) {
+    if (entry?.kind === USER_TO_SUBAGENT_KIND) {
+      const data = entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data)
+        ? entry.data
+        : {};
+      const name = data.name == null ? '' : String(data.name);
+      const text = data.text == null ? '' : String(data.text);
+      messages.push({
+        id: String(entry.id),
+        role: 'note',
+        text: parentNoteText(name, text),
+      });
+      continue;
+    }
     if (entry?.kind === 'pi.user' || entry?.kind === 'pi.assistant') {
       const text = textOf(entry.model?.[0]?.content);
       if (entry.kind === 'pi.assistant' && !text) continue;
