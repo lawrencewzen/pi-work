@@ -18,7 +18,7 @@ import { textOf } from './events.mjs';
 
 export const DELEGATE_DESCRIPTION = 'Run a self-contained task on a subagent and return its answer. The subagent cannot see this conversation, or your instructions; put everything it needs in task: what to do, where, when it is done, and what to report back.';
 export const SUBAGENT_DESCRIPTION = `${DELEGATE_DESCRIPTION} On spawn, pass that text as message. \`name\` is used later with send, wait, and stop.`;
-const DISPATCH_TOOLS = new Set(['delegate', 'subagent']);
+const DISPATCH_TOOLS = new Set(['delegate', 'subagent', 'skill']);
 const NAME_CAP = 30;
 
 // Example 23: the main conversation maps background names to child conversations.
@@ -145,8 +145,8 @@ async function latestAssistantText(api, conversationId, context) {
 
 /**
  * Dispatch tools for the main agent. A child is configured with this extension
- * removed, so it cannot delegate or spawn. `prepareChild` blanks instructions
- * and keeps the parent's workspace/plugin tools, model, and cwd.
+ * removed, so it cannot delegate, spawn, or load skills. `prepareChild` blanks
+ * instructions and keeps the parent's workspace/plugin tools, model, and cwd.
  */
 export function createSubagentExtension({
   prepareChild,

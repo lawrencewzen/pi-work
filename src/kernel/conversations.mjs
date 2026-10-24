@@ -105,7 +105,10 @@ export async function openConversationKernel({
     prepareChild: (parent) => subagentApi.prepareChild(parent),
     onChild: (parentId, childId) => subagentApi.onChild?.(parentId, childId),
   });
-  agentBridge.extraTools = () => subagentExtension.tools || [];
+  agentBridge.extraTools = () => [
+    ...(agentBridge.skillTool ? [agentBridge.skillTool] : []),
+    ...(subagentExtension.tools || []),
+  ];
   registry.install(subagentExtension);
   if (String(env.PI_WORK_FAUX_SCRIPT || '').trim()) registry.install(createScriptFloorExtension());
   const kernel = await openKernel({

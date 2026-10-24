@@ -1,4 +1,4 @@
-import { buildSkillPrompt } from './skills.mjs';
+import { buildSkillPrompt, loadSkillBody, unknownSkillError } from './skills.mjs';
 import { pluginHandlers } from './plugins.mjs';
 
 export function createExtensionHost({ skillDirs = [], pluginDirs = [], getSettings } = {}) {
@@ -16,6 +16,15 @@ export function createExtensionHost({ skillDirs = [], pluginDirs = [], getSettin
       } catch (err) {
         console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
         return '';
+      }
+    },
+    async loadSkill(name) {
+      try {
+        const current = await settings();
+        return await loadSkillBody(skillDirs, current.skills || {}, name);
+      } catch (err) {
+        console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
+        return { error: unknownSkillError(name, []) };
       }
     },
     async pluginTools() {

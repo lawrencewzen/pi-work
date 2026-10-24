@@ -99,7 +99,7 @@ OpenAI 兼容来源同样用 `createProvider`，`api` 用 `openai-completions`�
 | Agent 芯片切换角色；草稿对话 | 空闲时 `configure`。草稿是 `public/app.js` 的 `state.draft`，第一条消息才 `POST` 创建对话 | 需适配切换；草稿留在前端。忙碌时 409 仍由宿主看对话是不是 busy |
 | SSE | `watchEvents`：挂上时给 snapshot，之后每批 commit 一条。晚加入不重放历史事件，只给当前 snapshot。落后超过 100 批会收到一份新 snapshot。`viewState` / `watch` 是另一条结构化视图 | 需适配。事件名映射见 2b。`Last-Event-ID` 要宿主自己把已发出的 SSE 存下来（现有 `events` 表），因为 watch 不重放 |
 | 上下文用量芯片 | `usage_changed` 和 `docs["pi.usage"]` 按模型累计，失败和中止的尝试也算。`message_update.usage` 才是这一段 partial 的用量。快回合可能只有 `message_end` | 需适配。芯片继续显示最近一次调用。从最新 assistant 条目取 usage，再用现有 `presentContext` 格式化。不要把 `pi.usage` 直接绑到芯片 |
-| Skills 拼进系统提示 | `section()` 渲染进系统提示。启用表仍在 settings | 需适配。`renderSkillPrompt` 的结果放进 section |
+| Skills 拼进系统提示 | `section()` 渲染进系统提示。启用表仍在 settings | 已改为清单：`renderSkillList` 只放名字和简介；正文由主 Agent 的 `skill` 工具按需加载 |
 | 插件工具 | `defineTool` + `registry.install`。同名后者替换前者。已开始的调用用旧实现，下一阶段用新代码 | 需适配。沿用 `plugins.mjs` 的加载和校验，注册成扩展工具 |
 | faux 演示模型 | `fauxProvider()`、`setResponses`、`fauxAssistantMessage`、`fauxToolCall`、`fauxText` | 需适配。见 2d。未显式要求时仍然禁止落到演示模型 |
 | 多模型来源、按角色路由 | 每个对话 `configure({ model })`。OpenAI 兼容用自定义 provider + `openai-completions`。Grok 订阅用上面的自定义 provider | 需适配。路由继续用 `resolveRoleTarget`。Grok 没有现成 provider，见 1b |
