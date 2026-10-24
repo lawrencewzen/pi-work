@@ -1,7 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { agentEventData } from '../../src/core/agents.mjs';
-import { activityFields, currentActionText } from '../../src/kernel/subagents.mjs';
+import {
+  activityFields,
+  createSubagentExtension,
+  currentActionText,
+  DELEGATE_DESCRIPTION,
+  nameFromTask,
+  SUBAGENT_DESCRIPTION,
+} from '../../src/kernel/subagents.mjs';
 
 function userEntry(content, timestamp) {
   return { kind: 'pi.user', model: [{ role: 'user', content, ...(timestamp != null ? { timestamp } : {}) }] };
@@ -41,6 +48,42 @@ function toolResult(name, timestamp) {
     }],
   };
 }
+
+function schemaKeys(schema) {
+  return Object.keys(schema?.properties || {});
+}
+
+test('nameFromTask uses the first line, flattened, capped at 30 characters', () => {
+  assert.equal(nameFromTask('Inspect auth.ts'), 'Inspect auth.ts');
+  assert.equal(nameFromTask('第一行标题\n第二行不要出现'), '第一行标题');
+  assert.equal(nameFromTask('  spaced\ttitle  \nrest'), 'spaced title');
+  const long = '请确认前台子代理已经收到了这一整段很长的任务说明并马上开始执行';
+  assert.equal(nameFromTask(long), long.slice(0, 30));
+  assert.equal(nameFromTask(long).length, 30);
+});
+
+test('delegate and subagent tool schemas are self-contained', () => {
+  const extension = createSubagentExtension({
+    prepareChild: async () => ({ change: { instructions: '' } }),
+  });
+  const delegate = extension.tools.find((tool) => tool.name === 'delegate');
+  const subagent = extension.tools.find((tool) => tool.name === 'subagent');
+  assert.ok(delegate);
+  assert.ok(subagent);
+  assert.deepEqual(schemaKeys(delegate.parameters), ['task']);
+  assert.deepEqual(delegate.parameters.required, ['task']);
+  assert.equal(schemaKeys(subagent.parameters).includes('agent'), false);
+  assert.equal(schemaKeys(subagent.parameters).includes('name'), true);
+  assert.equal(schemaKeys(subagent.parameters).includes('message'), true);
+  assert.equal(delegate.description, DELEGATE_DESCRIPTION);
+  assert.equal(subagent.description, SUBAGENT_DESCRIPTION);
+  assert.match(delegate.description, /self-contained/);
+  assert.equal(/role/i.test(delegate.description), false);
+  assert.equal(/agent id/i.test(delegate.description), false);
+  assert.equal(/role/i.test(subagent.description), false);
+  assert.equal(/agent id/i.test(subagent.description), false);
+  assert.equal(Array.isArray(extension.sections) ? extension.sections.length : 0, 0);
+});
 
 test('currentActionText prefers description and otherwise uses name: primary arg', () => {
   assert.equal(currentActionText('bash', { command: 'npm test', description: '跑单元测试' }), '跑单元测试');

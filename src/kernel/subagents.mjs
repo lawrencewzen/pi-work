@@ -1,7 +1,8 @@
 // Foreground and background subagents, as in Pi Durable examples 22 and 23.
 // Ownership, abort, and restart reuse belong to the Harness. This module
-// configures a child from a role template and reads what the tools already
-// committed: details, the ownership index, and the background name document.
+// configures a self-contained child (task text only, empty instructions) and
+// reads what the tools already committed: details, the ownership index, and
+// the background name document.
 import { Type } from '@earendil-works/pi-ai';
 import {
   AssistantEntry,
@@ -11,10 +12,14 @@ import {
   defineTask,
   defineTool,
   LiveDoc,
-  section,
 } from '@earendil-works/pi-durable';
 import { agentEventData } from '../core/agents.mjs';
 import { textOf } from './events.mjs';
+
+export const DELEGATE_DESCRIPTION = 'Run a self-contained task on a subagent and return its answer. The subagent cannot see this conversation, or your instructions; put everything it needs in task: what to do, where, when it is done, and what to report back.';
+export const SUBAGENT_DESCRIPTION = `${DELEGATE_DESCRIPTION} On spawn, pass that text as message. \`name\` is used later with send, wait, and stop.`;
+const DISPATCH_TOOLS = new Set(['delegate', 'subagent']);
+const NAME_CAP = 30;
 
 // Example 23: the main conversation maps background names to child conversations.
 export const Subagents = defineDoc({
@@ -109,29 +114,13 @@ function reply(text, extra = {}) {
   };
 }
 
-function matchRole(roles, agent) {
-  const key = String(agent || '').trim();
-  if (!key) return null;
-  return roles.find((role) => role?.id === key) || roles.find((role) => role?.name === key) || null;
+/** Foreground chip name: first line of the task, one line, at most 30 characters. */
+export function nameFromTask(task) {
+  return String(task || '').split(/\r?\n/, 1)[0].replace(/\s+/g, ' ').trim().slice(0, NAME_CAP);
 }
 
-function roleLines(roles) {
-  const lines = [];
-  for (const role of roles || []) {
-    if (!role?.id) continue;
-    const description = String(role.description || '').replace(/\s+/g, ' ').trim();
-    lines.push(`- ${role.id} (${role.name || role.id}): ${description}`);
-  }
-  return lines;
-}
-
-function delegateDescription(roles) {
-  const lines = [
-    'Run a task on a foreground subagent and return its answer.',
-    '`agent` is a role id. Each line is id (name): when to use it.',
-    ...roleLines(roles),
-  ];
-  return lines.join('\n');
+function childTools(parentAgent) {
+  return (parentAgent?.tools || []).filter((tool) => tool?.name && !DISPATCH_TOOLS.has(tool.name));
 }
 
 async function assistantText(api, entryId, context) {
@@ -156,35 +145,28 @@ async function latestAssistantText(api, conversationId, context) {
 
 /**
  * Dispatch tools for the main agent. A child is configured with this extension
- * removed, so it cannot delegate or spawn. `prepareChild` supplies the role's
- * model, tool whitelist, and prompt.
+ * removed, so it cannot delegate or spawn. `prepareChild` blanks instructions
+ * and keeps the parent's workspace/plugin tools, model, and cwd.
  */
 export function createSubagentExtension({
-  listRoles,
   prepareChild,
   onChild,
 } = {}) {
-  if (typeof listRoles !== 'function') throw new Error('listRoles is required');
   if (typeof prepareChild !== 'function') throw new Error('prepareChild is required');
   const blocked = [];
-  let rolesSnapshot = [];
 
   const delegate = defineTool({
     name: 'delegate',
-    get description() {
-      return delegateDescription(rolesSnapshot);
-    },
+    description: DELEGATE_DESCRIPTION,
     parameters: Type.Object({
-      agent: Type.String(),
       task: Type.String(),
     }),
     replay: 'safe',
     execute: async (args, api, context) => {
-      const role = matchRole(await listRoles(), args.agent);
-      if (!role) return reply(`unknown agent ${args.agent || ''}`, { isError: true });
       const parent = await api.agent(context);
-      const prepared = await prepareChild(role, parent);
+      const prepared = await prepareChild(parent);
       if (prepared?.error) return reply(prepared.error, { isError: true });
+      const name = nameFromTask(args.task);
       const child = await api.commit(async (tx) => {
         const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
         if (existing) return existing.id;
@@ -195,9 +177,9 @@ export function createSubagentExtension({
         });
         return created.id;
       }, context);
-      const details = { conversationId: child, roleId: role.id, name: role.name || role.id };
+      const details = { conversationId: child, name };
       await api.details(details, context);
-      if (typeof onChild === 'function') onChild(api.conversationId, child, role.id);
+      if (typeof onChild === 'function') onChild(api.conversationId, child);
       const handle = await api.conversation(child, context);
       if (!handle) return reply('subagent conversation disappeared', { isError: true });
       const settled = await (await handle.submit({
@@ -211,21 +193,21 @@ export function createSubagentExtension({
         throw err;
       }
       if (settled.reason === 'aborted') {
-        return reply(`[subagent ${details.name} was stopped by the user]`, {
-          details: { conversationId: child, roleId: role.id },
+        return reply(`[subagent ${name} was stopped by the user]`, {
+          details: { conversationId: child, name },
         });
       }
       if (settled.status !== 'done' || settled.type !== 'input') {
         return reply(`subagent ${settled.status} ${settled.reason || ''}`, { isError: true });
       }
       const text = await assistantText(api, settled.answer, context);
-      return reply(text, { details: { conversationId: child, roleId: role.id } });
+      return reply(text, { details: { conversationId: child, name } });
     },
   });
 
   const subagent = defineTool({
     name: 'subagent',
-    description: 'Background subagents from a role template: spawn, send, wait, stop, list. `agent` on spawn is a role id. Answers are reported back to this conversation.',
+    description: SUBAGENT_DESCRIPTION,
     parameters: Type.Object({
       action: Type.Union([
         Type.Literal('spawn'),
@@ -236,7 +218,6 @@ export function createSubagentExtension({
       ]),
       name: Type.Optional(Type.String()),
       message: Type.Optional(Type.String()),
-      agent: Type.Optional(Type.String()),
       followUp: Type.Optional(Type.Boolean()),
     }),
     replay: 'unsafe',
@@ -252,7 +233,7 @@ export function createSubagentExtension({
           const found = Object.hasOwn(registry.agents, each) ? registry.agents[each] : undefined;
           if (!found) continue;
           const busy = (await api.snapshot(LiveDoc, found.conversationId, context))?.run !== undefined;
-          lines.push(`${each}: ${busy ? 'working' : 'idle'} role=${found.roleId || ''}`);
+          lines.push(`${each}: ${busy ? 'working' : 'idle'}`);
         }
         return reply(lines.length === 0 ? 'No subagents.' : lines.join('\n'));
       }
@@ -276,10 +257,8 @@ export function createSubagentExtension({
       if (message === undefined) return reply(`${action} needs a message.`, { isError: true });
 
       if (action === 'spawn') {
-        const role = matchRole(await listRoles(), args.agent || '');
-        if (!role) return reply(`unknown agent ${args.agent || ''}`, { isError: true });
         const parent = await api.agent(context);
-        const prepared = await prepareChild(role, parent);
+        const prepared = await prepareChild(parent);
         if (prepared?.error) return reply(prepared.error, { isError: true });
         const result = await api.commit(async (tx) => {
           const state = await tx.doc(Subagents, api.conversationId);
@@ -291,18 +270,17 @@ export function createSubagentExtension({
             ...prepared.change,
             extensions: { remove: blocked },
           });
-          state.agents[name] = { conversationId: child.id, reported: [], roleId: role.id };
+          state.agents[name] = { conversationId: child.id, reported: [] };
           const input = { name, conversationId: child.id, message, followUp: false };
           state.reporters[api.taskId] = await tx.createTask(Reporter, input, background);
-          return { conversationId: child.id, text: `Started ${name}.`, roleId: role.id };
+          return { conversationId: child.id, text: `Started ${name}.` };
         }, context);
         if (result.error) return reply(result.error, { isError: true });
         await api.details({
           name,
           conversationId: result.conversationId,
-          roleId: result.roleId,
         }, context);
-        if (typeof onChild === 'function') onChild(api.conversationId, result.conversationId, result.roleId);
+        if (typeof onChild === 'function') onChild(api.conversationId, result.conversationId);
         return reply(result.text, { details: { name, conversationId: result.conversationId } });
       }
 
@@ -330,18 +308,6 @@ export function createSubagentExtension({
     name: 'pi-work-subagents',
     tasks: [Anchor, Reporter],
     tools: [delegate, subagent],
-    sections: [
-      section('subagents', async () => {
-        try {
-          rolesSnapshot = await listRoles();
-          const lines = ['Pick a subagent by id. Each line is id (name): when to use it.', ...roleLines(rolesSnapshot)];
-          return lines.join('\n');
-        } catch (err) {
-          console.error(`PI_WORK_KERNEL_SUBAGENT ${err instanceof Error ? err.message : err}`);
-          return undefined;
-        }
-      }),
-    ],
   });
   blocked.push(extension);
   return extension;
@@ -519,14 +485,13 @@ function takeChild(meta, order, id, patch) {
   meta.set(key, {
     conversationId: id,
     mode: patch.mode || prev.mode || 'foreground',
-    roleId: patch.roleId || prev.roleId || '',
     name: patch.name || prev.name || '',
   });
 }
 
 function toolChild(details, mode) {
   if (details?.conversationId == null || !mode) return null;
-  return { conversationId: details.conversationId, mode, roleId: details.roleId, name: details.name };
+  return { conversationId: details.conversationId, mode, name: details.name };
 }
 
 /** Read subagents from tool details, the background name document, ownership, and child viewState. */
@@ -537,37 +502,19 @@ export function createSubagentHost({
   readTranscript,
   emit,
   watchEvents,
-  resolveModel,
-  collectTools,
   cidFor,
 } = {}) {
   if (!store) throw new Error('store is required');
   if (!harness) throw new Error('harness is required');
   if (!context) throw new Error('context is required');
   if (typeof readTranscript !== 'function') throw new Error('readTranscript is required');
-  const roleIds = new Map();
   const childWatches = new Map();
   const lastAgent = new Map();
   let closed = false;
 
-  function remember(childId, roleId) {
-    if (childId == null || !roleId) return;
-    roleIds.set(Number(childId), roleId);
-  }
-
-  async function roleFor(harnessId) {
-    const roleId = roleIds.get(Number(harnessId));
-    if (!roleId) return null;
-    return (await store.getRole(roleId)) || { id: roleId, name: roleId, systemPrompt: '', tools: [] };
-  }
-
-  async function prepareChild(role, parentAgent) {
-    const tools = typeof collectTools === 'function' ? await collectTools(role, { dispatch: false }) : [];
-    let model;
-    if (typeof resolveModel === 'function') model = await resolveModel(role);
-    const change = { tools, instructions: String(role?.systemPrompt || '') };
+  async function prepareChild(parentAgent) {
+    const change = { tools: childTools(parentAgent), instructions: '' };
     if (parentAgent?.cwd) change.cwd = parentAgent.cwd;
-    if (model !== undefined) change.model = model;
     return { change };
   }
 
@@ -589,7 +536,7 @@ export function createSubagentHost({
     }
     const roster = await harness.snapshot(Subagents, conv.harnessId, context);
     for (const [name, entry] of Object.entries(roster?.agents || {})) {
-      if (entry?.conversationId) takeChild(meta, order, entry.conversationId, { mode: 'background', roleId: entry.roleId, name });
+      if (entry?.conversationId) takeChild(meta, order, entry.conversationId, { mode: 'background', name });
     }
     const graph = await harness.taskGraph(context);
     try {
@@ -609,25 +556,18 @@ export function createSubagentHost({
       }
       return found;
     }, context);
-    const roles = await store.listRoles();
-    const byId = new Map(roles.filter((role) => role?.id).map((role) => [role.id, role]));
     const out = [];
     for (const key of order) {
       const entry = meta.get(key);
       if (!entry?.conversationId) continue;
-      remember(entry.conversationId, entry.roleId);
       const childLive = await harness.snapshot(LiveDoc, entry.conversationId, context);
       const transcript = await readTranscript(entry.conversationId);
       const stats = statsOf(transcript.messages);
       const aborted = generations.get(key)?.state?.outcome?.status === 'aborted';
-      const role = byId.get(entry.roleId);
-      const name = entry.mode === 'background'
-        ? (entry.name || role?.name || entry.roleId || String(entry.conversationId))
-        : (role?.name || entry.name || entry.roleId || String(entry.conversationId));
+      const name = entry.name || String(entry.conversationId);
       const status = childStatus(Boolean(childLive?.run), aborted, stats.lastText);
       out.push({
         id: `${conv.id}:sub:${entry.conversationId}`,
-        roleId: entry.roleId || role?.id || '',
         name,
         status,
         step: stats.step,
@@ -672,8 +612,7 @@ export function createSubagentHost({
     stream.start(() => run());
   }
 
-  function onChild(parentHarnessId, childId, roleId) {
-    remember(childId, roleId);
+  function onChild(parentHarnessId, childId) {
     const parentCid = typeof cidFor === 'function' ? cidFor(parentHarnessId) : null;
     if (!parentCid) return;
     setImmediate(() => {
@@ -686,14 +625,12 @@ export function createSubagentHost({
   return {
     prepareChild,
     onChild,
-    roleFor,
     listSubagents,
     async seed(rows) {
       for (const row of rows || []) {
         if (!row?.harnessId) continue;
         const agents = await listSubagents(row);
         for (const agent of agents) {
-          remember(agent.harnessId, agent.roleId);
           if (row.id) await attach(row.id, agent.harnessId);
         }
       }
@@ -709,7 +646,6 @@ export function createSubagentHost({
         status: 200,
         body: {
           id: agent.id,
-          roleId: agent.roleId,
           name: agent.name,
           status: agent.status,
           mode: agent.mode === 'background' ? 'background' : 'foreground',

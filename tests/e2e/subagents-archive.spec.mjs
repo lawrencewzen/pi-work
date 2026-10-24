@@ -1,57 +1,13 @@
 import { test, expect } from '@playwright/test';
-import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { startServer, prepareWorkspaces, api } from './helpers/server.mjs';
+import { startServer, prepareWorkspaces } from './helpers/server.mjs';
 import { openApp, createWorkspace, newConversation, send } from './helpers/ui.mjs';
 
 const CHILD_TEXT = '子代理回复：已看过。';
 const FOREGROUND_TASK = '请确认前台子代理已收到任务。';
 const BACKGROUND_NAME = '巡查';
-
-function chatCompletionSse(text) {
-  const chunk = (delta, finish) => JSON.stringify({
-    id: 'chatcmpl-ui-sub',
-    object: 'chat.completion.chunk',
-    choices: [{ index: 0, delta, finish_reason: finish }],
-  });
-  return [
-    `data: ${chunk({ role: 'assistant', content: text }, null)}`,
-    '',
-    `data: ${chunk({}, 'stop')}`,
-    '',
-    'data: [DONE]',
-    '',
-    '',
-  ].join('\n');
-}
-
-function startChildModel(text) {
-  const server = http.createServer((req, res) => {
-    const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
-    req.on('end', () => {
-      const url = new URL(req.url || '/', 'http://127.0.0.1');
-      if (!url.pathname.endsWith('/chat/completions')) {
-        res.writeHead(404);
-        res.end('not found');
-        return;
-      }
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-      res.end(chatCompletionSse(text));
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      resolve({
-        baseUrl: `http://127.0.0.1:${address.port}/v1`,
-        close: () => new Promise((done) => server.close(() => done())),
-      });
-    });
-  });
-}
+const BACKGROUND_MESSAGE = '请在后台继续查看。';
 
 async function assertNarrowWorkbench(page) {
   const measured = await page.evaluate(() => {
@@ -112,12 +68,13 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
   const scriptPath = path.join(prepared.root, 'subagents.json');
   await fs.writeFile(scriptPath, JSON.stringify({
     turns: [
-      { tool: 'delegate', args: { agent: 'scout', task: FOREGROUND_TASK } },
-      { tool: 'subagent', args: { action: 'spawn', name: BACKGROUND_NAME, agent: 'scout', message: '请在后台继续查看。' } },
+      { tool: 'delegate', args: { task: FOREGROUND_TASK } },
+      { tool: 'subagent', args: { action: 'spawn', name: BACKGROUND_NAME, message: BACKGROUND_MESSAGE } },
       { text: '主对话已汇总。' },
+      { when: FOREGROUND_TASK, text: CHILD_TEXT },
+      { when: BACKGROUND_MESSAGE, text: CHILD_TEXT },
     ],
   }));
-  const child = await startChildModel(CHILD_TEXT);
   let srv;
   try {
     srv = await startServer({
@@ -127,30 +84,8 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
         PI_WORK_WORKSPACE_ROOT: prepared.root,
       },
     });
-    const token = '';
-    const role = await api(srv.url, 'POST', '/roles', {
-      id: 'scout',
-      name: '侦察',
-      description: '查看仓库',
-      systemPrompt: '只回答已经看到的内容。',
-      tools: ['read'],
-      pluginTools: false,
-    }, token);
-    expect(role.status).toBe(201);
-    const source = await api(srv.url, 'POST', '/sources', {
-      vendor: 'custom',
-      name: 'Scout',
-      baseUrl: child.baseUrl,
-      apiKey: 'sk-scout-test',
-      models: ['model-scout'],
-    }, token);
-    expect(source.status).toBe(201);
-    const settings = await api(srv.url, 'PUT', '/settings', {
-      models: { scout: { sourceId: source.body.id, model: 'model-scout' } },
-    }, token);
-    expect(settings.status).toBe(200);
 
-    await openApp(page, srv, token);
+    await openApp(page, srv);
     await createWorkspace(page, 'demo', prepared.dirs[0]);
     await newConversation(page);
     await send(page, '请派子代理');
@@ -158,7 +93,7 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     const foreground = page.locator('[data-testid=subagent-row][data-mode=foreground]');
     const background = page.locator('[data-testid=subagent-row][data-mode=background]');
     await expect(foreground).toBeVisible({ timeout: 45000 });
-    await expect(foreground).toContainText('侦察');
+    await expect(foreground).toContainText(FOREGROUND_TASK);
     await expect(foreground.getByTestId('subagent-background')).toHaveCount(0);
     await expect(background).toBeVisible({ timeout: 45000 });
     await expect(background).toContainText(BACKGROUND_NAME);
@@ -167,8 +102,6 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(page.getByTestId('message').filter({ hasText: '主对话已汇总。' })).toBeVisible({ timeout: 20000 });
     await expect(page.locator('#center-thread [data-testid=message][data-role=assistant] [data-testid=message-sender]')).toHaveCount(0);
     await expect(page.locator('#center-thread')).not.toContainText('主 Agent');
-    await expect(page.locator('body')).not.toContainText('sk-scout-test');
-
     // A sub-agent opens in the right-panel detail; the main chat stays usable.
     await foreground.click();
     await expect(page.getByTestId('subagent-banner-text')).toHaveText(FOREGROUND_TASK);
@@ -177,13 +110,13 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(page.getByTestId('subagent-brief')).toContainText(FOREGROUND_TASK);
     await expect(transcript.locator('[data-testid=subagent-thread] [data-testid=message][data-role=user]')).toHaveCount(0);
     await expect(transcript.locator('[data-testid=message][data-role=assistant]')).toContainText(CHILD_TEXT);
-    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
+    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText(FOREGROUND_TASK);
     await expect(page.getByTestId('chat-input')).toBeEnabled();
 
     await switchLanguage(page, 'en');
     await expect(page.locator('.agent-pane-tag')).toHaveText('Sub-agent');
     await expect(page.locator('#center-thread')).not.toContainText('Main agent');
-    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
+    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText(FOREGROUND_TASK);
     await expect(background.getByTestId('subagent-background')).toHaveText('Background');
     await switchLanguage(page, 'zh');
     await expect(page.locator('.agent-pane-tag')).toHaveText('子 Agent');
@@ -204,13 +137,12 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(page.getByTestId('chat-send')).toBeVisible();
     await foreground.click();
     await expect(page.getByTestId('subagent-banner')).toBeVisible();
-    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
+    await expect(transcript.locator('[data-testid=message-sender]')).toHaveText(FOREGROUND_TASK);
     await assertNarrowWorkbench(page);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await page.locator('.conv-tree-node.conv-active .conv-node-title').click();
     await expect(page.getByTestId('subagent-banner')).toHaveCount(0);
   } finally {
     await srv?.kill();
-    await child.close();
   }
 });
