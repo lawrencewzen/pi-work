@@ -76,6 +76,7 @@ import {
   mergeRefreshedMessages,
   statusKeepsStreaming,
 } from './stream.js';
+import { isPromptUserMessage, MANUAL_CONTINUE_TEXT } from './continuation.js';
 import { renderMarkdown } from './markdown.js';
 
 // Application State
@@ -2005,7 +2006,7 @@ function armRunClock(conv, show) {
   }
   if (runStartedFor !== state.activeConversationId || runStartedAt == null) {
     runStartedFor = state.activeConversationId;
-    const last = [...(conv?.messages || [])].reverse().find((m) => m.role === 'user');
+    const last = [...(conv?.messages || [])].reverse().find((m) => isPromptUserMessage(m));
     const ts = Number(last?.createdAt || last?.ts || 0);
     runStartedAt = ts > 0 && ts <= Date.now() ? ts : Date.now();
   }
@@ -2115,11 +2116,30 @@ function agentsCardHtml(agents) {
   return `<div class="agents-card" data-testid="subagents-card">${agents.map(realSubagentRowHtml).join('')}</div>`;
 }
 
+function lastVisibleAssistant(msgs) {
+  for (let i = (msgs || []).length - 1; i >= 0; i -= 1) {
+    const m = msgs[i];
+    if (m?.role === 'assistant' && m.kind !== 'correction' && String(m.text || '').trim()) return m;
+  }
+  return null;
+}
+
+function truncationFooterHtml(message, enabled) {
+  if (!enabled || message?.stopReason !== 'length' || message.streaming) return '';
+  return (
+    `<div class="msg-truncated" data-testid="output-truncated">` +
+    `<span>${escapeHtml(t('output_truncated'))}</span>` +
+    `<button type="button" class="btn btn-sm" data-action="continue-truncated" data-testid="continue-truncated">${escapeHtml(t('btn_continue'))}</button>` +
+    `</div>`
+  );
+}
+
 /** Messages → HTML blocks. Shared by the main thread and the sub-agent pane. */
-function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, streamSpin, liveTail } = {}) {
+function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, streamSpin, liveTail, showTruncationContinue } = {}) {
   const rendered = [];
   const toolRun = [];
   const last = msgs[msgs.length - 1];
+  const truncated = lastVisibleAssistant(msgs);
   const flushToolRun = (live = false) => {
     if (!toolRun.length) return;
     rendered.push(renderToolGroupHtml(toolRun, '', { live }));
@@ -2146,6 +2166,14 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, stre
       continue;
     }
     if (m.role === 'user') {
+      if (!isPromptUserMessage(m)) {
+        rendered.push(
+          `<div class="handoff-note msg-side-agent" data-testid="auto-continue-note" data-role="system" data-kind="auto-continue">` +
+          `<span>${escapeHtml(t('auto_continue_note'))}</span>` +
+          `</div>`
+        );
+        continue;
+      }
       rendered.push(
         `<div class="msg-group msg-side-user" data-testid="message" data-role="user">` +
         `<div class="msg-body" data-testid="message-body">${renderMarkdown(m.text || '')}</div>` +
@@ -2167,6 +2195,7 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, stre
       `<div class="msg-group msg-side-agent" data-testid="message" data-role="assistant">` +
       header +
       `<div class="msg-body" data-testid="message-body">${renderMarkdown(m.text || '')}${spin}</div>` +
+      (m === truncated ? truncationFooterHtml(m, showTruncationContinue) : '') +
       `</div>`
     );
   }
@@ -2206,6 +2235,7 @@ export function renderChatThread() {
     fallbackRoleId: conv.roleId,
     streamSpin,
     liveTail,
+    showTruncationContinue: !ACTIVE_RUN.has(conv?.status),
     afterToolRun(tools) {
       if (agentsPlaced || !realAgents.length) return '';
       if (!tools.some((tool) => DELEGATE_TOOLS.has(String(tool?.name || '').toLowerCase()))) return '';
@@ -2792,7 +2822,7 @@ function renderAgentPaneHtml() {
   const st = agent.status || 'waiting';
   const name = realSubagentName(agent);
   const msgs = dedupeMessages(state.viewingAgent?.messages || []);
-  const firstUser = msgs.find((m) => m.role === 'user');
+  const firstUser = msgs.find((m) => isPromptUserMessage(m));
   const rest = firstUser ? msgs.filter((m) => m !== firstUser) : msgs;
   const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant' && m.text);
   const done = st === 'done';
@@ -4450,6 +4480,9 @@ document.addEventListener('click', (e) => {
       }
       break;
     }
+    case 'continue-truncated':
+      sendMessage(MANUAL_CONTINUE_TEXT);
+      break;
     case 'switch-right-tab':
       switchRightTab(actionEl.getAttribute('data-tab'));
       break;

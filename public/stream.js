@@ -1,5 +1,6 @@
 // Pure chat-stream merge. The browser and the unit tests share this so a
 // replay of SSE events cannot leave a second assistant bubble behind.
+import { isAutoContinueText } from './continuation.js';
 
 function carriedText(data) {
   return data?.text != null && data.text !== '';
@@ -13,6 +14,7 @@ function copyMeta(target, data) {
   if (data.fromAgent) target.fromAgent = data.fromAgent;
   if (data.toAgent) target.toAgent = data.toAgent;
   if (typeof data.model === 'string' && data.model) target.model = data.model;
+  if (typeof data.stopReason === 'string' && data.stopReason) target.stopReason = data.stopReason;
 }
 
 /** Drop assistant rows that are still marked streaming. At most the row `keepId` stays. */
@@ -63,9 +65,23 @@ export function applyMessageDone(msgs, data) {
   if (!Array.isArray(msgs) || !data) return msgs;
   if (data.role === 'user') {
     const id = data.messageId != null ? String(data.messageId) : '';
-    const user = id ? msgs.find((msg) => msg && msg.id === id) : null;
+    let user = id ? msgs.find((msg) => msg && msg.id === id) : null;
+    const autoContinue = isAutoContinueText(data.text) || data.kind === 'auto-continue';
+    if (!user && autoContinue && (id || carriedText(data))) {
+      user = {
+        id: id || `usr-${Date.now()}`,
+        role: 'user',
+        text: carriedText(data) ? data.text : '',
+        kind: 'auto-continue',
+        streaming: false,
+        done: true,
+      };
+      msgs.push(user);
+      return msgs;
+    }
     if (user) {
       if (carriedText(data)) user.text = data.text;
+      if (autoContinue) user.kind = 'auto-continue';
       user.streaming = false;
       user.done = true;
     }

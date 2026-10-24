@@ -213,7 +213,9 @@ export function fauxTurnFromScript(turns, context) {
     message = fauxAssistantMessage('');
   } else {
     // Text with no tool call ends this run. Later script turns wait for the next user message.
-    message = fauxAssistantMessage(text);
+    const extra = {};
+    if (turn.stopReason) extra.stopReason = String(turn.stopReason);
+    message = fauxAssistantMessage(text, extra);
   }
   return stampScriptTurn(message, turn);
 }
