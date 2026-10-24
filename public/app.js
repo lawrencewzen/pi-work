@@ -161,6 +161,9 @@ let convMetaRefreshTimer = null;
 let workspaceTreeRefreshTimer = null;
 let subagentPollTimer = null;
 let viewingRefreshTimer = null;
+let subagentClockTimer = null;
+let lastSidebarSig = '';
+const subagentRowFx = new Map();
 
 const FILE_TREE_TOOLS = new Set(['write', 'edit', 'bash']);
 const FILE_TREE_RUN_DONE = new Set(['done', 'stopped', 'failed']);
@@ -1344,9 +1347,11 @@ function conversationRowHtml(conv, { wsId = '' } = {}) {
   const status = conv.status || 'idle';
   const meta = conversationMeta(conv);
   const relAttrs = meta.ts ? ` data-rel-time data-ts="${escapeHtml(String(meta.ts))}"` : '';
-  const tree = isActive ? subagentTreeHtml() : '';
+  const agents = isActive ? listedSubagents(state.activeConversationData?.agents || []) : [];
+  const tree = agents.length ? subagentTreeHtml(conv.id, agents) : '';
   const collapsed = state.collapsedSubagentTrees.has(conv.id);
-  const toggle = tree
+  const orbit = agents.length ? subagentOrbitHtml(agents, Date.now()) : '';
+  const toggle = agents.length
     ? `<button type="button" class="subagent-tree-toggle${collapsed ? '' : ' is-open'}" data-testid="subagent-tree-toggle" data-action="toggle-subagent-tree" data-conv-id="${escapeHtml(conv.id)}" aria-label="${escapeHtml(collapsed ? t('subagent_tree_expand') : t('subagent_tree_collapse'))}" aria-expanded="${collapsed ? 'false' : 'true'}">${CHEV_SVG}</button>`
     : '';
   return (
@@ -1354,10 +1359,11 @@ function conversationRowHtml(conv, { wsId = '' } = {}) {
     `<div class="conv-node-header" data-action="switch-ws-conv" data-ws-id="${escapeHtml(wsId)}" data-conv-id="${escapeHtml(conv.id)}" data-ctx="conversation" title="${escapeHtml(conv.title || '')}">` +
     `<span class="status-dot dot-${escapeHtml(status)}"></span>` +
     `<span class="conv-node-title">${escapeHtml(conv.title || t('default_conversation_title'))}</span>` +
-    `<span class="conv-node-meta ${meta.cls}"${relAttrs}>${escapeHtml(meta.text || '')}</span>` +
+    (orbit ? '' : `<span class="conv-node-meta ${meta.cls}"${relAttrs}>${escapeHtml(meta.text || '')}</span>`) +
+    orbit +
     toggle +
     `</div>` +
-    (tree && !collapsed ? tree : '') +
+    tree +
     `</div>`
   );
 }
@@ -1366,9 +1372,46 @@ function isDraftActive() {
   return Boolean(state.activeWorkspaceId && !state.activeConversationId);
 }
 
+function sidebarRenderSignature() {
+  const parts = [];
+  parts.push(state.activeWorkspaceId || '', state.activeConversationId || '', state.viewingAgentId || '');
+  parts.push(isDraftActive() ? '1' : '0');
+  parts.push([...state.openProjects].join(','));
+  parts.push([...state.collapsedSubagentTrees].join(','));
+  for (const ws of state.workspaces) {
+    parts.push(ws.id, ws.name, ws.path);
+    for (const conv of sortedByRecent(projectConversations(ws.id))) {
+      parts.push(conv.id, conv.title || '', conv.status || '', String(conv.updatedAt || ''));
+    }
+  }
+  for (const agent of listedSubagents(state.activeConversationData?.agents || [])) {
+    parts.push(
+      agent.id || '',
+      agent.status || '',
+      agent.roleId || '',
+      agent.name || '',
+      agent.brief || '',
+      agent.lastText || '',
+      agent.currentAction || '',
+      String(agent.startedAt || ''),
+      String(agent.lastActivityAt || ''),
+      String(agent.endedAt || ''),
+    );
+  }
+  return parts.join('\x1f');
+}
+
 export function renderSidebarWorkspaces() {
   const container = document.getElementById('ws-tree-container');
   if (!container) return;
+
+  const sig = sidebarRenderSignature();
+  if (sig === lastSidebarSig && container.childElementCount) {
+    tickSubagentClock();
+    armSubagentClock();
+    renderRightOpenDot();
+    return;
+  }
 
   container.innerHTML = state.workspaces
     .map((ws) => {
@@ -1399,7 +1442,9 @@ export function renderSidebarWorkspaces() {
       );
     })
     .join('');
-
+  lastSidebarSig = sig;
+  markSubagentRowsEntered();
+  armSubagentClock();
   renderRightOpenDot();
 }
 
@@ -1416,32 +1461,234 @@ function listedSubagents(agents) {
   return (agents || []).filter(isRealSubagent);
 }
 
-function subagentTreeStatusText(agent) {
-  const st = agent.status || 'waiting';
-  if (st === 'running') return agentProgressLabel(agent) || t('status_running');
-  if (st === 'waiting') return t('subagent_tree_waiting');
-  return t(`status_${st}`) || st;
+const SUBAGENT_STATUS_ICON =
+  '<svg class="subagent-status-icon" viewBox="0 0 12 12" aria-hidden="true" data-testid="subagent-status-icon">' +
+  '<circle class="sa-ring" cx="6" cy="6" r="5" fill="none"></circle>' +
+  '<circle class="sa-arc" cx="6" cy="6" r="5" fill="none"></circle>' +
+  '<circle class="sa-fill" cx="6" cy="6" r="5"></circle>' +
+  '<path class="sa-check" d="M3.55 6.2l1.75 1.75 3.2-3.35" fill="none"></path>' +
+  '<rect class="sa-stop" x="4.35" y="4.35" width="3.3" height="3.3" rx="0.45"></rect>' +
+  '</svg>';
+
+const SUBAGENT_ENDED = new Set(['done', 'stopped', 'failed']);
+const SUBAGENT_LIVE = new Set(['running', 'waiting', 'recovering', 'resuming']);
+const SUBAGENT_STUCK_AFTER_MS = 60_000;
+
+function isLiveSubagent(agent) {
+  return SUBAGENT_LIVE.has(agent?.status || '');
+}
+
+function finiteTs(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function formatMmSs(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(sec / 60);
+  const ss = String(sec % 60).padStart(2, '0');
+  return `${String(m).padStart(2, '0')}:${ss}`;
+}
+
+function firstBriefLine(text) {
+  const raw = String(text || '');
+  if (!raw) return '';
+  const line = raw.split(/\r?\n/).map((item) => item.trim()).find(Boolean);
+  return String(line || raw).replace(/\s+/g, ' ').trim();
+}
+
+function subagentSummary(agent) {
+  const fromBrief = firstBriefLine(agent?.brief);
+  if (fromBrief) return fromBrief;
+  const last = String(agent?.lastText || '').replace(/\s+/g, ' ').trim();
+  if (last) return last;
+  return realSubagentName(agent) || String(agent?.roleId || '').trim();
+}
+
+function isSubagentStuck(agent, now) {
+  if ((agent?.status || '') !== 'running') return false;
+  const last = finiteTs(agent?.lastActivityAt);
+  if (!last) return false;
+  return now - last > SUBAGENT_STUCK_AFTER_MS;
+}
+
+function subagentVisualStatus(agent, now = Date.now()) {
+  const st = agent?.status || 'waiting';
+  if (st === 'running' && isSubagentStuck(agent, now)) return 'stuck';
+  if (st === 'done') return 'done';
+  if (st === 'stopped' || st === 'failed') return 'stopped';
+  if (SUBAGENT_LIVE.has(st)) return 'running';
+  return st || 'waiting';
+}
+
+function subagentTimeText(agent, now = Date.now()) {
+  const visual = subagentVisualStatus(agent, now);
+  if (visual === 'done') return t('status_done');
+  if (visual === 'stopped') return (agent?.status || '') === 'failed' ? t('status_failed') : t('status_stopped');
+  if (visual === 'stuck') {
+    const last = finiteTs(agent?.lastActivityAt);
+    const clock = last ? formatMmSs(now - last) : '';
+    return clock ? t('subagent_idle_for', { time: clock }) : '';
+  }
+  const started = finiteTs(agent?.startedAt);
+  if (!started) return '';
+  return formatMmSs(now - started);
+}
+
+function subagentActionText(agent, visual) {
+  if (visual !== 'running' && visual !== 'stuck') return '';
+  return String(agent?.currentAction || '').replace(/\s+/g, ' ').trim();
+}
+
+function noteSubagentRowFx(agents) {
+  const now = Date.now();
+  const ids = new Set();
+  for (const agent of agents) {
+    const id = agent.id || '';
+    if (!id) continue;
+    ids.add(id);
+    const st = agent.status || 'waiting';
+    let fx = subagentRowFx.get(id);
+    if (!fx) {
+      subagentRowFx.set(id, { entered: false, endedHighlightUntil: 0, lastStatus: st });
+      continue;
+    }
+    if (SUBAGENT_ENDED.has(st) && SUBAGENT_LIVE.has(fx.lastStatus)) fx.endedHighlightUntil = now + 1600;
+    fx.lastStatus = st;
+  }
+  for (const id of [...subagentRowFx.keys()]) {
+    if (!ids.has(id)) subagentRowFx.delete(id);
+  }
+}
+
+function markSubagentRowsEntered() {
+  for (const fx of subagentRowFx.values()) fx.entered = true;
+}
+
+function subagentRowFxClass(id) {
+  const fx = subagentRowFx.get(id);
+  const bits = [];
+  if (!fx || !fx.entered) bits.push('is-entering');
+  if (fx && fx.endedHighlightUntil > Date.now()) bits.push('is-just-ended');
+  return bits.length ? ` ${bits.join(' ')}` : '';
+}
+
+function subagentOrbitHtml(agents, now) {
+  const live = agents.filter(isLiveSubagent).length;
+  const allEnded = agents.length > 0 && live === 0;
+  const sats = agents.map((agent, i) => {
+    const visual = subagentVisualStatus(agent, now);
+    const dur = (1.6 + 0.45 * i).toFixed(2);
+    const delay = (-((i * 137) % 360) / 360 * (1.6 + 0.45 * i)).toFixed(3);
+    return `<span class="subagent-orbit-track" data-sat="${escapeHtml(visual)}" style="--sat-dur:${dur}s;--sat-delay:${delay}s"><span class="subagent-orbit-sat"></span></span>`;
+  }).join('');
+  const count = allEnded
+    ? t('subagent_orbit_done', { n: agents.length })
+    : t('subagent_orbit_frac', { live, total: agents.length });
+  return (
+    `<span class="subagent-orbit-cluster" data-testid="subagent-orbit-cluster" data-action="noop">` +
+    `<span class="subagent-orbit${allEnded ? ' is-done' : ''}" data-testid="subagent-orbit" aria-hidden="true">` +
+    `<span class="subagent-orbit-core"></span>${sats}</span>` +
+    `<span class="subagent-orbit-count ${allEnded ? 'is-done' : 'is-running'}" data-testid="subagent-orbit-count">${escapeHtml(count)}</span>` +
+    `</span>`
+  );
 }
 
 function subagentTreeRowHtml(agent) {
+  const now = Date.now();
   const st = agent.status || 'waiting';
-  const name = realSubagentName(agent);
-  const summary = oneLine(agent.lastText || agent.roleId || '');
+  const visual = subagentVisualStatus(agent, now);
+  const summary = subagentSummary(agent);
+  const time = subagentTimeText(agent, now);
+  const action = subagentActionText(agent, visual);
   const open = state.viewingAgentId === agent.id;
+  const fx = subagentRowFxClass(agent.id || '');
+  const title = summary || t('subagent_open_title');
   return (
-    `<div class="subagent-tree-row${open ? ' is-active' : ''}" data-testid="subagent-tree-row" data-agent-id="${escapeHtml(agent.id || '')}" data-depth="0" data-status="${escapeHtml(st)}" data-action="open-subagent" data-ctx="subagent" title="${escapeHtml(t('subagent_open_title'))}">` +
-    `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
-    `<span class="subagent-tree-name">${escapeHtml(name)}</span>` +
-    `<span class="subagent-tree-last">${escapeHtml(summary)}</span>` +
-    `<span class="subagent-tree-status status-text-${escapeHtml(st)}">${escapeHtml(subagentTreeStatusText(agent))}</span>` +
+    `<div class="subagent-tree-row-shell${fx}">` +
+    `<div class="subagent-tree-row-shell-inner">` +
+    `<div class="subagent-tree-row${open ? ' is-active' : ''}${visual === 'stuck' ? ' is-stuck' : ''}${fx.includes('is-just-ended') ? ' is-just-ended' : ''}" data-testid="subagent-tree-row" data-agent-id="${escapeHtml(agent.id || '')}" data-depth="0" data-status="${escapeHtml(st)}" data-visual="${escapeHtml(visual)}" data-action="open-subagent" data-ctx="subagent" title="${escapeHtml(title)}">` +
+    SUBAGENT_STATUS_ICON +
+    `<div class="subagent-tree-main">` +
+    `<div class="subagent-tree-line">` +
+    `<span class="subagent-tree-summary" data-testid="subagent-tree-summary">${escapeHtml(summary)}</span>` +
+    `<span class="subagent-tree-time${visual === 'stuck' ? ' is-idle' : ''}" data-testid="subagent-tree-time">${escapeHtml(time)}</span>` +
+    `</div>` +
+    `<div class="subagent-tree-action-slot${action ? ' is-open' : ''}">` +
+    `<div class="subagent-tree-action-clip">` +
+    (action ? `<div class="subagent-tree-action" data-testid="subagent-tree-action">${escapeHtml(action)}</div>` : '') +
+    `</div></div></div></div></div></div>`
+  );
+}
+
+function subagentTreeHtml(convId, agents) {
+  const rows = agents || listedSubagents(state.activeConversationData?.agents || []);
+  if (!rows.length) return '';
+  noteSubagentRowFx(rows);
+  const collapsed = state.collapsedSubagentTrees.has(convId);
+  return (
+    `<div class="subagent-tree-wrap${collapsed ? '' : ' is-open'}" data-testid="subagent-tree-wrap" data-conv-id="${escapeHtml(convId || '')}">` +
+    `<div class="subagent-tree-clip"><div class="subagent-tree">${rows.map(subagentTreeRowHtml).join('')}</div></div>` +
     `</div>`
   );
 }
 
-function subagentTreeHtml() {
-  const rows = listedSubagents(state.activeConversationData?.agents || []);
-  if (!rows.length) return '';
-  return `<div class="subagent-tree">${rows.map(subagentTreeRowHtml).join('')}</div>`;
+function tickSubagentClock() {
+  const now = Date.now();
+  const agents = listedSubagents(state.activeConversationData?.agents || []);
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  document.querySelectorAll('[data-testid="subagent-tree-row"]').forEach((row) => {
+    const agent = byId.get(row.getAttribute('data-agent-id'));
+    if (!agent) return;
+    const visual = subagentVisualStatus(agent, now);
+    if (row.getAttribute('data-visual') !== visual) row.setAttribute('data-visual', visual);
+    row.classList.toggle('is-stuck', visual === 'stuck');
+    const timeEl = row.querySelector('[data-testid="subagent-tree-time"]');
+    const nextTime = subagentTimeText(agent, now);
+    if (timeEl && timeEl.textContent !== nextTime) timeEl.textContent = nextTime;
+    timeEl?.classList.toggle('is-idle', visual === 'stuck');
+    const slot = row.querySelector('.subagent-tree-action-slot');
+    const action = subagentActionText(agent, visual);
+    slot?.classList.toggle('is-open', Boolean(action));
+    const actionEl = row.querySelector('[data-testid="subagent-tree-action"]');
+    if (actionEl && actionEl.textContent !== action) actionEl.textContent = action;
+  });
+  const cluster = document.querySelector('[data-testid="subagent-orbit-cluster"]');
+  if (!cluster) return;
+  const live = agents.filter(isLiveSubagent).length;
+  const allEnded = agents.length > 0 && live === 0;
+  cluster.querySelector('[data-testid="subagent-orbit"]')?.classList.toggle('is-done', allEnded);
+  cluster.querySelectorAll('.subagent-orbit-track').forEach((track, i) => {
+    const agent = agents[i];
+    if (!agent) return;
+    const visual = subagentVisualStatus(agent, now);
+    if (track.getAttribute('data-sat') !== visual) track.setAttribute('data-sat', visual);
+  });
+  const countEl = cluster.querySelector('[data-testid="subagent-orbit-count"]');
+  if (countEl) {
+    const count = allEnded
+      ? t('subagent_orbit_done', { n: agents.length })
+      : t('subagent_orbit_frac', { live, total: agents.length });
+    if (countEl.textContent !== count) countEl.textContent = count;
+    countEl.classList.toggle('is-running', !allEnded);
+    countEl.classList.toggle('is-done', allEnded);
+  }
+}
+
+function armSubagentClock() {
+  const agents = listedSubagents(state.activeConversationData?.agents || []);
+  const running = agents.some((agent) => (agent.status || '') === 'running');
+  if (!running) {
+    if (subagentClockTimer) {
+      clearInterval(subagentClockTimer);
+      subagentClockTimer = null;
+    }
+    return;
+  }
+  if (!subagentClockTimer) {
+    subagentClockTimer = setInterval(tickSubagentClock, 1000);
+  }
 }
 
 function applySubagentPatch(aid, patch) {
@@ -1475,7 +1722,16 @@ function toggleSubagentTree(convId) {
   if (!convId) return;
   if (state.collapsedSubagentTrees.has(convId)) state.collapsedSubagentTrees.delete(convId);
   else state.collapsedSubagentTrees.add(convId);
-  renderConversations();
+  const collapsed = state.collapsedSubagentTrees.has(convId);
+  const wrap = document.querySelector(`[data-testid="subagent-tree-wrap"][data-conv-id="${convId.replace(/"/g, '')}"]`);
+  const btn = document.querySelector(`[data-testid="subagent-tree-toggle"][data-conv-id="${convId.replace(/"/g, '')}"]`);
+  wrap?.classList.toggle('is-open', !collapsed);
+  if (btn) {
+    btn.classList.toggle('is-open', !collapsed);
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    btn.setAttribute('aria-label', collapsed ? t('subagent_tree_expand') : t('subagent_tree_collapse'));
+  }
+  lastSidebarSig = sidebarRenderSignature();
 }
 
 function syncSubagentSendReady() {
@@ -4847,6 +5103,8 @@ document.addEventListener('click', (e) => {
       break;
     case 'toggle-subagent-tree':
       toggleSubagentTree(actionEl.getAttribute('data-conv-id'));
+      break;
+    case 'noop':
       break;
     case 'send-subagent':
       sendSubagentNudge();
