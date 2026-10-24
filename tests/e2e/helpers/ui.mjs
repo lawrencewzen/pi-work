@@ -1,19 +1,7 @@
 import { expect } from '@playwright/test';
 
-/** Frontend must not call /api/roles; T26-2 returns 404 for that path. */
-export async function stubRolesGone(page) {
-  await page.route(/\/api\/roles(\/|$|\?)/, async (route) => {
-    await route.fulfill({
-      status: 404,
-      contentType: 'application/json',
-      body: JSON.stringify({ error: 'not_found' }),
-    });
-  });
-}
-
 /** Open the workbench. Pass token only when the server was started with PI_WORK_TOKEN. */
 export async function login(page, url, token) {
-  await stubRolesGone(page);
   const target = token ? `${url}/login?token=${encodeURIComponent(token)}` : `${url}/`;
   await page.goto(target);
   await expect(page.getByTestId('composer-agent')).toBeVisible();

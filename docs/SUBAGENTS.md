@@ -2,9 +2,9 @@
 
 Sub-agents follow Pi Durable's Abort and Subagents section and examples 22 (foreground) and 23 (background). The Harness owns the child conversation, its submission, abort, and restart reuse. pi-work configures a self-contained child from the task text only (empty instructions, no role template, no skills) and reads what the tools already committed.
 
-A conversation has one main agent (the conversation role, or `default`). Extra agents are sub-agent instances spawned with `delegate` / `subagent`, each in its own Harness conversation. The host does not rotate roles in the same chat. The child cannot see the parent conversation or the parent's instructions; everything it needs goes in `task` / `message`.
+A conversation has one main agent (`agents[0]`, `name: 'Agent'`, empty instructions). Extra agents are sub-agent instances spawned with `delegate` / `subagent`, each in its own Harness conversation. The host does not rotate agents in the same chat. The child cannot see the parent conversation or the parent's instructions; everything it needs goes in `task` / `message`.
 
-A conversation still has a role chip on `GET /api/conversations/:cid` (`agents` without `mode`). Real sub-agent instances are appended after that chip.
+`GET /api/conversations/:cid` returns the main agent chip (`agents` without `mode`) first. Real sub-agent instances are appended after that chip.
 
 ## Tools
 
@@ -19,7 +19,7 @@ The main agent has two tools. Children are configured with this extension remove
 
 ```bash
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>
-# → agents: role chip, then
+# → agents: main Agent chip, then
 #   {id, name, status, step, totalSteps, toolCalls, lastText, mode,
 #    brief?, startedAt?, lastActivityAt?, endedAt?, currentAction?}
 #   id is <cid>:sub:<child conversation id>
@@ -58,6 +58,6 @@ export PATH=$HOME/.local/node22/bin:$PATH
 PORT=3000 PI_WORK_LLM=faux PI_WORK_FAUX_SCRIPT=examples/faux/subagents.json node server.mjs
 ```
 
-Startup seeds roles from `roles/*.json` when that id is not already stored. Create a workspace and a conversation, then send a message that causes the main agent to call `delegate` / `subagent`.
+Create a workspace and a conversation, then send a message that causes the main agent to call `delegate` / `subagent`.
 
 `start()` does not overwrite a title the client already set. The first user message becomes the title only when the current title is empty or `New conversation`.

@@ -93,6 +93,8 @@ test('settings has no Agent tab; default model can be chosen, saved, and kept af
   await expect(page.locator('.sm')).toBeVisible();
   await expect(page.getByTestId('settings-tab-agents')).toHaveCount(0);
   await expect(page.locator('[data-action=set-settings-tab][data-tab=agents]')).toHaveCount(0);
+  const missingRoles = await api(srv.url, 'GET', '/roles', null, token);
+  expect(missingRoles.status).toBe(404);
   await page.locator('[data-tab=models]').click();
   await expect(page.getByTestId('models-page')).toBeVisible();
   await expect(page.locator('[data-testid=model-role]')).toHaveCount(1);

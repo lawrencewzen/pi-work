@@ -192,7 +192,6 @@ test('first message without timestamp does not borrow a later one for startedAt'
 test('agentEventData passes optional fields for sub-agents and strips currentAction when not running', () => {
   const running = agentEventData({
     id: 'c:sub:1',
-    roleId: 'coder',
     name: 'Coder',
     status: 'running',
     step: 2,
@@ -212,7 +211,6 @@ test('agentEventData passes optional fields for sub-agents and strips currentAct
 
   const stopped = agentEventData({
     id: 'c:sub:1',
-    roleId: 'coder',
     name: 'Coder',
     status: 'running',
     step: 2,
@@ -231,8 +229,7 @@ test('agentEventData passes optional fields for sub-agents and strips currentAct
 
   const chip = agentEventData({
     id: 'c:agent:0',
-    roleId: 'default',
-    name: 'Default',
+    name: 'Agent',
     status: 'waiting',
     step: 0,
     totalSteps: 0,

@@ -84,8 +84,7 @@ export function installPluginReload(registry, bridge) {
 }
 
 /**
- * Enabled plugin tools for the registry, and the names a role may offer.
- * `role.pluginTools === false` leaves the registry alone and offers no plugin tools.
+ * Enabled plugin tools for the registry. Every conversation may offer them.
  */
 export function createPluginHost({ registry, extensions, store, byHarness } = {}) {
   if (!registry) throw new Error('registry is required');
@@ -107,9 +106,8 @@ export function createPluginHost({ registry, extensions, store, byHarness } = {}
     return true;
   }
 
-  function toolsFor(role, baseTools) {
+  function toolsFor(baseTools) {
     const tools = (baseTools || []).slice();
-    if (role?.pluginTools === false) return tools;
     const have = new Set(tools.map((tool) => tool.name));
     const byName = new Map();
     for (const item of registry.snapshot().tools()) byName.set(item.tool.name, item.tool);

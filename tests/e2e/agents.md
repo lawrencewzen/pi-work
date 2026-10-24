@@ -1,6 +1,6 @@
 # 子 Agent（侧栏与右侧面板）
 
-设置里不再有「Agent」页。主 Agent 在界面上显示为「Agent」；子 Agent 显示名称（或 brief）。需要 `PI_WORK_KERNEL=durable`。默认界面是中文。
+设置里不再有「Agent」页。`GET /api/roles` 和其它 `/api/roles*` 都是 404。主 Agent 在界面上显示为「Agent」；子 Agent 显示名称（或 brief）。默认界面是中文。
 
 ## AG-18 侧栏出现前台子 Agent，点开能看消息
 

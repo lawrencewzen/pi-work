@@ -23,10 +23,10 @@ import { createScriptFloorExtension, installDemo } from './faux-script.mjs';
 import { FAUX_MODEL, openKernel } from './index.mjs';
 import { createKernelModels, explicitDemo } from './models.mjs';
 import { installPluginReload } from './plugins.mjs';
-import { createRoleHost, installRoleExtensions } from './roles.mjs';
+import { createAgentHost, installAgentExtensions } from './agent-config.mjs';
 import { createSubagentControl } from './subagent-control.mjs';
 import { createSubagentExtension, createSubagentHost } from './subagents.mjs';
-import { createWorkspaceExtension, toolsForRole } from './tools.mjs';
+import { createWorkspaceExtension, workspaceTools } from './tools.mjs';
 import { installUsageExtension } from './usage.mjs';
 import { installContinuationExtension } from './continuation.mjs';
 import { createWorkspaceEnv } from './workspace-env.mjs';
@@ -79,13 +79,13 @@ export async function openConversationKernel({
   const modelRoutes = createKernelModels({ models, getSettings, grokAuth, env });
   const routes = faux ? null : modelRoutes;
   const registry = createRegistry();
-  const roleBridge = {};
+  const agentBridge = {};
   const subagentApi = {};
   const watches = new Map();
   const tails = new Map();
   const listeners = new Map();
   const settings = kernelSettings(env);
-  let roles;
+  let agentHost;
 
   async function conversationIdFor(harnessId) {
     const wanted = Number(harnessId);
@@ -97,15 +97,15 @@ export async function openConversationKernel({
   }
 
   registry.install(createWorkspaceExtension());
-  installRoleExtensions(registry, roleBridge);
+  installAgentExtensions(registry, agentBridge);
   installUsageExtension(registry);
   installContinuationExtension(registry);
-  installPluginReload(registry, roleBridge);
+  installPluginReload(registry, agentBridge);
   const subagentExtension = createSubagentExtension({
     prepareChild: (parent) => subagentApi.prepareChild(parent),
     onChild: (parentId, childId) => subagentApi.onChild?.(parentId, childId),
   });
-  roleBridge.extraTools = () => subagentExtension.tools || [];
+  agentBridge.extraTools = () => subagentExtension.tools || [];
   registry.install(subagentExtension);
   if (String(env.PI_WORK_FAUX_SCRIPT || '').trim()) registry.install(createScriptFloorExtension());
   const kernel = await openKernel({
@@ -131,9 +131,9 @@ export async function openConversationKernel({
   }
 
   async function emitAgent(cid, status, messages) {
-    if (!roles) return;
+    if (!agentHost) return;
     try {
-      await roles.emitAgent(cid, status, messages);
+      await agentHost.emitAgent(cid, status, messages);
     } catch (err) {
       console.error(`PI_WORK_KERNEL_AGENT ${redactAuthText(err instanceof Error ? err.message : err)}`);
     }
@@ -221,12 +221,11 @@ export async function openConversationKernel({
     }));
   }
 
-  async function resolveModel(conv, role) {
+  async function resolveModel(conv) {
     if (!routes || !conv?.harnessId) return;
     const conversation = await harness.conversation(conv.harnessId, context);
     if (!conversation) return;
-    const roleId = role?.id || conv.roleId;
-    const model = await routes.modelFor({ ...conv, roleId });
+    const model = await routes.modelFor(conv);
     await conversation.configure({ model: model ?? null }, context);
   }
 
@@ -234,13 +233,13 @@ export async function openConversationKernel({
     return (await submissionView(conv)).status;
   }
 
-  roles = createRoleHost({
+  agentHost = createAgentHost({
     store,
     harness,
     context,
     registry,
     extensions,
-    bridge: roleBridge,
+    bridge: agentBridge,
     readTranscript,
     emit: (cid, event, data) => deliver(cid, { event, data }),
     describeAgents,
@@ -276,7 +275,7 @@ export async function openConversationKernel({
   });
 
   const stored = await store.listKernelConversations();
-  await roles.seed(stored);
+  await agentHost.seed(stored);
   await subagents.seed(stored);
   for (const row of stored) await attach(row);
   await modelRoutes.warm();
@@ -317,17 +316,16 @@ export async function openConversationKernel({
 
   async function createConversation(fields) {
     const conv = await store.createConversation({ ...fields });
-    const role = (fields.roleId && await store.getRole(fields.roleId)) || await store.getRole('default');
     const created = await harness.createConversation({
       ownership: { kind: 'ownerless' },
       agent: {
         ...(faux ? { model: FAUX_MODEL } : {}),
         ...(fields.workspacePath ? { cwd: fields.workspacePath } : {}),
-        tools: toolsForRole(role),
+        tools: workspaceTools(),
       },
     }, context);
     const next = await store.updateConversation(conv.id, { harnessId: created.id });
-    if (roles) await roles.afterCreate(next);
+    if (agentHost) await agentHost.afterCreate(next);
     await attach(next);
     return next;
   }
@@ -344,7 +342,7 @@ export async function openConversationKernel({
       await kernel.close();
     },
     async reloadPlugins() {
-      if (roles?.reloadPlugins) await roles.reloadPlugins();
+      if (agentHost?.reloadPlugins) await agentHost.reloadPlugins();
     },
     createConversation,
     listSubagents(conv) {
@@ -450,7 +448,7 @@ export async function openConversationKernel({
     async postMessage(conv, text) {
       const conversation = await conversationFor(conv);
       if (!conversation) return { status: 404, body: { error: 'conversation not found' } };
-      const prepared = roles ? await roles.prepareSend(conv, text) : null;
+      const prepared = agentHost ? await agentHost.prepareSend(conv, text) : null;
       const current = prepared?.conversation || conv;
       if (routes) {
         const model = await routes.modelFor(current);
@@ -468,7 +466,7 @@ export async function openConversationKernel({
     async patchConversation(cid, body) {
       const conv = await store.getConversation(cid);
       if (!conv) return { status: 404, body: { error: 'conversation not found' } };
-      return roles.patchConversation(cid, body);
+      return agentHost.patchConversation(cid, body);
     },
     subscribe(cid, fn) {
       let set = listeners.get(cid);

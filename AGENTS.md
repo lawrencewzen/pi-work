@@ -10,9 +10,9 @@ pi-work 是基于 Pi Durable（`@earendil-works/pi-durable`，作为库嵌入）
 
 ## 核心模型
 - **工作区（Workspace）** > **对话（Conversation）** > **主 Agent（Main Agent）** > **子 Agent（Sub Agents）**。
-- 每个对话默认只有一个主 Agent：理解需求、拆任务、管理子 Agent、汇总结果；简单对话不派子 Agent。
-- **角色是模板**（如 tester / coder / auditor，可自定义配置），不是常驻 Agent；子 Agent 是按角色模板在某个对话里生成的独立实例，只属于该对话。
-- 需求支持断点续跑、自动继续、状态监控、多 Agent 并行。多角色协作由主 Agent 用子 Agent 派活，宿主不轮换角色。
+- 每个对话默认只有一个主 Agent：理解需求、拆任务、管理子 Agent、汇总结果；简单对话不派子 Agent。主 Agent 没有角色，系统提示词为空。
+- 子 Agent 是主 Agent 用 `delegate` / `subagent` 在某个对话里生成的独立实例，只属于该对话。没有固定角色模板。
+- 需求支持断点续跑、自动继续、状态监控、多 Agent 并行。多 Agent 协作由主 Agent 用子 Agent 派活，宿主不轮换 Agent。
 
 ## 文档
 - 计划与设计：`docs/PLAN.md`、`docs/ARCHITECTURE.md`、`design/`。接口契约以测试仓库的 `docs/API_CONTRACT.md` 为准。

@@ -9,6 +9,7 @@ const usage = await load('src/core/usage.mjs');
 const {
   migrateLegacySettings,
   resolveRoleTarget,
+  resolveConversationTarget,
   resolveConversationModelPatch,
   applySourcePatch,
   validateRoleModels,
@@ -85,7 +86,6 @@ test('a real key, Ollama URL, or non-preset URL becomes one API source', () => {
   assert.deepEqual(keyed.sources[0].models, ['gpt-4o']);
   assert.deepEqual(keyed.models, {
     default: { sourceId: 'srcfixed1', model: 'gpt-4o' },
-    coder: { sourceId: 'srcfixed1', model: 'gpt-4o' },
   });
   assert.equal(keyed.apiKey, '');
   assert.equal(keyed.baseUrl, '');
@@ -111,7 +111,8 @@ test('a real key, Ollama URL, or non-preset URL becomes one API source', () => {
   }, { createId: fixedId });
   assert.equal(customUrl.sources.length, 1);
   assert.equal(customUrl.sources[0].baseUrl, 'https://proxy.example/v1');
-  assert.equal(customUrl.models.tester.model, 'gpt-4o');
+  assert.equal(customUrl.models.tester, undefined);
+  assert.equal(customUrl.models.default, undefined);
 });
 
 test('signed-in Grok receives leftover string models, and version 2 is left alone', () => {
@@ -132,7 +133,8 @@ test('signed-in Grok receives leftover string models, and version 2 is left alon
     models: { coder: 'gpt-4o' },
   }, { grokSignedIn: true, createId: fixedId });
   assert.deepEqual(both.sources.map((source) => source.id), [GROK_SOURCE_ID, 'srcfixed1']);
-  assert.equal(both.models.coder.sourceId, GROK_SOURCE_ID);
+  assert.equal(both.models.coder, undefined);
+  assert.equal(both.models.default, undefined);
   assert.equal(both.apiKey, '');
 
   const current = {
@@ -149,7 +151,7 @@ test('signed-in Grok receives leftover string models, and version 2 is left alon
   assert.deepEqual(again.models, current.models);
 });
 
-test('role routing falls back from the role binding to default, then the first usable source', () => {
+test('model routing uses default then the first usable source; extra keys are ignored', () => {
   const grok = {
     id: GROK_SOURCE_ID, kind: 'grok', vendor: 'grok', name: 'Grok', baseUrl: '', apiKey: '', models: ['grok-build'],
   };
@@ -171,49 +173,29 @@ test('role routing falls back from the role binding to default, then the first u
     },
   };
 
-  const coder = resolveRoleTarget(settingsRow, { roleId: 'coder' });
-  assert.equal(coder.source.id, 'bbbb');
-  assert.equal(coder.model, 'beta');
+  const def = resolveRoleTarget(settingsRow);
+  assert.equal(def.source.id, 'aaaa');
+  assert.equal(def.model, 'alpha');
 
-  const tester = resolveRoleTarget(settingsRow, { roleId: 'tester' });
-  assert.equal(tester.source.id, 'aaaa');
-  assert.equal(tester.model, 'alpha');
+  const pinned = resolveConversationTarget(settingsRow, { modelSourceId: 'bbbb', modelId: 'beta' });
+  assert.equal(pinned.source.id, 'bbbb');
+  assert.equal(pinned.model, 'beta');
 
-  const fallback = resolveRoleTarget(settingsRow, { roleId: 'auditor' });
-  assert.equal(fallback.source.id, 'aaaa');
-  assert.equal(fallback.model, 'alpha');
+  const followsDefault = resolveConversationTarget(settingsRow, {});
+  assert.equal(followsDefault.source.id, 'aaaa');
+  assert.equal(followsDefault.model, 'alpha');
 
   const first = resolveRoleTarget({ sources: [grok, locked, beta] }, { grokSignedIn: false });
   assert.equal(first.source.id, 'bbbb');
   assert.equal(first.model, 'beta');
 
+  const firstConv = resolveConversationTarget({ sources: [grok, locked, beta] }, {}, { grokSignedIn: false });
+  assert.equal(firstConv.source.id, 'bbbb');
+  assert.equal(firstConv.model, 'beta');
+
   const signedIn = resolveRoleTarget({ sources: [grok, alpha] }, { grokSignedIn: true });
   assert.equal(signedIn.source.id, GROK_SOURCE_ID);
   assert.equal(signedIn.model, 'grok-build');
-});
-
-test('a role template model prefers a source that lists it, otherwise keeps the resolved source', () => {
-  const alpha = {
-    id: 'aaaa', kind: 'api', vendor: 'custom', name: 'A', baseUrl: 'http://127.0.0.1:1/v1', apiKey: 'key-a', models: ['alpha'],
-  };
-  const beta = {
-    id: 'bbbb', kind: 'api', vendor: 'custom', name: 'B', baseUrl: 'http://127.0.0.1:2/v1', apiKey: 'key-b', models: ['beta'],
-  };
-  const row = {
-    sources: [alpha, beta],
-    models: { default: { sourceId: 'aaaa', model: 'alpha' }, coder: { sourceId: 'aaaa', model: 'alpha' } },
-  };
-
-  const listed = resolveRoleTarget(row, { roleId: 'coder', model: 'beta' });
-  assert.equal(listed.source.id, 'bbbb');
-  assert.equal(listed.model, 'beta');
-
-  const hinted = resolveRoleTarget(row, { roleId: 'coder', model: 'role-template' });
-  assert.equal(hinted.source.id, 'aaaa');
-  assert.equal(hinted.model, 'role-template');
-
-  const nowhere = resolveRoleTarget({ sources: [] }, { roleId: 'coder', model: 'role-template' });
-  assert.equal(nowhere, null);
 });
 
 test('changing origin without a new key drops the old key', () => {
@@ -248,14 +230,14 @@ test('changing origin without a new key drops the old key', () => {
   assert.equal(ollama.source.baseUrl, 'http://10.0.0.8:11434/v1');
 });
 
-test('role model bindings are rejected when the source or model is not usable', () => {
+test('default model bindings are rejected when the source or model is not usable', () => {
   const row = { sources: [apiSource({ id: 'src1', models: ['gpt-4o'] })] };
   assert.equal(validateRoleModels(row, {
     default: { sourceId: 'src1', model: 'gpt-4o' },
     coder: null,
   }), '');
   assert.equal(validateRoleModels(row, { default: 'gpt-4o' }), 'invalid model binding');
-  assert.equal(validateRoleModels(row, { 'bad id': { sourceId: 'src1', model: 'gpt-4o' } }), 'invalid role id');
+  assert.equal(validateRoleModels(row, { 'bad id': { sourceId: 'src1', model: 'gpt-4o' } }), '');
   assert.equal(validateRoleModels(row, { default: { sourceId: 'missing', model: 'gpt-4o' } }), 'unknown source');
   assert.equal(validateRoleModels(row, { default: { sourceId: 'src1', model: 'other' } }), 'model not in source');
   assert.equal(validateRoleModels(row, null), 'invalid model binding');
@@ -551,12 +533,12 @@ test('conversation context window follows the resolved model, else stays unset',
     ...flashSource,
     contextWindows: { 'deepseek-flash': 256000 },
   }, 'deepseek-flash'), 256000);
-  assert.equal(contextWindowForConversation(settings, { roleId: null }), 256000);
+  assert.equal(contextWindowForConversation(settings, {}), 256000);
   assert.equal(contextWindowForConversation(settings, {
     modelSourceId: 'bbbb',
     modelId: 'beta',
   }), 128000);
-  assert.equal(contextWindowForConversation({ sources: [] }, { roleId: null }), null);
+  assert.equal(contextWindowForConversation({ sources: [] }, {}), null);
 });
 
 test('conversation model patch accepts a listed pair and rejects unknown source or model', () => {

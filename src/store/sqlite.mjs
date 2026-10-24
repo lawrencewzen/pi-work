@@ -4,19 +4,12 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
 
-const SCHEMA_VERSION = 6;
-const MESSAGE_META_KEYS = ['kind', 'fromAgent', 'toAgent', 'agentId', 'roleId'];
+const SCHEMA_VERSION = 7;
+const MESSAGE_META_KEYS = ['kind', 'fromAgent', 'toAgent', 'agentId'];
 
 function chmodSecret(p) {
   try { chmodSync(p, 0o600); } catch { /* wal/shm may not exist yet */ }
 }
-
-const DEFAULT_ROLE = {
-  id: 'default',
-  name: 'Default',
-  systemPrompt: 'You are a helpful coding assistant. Use tools to work in the workspace.',
-  tools: ['read', 'write', 'edit', 'ls', 'grep', 'bash'],
-};
 
 function j(v) {
   return JSON.stringify(v ?? null);
@@ -69,7 +62,6 @@ function convFromRow(row) {
     currentStep: row.current_step,
     updatedAt: row.updated_at,
     createdAt: row.created_at,
-    roleId: row.role_id,
     workspacePath: row.workspace_path,
     lastProgressAt: row.last_progress_at,
     originalText: row.original_text,
@@ -118,7 +110,6 @@ export function createSqliteStore(dir) {
       pipeline_step INTEGER DEFAULT 0,
       updated_at INTEGER,
       created_at INTEGER,
-      role_id TEXT,
       pipeline_id TEXT,
       workspace_path TEXT,
       last_progress_at INTEGER,
@@ -166,16 +157,6 @@ export function createSqliteStore(dir) {
       data_json TEXT,
       PRIMARY KEY (conversation_id, event_id)
     );
-    CREATE TABLE IF NOT EXISTS roles (
-      id TEXT PRIMARY KEY,
-      name TEXT,
-      system_prompt TEXT,
-      tools_json TEXT,
-      model TEXT,
-      description TEXT,
-      skills_json TEXT,
-      plugin_tools INTEGER
-    );
     CREATE TABLE IF NOT EXISTS catalog_tombstones (
       kind TEXT NOT NULL,
       id TEXT NOT NULL,
@@ -219,14 +200,12 @@ export function createSqliteStore(dir) {
     if (!convCols.has('last_submission_id')) db.exec('ALTER TABLE conversations ADD COLUMN last_submission_id INTEGER');
     if (!convCols.has('model_source_id')) db.exec('ALTER TABLE conversations ADD COLUMN model_source_id TEXT');
     if (!convCols.has('model_id')) db.exec('ALTER TABLE conversations ADD COLUMN model_id TEXT');
+    if (convCols.has('role_id')) {
+      try { db.exec('ALTER TABLE conversations DROP COLUMN role_id'); } catch { /* keep the column, stop reading it */ }
+    }
   }
 
-  {
-    const roleCols = new Set(db.prepare('PRAGMA table_info(roles)').all().map((c) => c.name));
-    if (!roleCols.has('description')) db.exec('ALTER TABLE roles ADD COLUMN description TEXT');
-    if (!roleCols.has('skills_json')) db.exec('ALTER TABLE roles ADD COLUMN skills_json TEXT');
-    if (!roleCols.has('plugin_tools')) db.exec('ALTER TABLE roles ADD COLUMN plugin_tools INTEGER');
-  }
+  db.exec('DROP TABLE IF EXISTS roles');
 
   {
     const row = db.prepare('SELECT version FROM schema_version LIMIT 1').get();
@@ -257,34 +236,23 @@ export function createSqliteStore(dir) {
     putSettings: db.prepare('INSERT INTO settings (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json'),
     insConv: db.prepare(`INSERT INTO conversations (
       id, workspace_id, title, status, auto_continues, retries, last_checkpoint_at,
-      current_step, updated_at, created_at, role_id,
+      current_step, updated_at, created_at,
       workspace_path, last_progress_at, original_text, usage_json, harness_id, host_mark,
       last_submission_id, model_source_id, model_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
     getConv: db.prepare('SELECT * FROM conversations WHERE id = ?'),
     listRecoverable: db.prepare("SELECT * FROM conversations WHERE status IN ('running','recovering') AND harness_id IS NULL"),
     listKernel: db.prepare('SELECT * FROM conversations WHERE harness_id IS NOT NULL'),
     updConv: db.prepare(`UPDATE conversations SET
-      workspace_id=?, title=?, updated_at=?, role_id=?,
+      workspace_id=?, title=?, updated_at=?,
       workspace_path=?, last_progress_at=?, original_text=?, usage_json=?, harness_id=?,
       last_submission_id=?, model_source_id=?, model_id=?
       WHERE id=?`),
     listConv: db.prepare('SELECT * FROM conversations WHERE workspace_id = ? AND harness_id IS NOT NULL ORDER BY updated_at DESC'),
-    insRole: db.prepare(`INSERT OR REPLACE INTO roles (
-      id, name, system_prompt, tools_json, model, description, skills_json, plugin_tools
-    ) VALUES (?,?,?,?,?,?,?,?)`),
-    listRoles: db.prepare('SELECT * FROM roles'),
-    getRole: db.prepare('SELECT * FROM roles WHERE id = ?'),
-    delRole: db.prepare('DELETE FROM roles WHERE id = ?'),
     insTomb: db.prepare('INSERT OR IGNORE INTO catalog_tombstones (kind, id) VALUES (?, ?)'),
     delTomb: db.prepare('DELETE FROM catalog_tombstones WHERE kind = ? AND id = ?'),
     hasTomb: db.prepare('SELECT 1 AS ok FROM catalog_tombstones WHERE kind = ? AND id = ?'),
-    countRoleRefs: db.prepare('SELECT COUNT(*) AS n FROM conversations WHERE role_id = ?'),
   };
-
-  if (!q.getRole.get(DEFAULT_ROLE.id)) {
-    q.insRole.run(...roleParams(DEFAULT_ROLE));
-  }
 
   chmodSecret(dbPath);
   chmodSecret(`${dbPath}-wal`);
@@ -314,41 +282,6 @@ export function createSqliteStore(dir) {
       beforeHash: row.before_hash ?? undefined,
       afterHash: row.after_hash ?? undefined,
     };
-  }
-
-  function roleParams(role) {
-    let plugin = null;
-    if (role.pluginTools === false) plugin = 0;
-    else if (role.pluginTools === true) plugin = 1;
-    return [
-      role.id,
-      role.name,
-      role.systemPrompt,
-      j(role.tools),
-      role.model ?? null,
-      typeof role.description === 'string' ? role.description : '',
-      Array.isArray(role.skills) ? j(role.skills) : null,
-      plugin,
-    ];
-  }
-
-  function roleFromRow(row) {
-    if (!row) return undefined;
-    const r = {
-      id: row.id,
-      name: row.name,
-      systemPrompt: row.system_prompt,
-      tools: p(row.tools_json) || [],
-      description: typeof row.description === 'string' ? row.description : '',
-    };
-    if (row.model) r.model = row.model;
-    if (row.skills_json != null && row.skills_json !== '') {
-      const skills = p(row.skills_json);
-      if (Array.isArray(skills)) r.skills = skills;
-    }
-    if (row.plugin_tools === 0) r.pluginTools = false;
-    else if (row.plugin_tools === 1) r.pluginTools = true;
-    return r;
   }
 
   function wsFromRow(r) {
@@ -401,7 +334,7 @@ export function createSqliteStore(dir) {
     },
 
     async createConversation({
-      id, workspaceId, title, roleId, workspacePath, modelSourceId, modelId,
+      id, workspaceId, title, workspacePath, modelSourceId, modelId,
     } = {}) {
       const now = Date.now();
       const conv = {
@@ -410,7 +343,6 @@ export function createSqliteStore(dir) {
         title: title || 'New conversation',
         updatedAt: now,
         createdAt: now,
-        roleId: roleId ?? null,
         workspacePath: workspacePath ?? null,
         lastProgressAt: now,
         originalText: null,
@@ -422,7 +354,7 @@ export function createSqliteStore(dir) {
       q.insConv.run(
         conv.id, conv.workspaceId, conv.title, null, null, null,
         null, null, conv.updatedAt, conv.createdAt,
-        conv.roleId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
+        conv.workspacePath, conv.lastProgressAt, conv.originalText,
         usageToSql(conv.usage), conv.harnessId, null, null,
         conv.modelSourceId, conv.modelId,
       );
@@ -455,7 +387,6 @@ export function createSqliteStore(dir) {
           title: 'New conversation',
           updatedAt: now,
           createdAt: now,
-          roleId: null,
           workspacePath: null,
           lastProgressAt: now,
           originalText: null,
@@ -467,39 +398,19 @@ export function createSqliteStore(dir) {
         q.insConv.run(
           conv.id, conv.workspaceId, conv.title, null, null, null,
           null, null, conv.updatedAt, conv.createdAt,
-          conv.roleId, conv.workspacePath, conv.lastProgressAt, conv.originalText,
+          conv.workspacePath, conv.lastProgressAt, conv.originalText,
           usageToSql(conv.usage), null, null, patch.lastSubmissionId ?? null,
           conv.modelSourceId, conv.modelId,
         );
       }
       const next = { ...conv, ...patch, updatedAt: Date.now() };
       q.updConv.run(
-        next.workspaceId, next.title, next.updatedAt, next.roleId,
+        next.workspaceId, next.title, next.updatedAt,
         next.workspacePath, next.lastProgressAt, next.originalText, usageToSql(next.usage),
         next.harnessId ?? null, next.lastSubmissionId ?? null,
         next.modelSourceId ?? null, next.modelId ?? null, id,
       );
       return next;
-    },
-
-    async createRole(role) {
-      q.insRole.run(...roleParams(role));
-      return roleFromRow(q.getRole.get(role.id));
-    },
-    async updateRole(id, role) {
-      if (!q.getRole.get(id)) return undefined;
-      q.insRole.run(...roleParams({ ...role, id }));
-      return roleFromRow(q.getRole.get(id));
-    },
-    async deleteRole(id) {
-      q.delRole.run(id);
-      return !q.getRole.get(id);
-    },
-    async listRoles() {
-      return q.listRoles.all().map(roleFromRow);
-    },
-    async getRole(id) {
-      return roleFromRow(q.getRole.get(id));
     },
 
     async tombstoneCatalog(kind, id) {
@@ -510,10 +421,6 @@ export function createSqliteStore(dir) {
     },
     async hasCatalogTombstone(kind, id) {
       return Boolean(q.hasTomb.get(kind, id));
-    },
-    async countConversationsReferencing({ roleId } = {}) {
-      if (roleId) return Number(q.countRoleRefs.get(roleId)?.n || 0);
-      return 0;
     },
 
     async getSettings() {

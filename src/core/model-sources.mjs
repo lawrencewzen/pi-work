@@ -23,7 +23,6 @@ export const GROK_SOURCE_ID = 'grok';
 export const SETTINGS_VERSION = 2;
 
 const SOURCE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
-const ROLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const BLOCKED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const CONTEXT_WINDOW_MIN = 1000;
 const CONTEXT_WINDOW_MAX = 10_000_000;
@@ -165,7 +164,6 @@ export function defaultContextWindowsForSource(source, env = process.env) {
  * Missing or unavailable sources return null.
  */
 export function resolveConversationTarget(settings, conv, { grokSignedIn = false } = {}) {
-  const roleId = conv?.roleId || undefined;
   const sourceId = typeof conv?.modelSourceId === 'string' ? conv.modelSourceId.trim() : '';
   const modelId = typeof conv?.modelId === 'string' ? conv.modelId.trim() : '';
   let target = null;
@@ -175,7 +173,7 @@ export function resolveConversationTarget(settings, conv, { grokSignedIn = false
       target = { source, model: modelId };
     }
   }
-  if (!target) target = resolveRoleTarget(settings, { roleId, grokSignedIn });
+  if (!target) target = resolveRoleTarget(settings, { grokSignedIn });
   if (!target?.source || !target.model) return null;
   return target;
 }
@@ -301,16 +299,12 @@ export function normalizeSources(list) {
 
 export function normalizeRoleModels(models) {
   if (!models || typeof models !== 'object' || Array.isArray(models)) return {};
-  const out = {};
-  for (const [roleId, value] of Object.entries(models)) {
-    if (BLOCKED_KEYS.has(roleId) || !ROLE_ID.test(roleId)) continue;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-    const sourceId = typeof value.sourceId === 'string' ? value.sourceId.trim() : '';
-    const model = typeof value.model === 'string' ? value.model.trim() : '';
-    if (!sourceId || !model) continue;
-    out[roleId] = { sourceId, model: model.slice(0, 200) };
-  }
-  return out;
+  const value = models.default;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const sourceId = typeof value.sourceId === 'string' ? value.sourceId.trim() : '';
+  const model = typeof value.model === 'string' ? value.model.trim() : '';
+  if (!sourceId || !model) return {};
+  return { default: { sourceId, model: model.slice(0, 200) } };
 }
 
 export function publicSource(source, grokStatus) {
@@ -341,17 +335,10 @@ export function publicSource(source, grokStatus) {
   return body;
 }
 
-function legacyStringModels(models) {
-  if (!models || typeof models !== 'object' || Array.isArray(models)) return [];
-  const pairs = [];
-  for (const [roleId, value] of Object.entries(models)) {
-    if (BLOCKED_KEYS.has(roleId) || !ROLE_ID.test(roleId)) continue;
-    if (typeof value !== 'string') continue;
-    const model = value.trim().slice(0, 200);
-    if (!model) continue;
-    pairs.push([roleId, model]);
-  }
-  return pairs;
+function legacyDefaultModel(models) {
+  if (!models || typeof models !== 'object' || Array.isArray(models)) return '';
+  if (typeof models.default !== 'string') return '';
+  return models.default.trim().slice(0, 200);
 }
 
 /**
@@ -425,9 +412,10 @@ export function migrateLegacySettings(raw, { grokSignedIn = false, createId = cr
   const target = grokSignedIn ? grokSource : apiSource;
   const models = {};
   if (target) {
-    for (const [roleId, model] of legacyStringModels(input.models)) {
+    const model = legacyDefaultModel(input.models);
+    if (model) {
       pushModel(target, model);
-      models[roleId] = { sourceId: target.id, model };
+      models.default = { sourceId: target.id, model };
     }
   }
   return {
@@ -476,11 +464,6 @@ function bindingTarget(sources, binding, options) {
   return { source, model: binding.model };
 }
 
-/**
- * Role binding, then default, then the first model on the first usable source.
- * A role-template model string prefers a source that lists it, otherwise the
- * resolved source keeps that name.
- */
 function textOrNull(value) {
   if (value == null) return null;
   const text = String(value).trim();
@@ -490,7 +473,7 @@ function textOrNull(value) {
 /**
  * Optional conversation-level model from a create/PATCH body.
  * Missing keys mean the request does not touch the stored pair. Both empty
- * or null means follow the default role binding. A source+model pair must
+ * or null means follow settings.models.default. A source+model pair must
  * exist on settings.sources (availability is checked later by modelFor).
  */
 export function resolveConversationModelPatch(settings, body = {}) {
@@ -514,13 +497,14 @@ export function resolveConversationModelPatch(settings, body = {}) {
   return { present: true, ok: true, value: { modelSourceId: source.id, modelId } };
 }
 
-export function resolveRoleTarget(settings, { roleId, model, grokSignedIn = false } = {}) {
+/**
+ * Default binding, then the first model on the first usable source.
+ */
+export function resolveRoleTarget(settings, { grokSignedIn = false } = {}) {
   const sources = normalizeSources(settings?.sources);
   const bindings = normalizeRoleModels(settings?.models);
   const options = { grokSignedIn };
-  let resolved = null;
-  if (roleId) resolved = bindingTarget(sources, bindings[roleId], options);
-  if (!resolved && roleId !== 'default') resolved = bindingTarget(sources, bindings.default, options);
+  let resolved = bindingTarget(sources, bindings.default, options);
   if (!resolved) {
     for (const source of sources) {
       if (!sourceAvailable(source, options)) continue;
@@ -530,70 +514,34 @@ export function resolveRoleTarget(settings, { roleId, model, grokSignedIn = fals
       break;
     }
   }
-  const hinted = typeof model === 'string' ? model.trim() : '';
-  if (!hinted) return resolved;
-  const listed = sources.find((source) => sourceAvailable(source, options) && (source.models || []).includes(hinted));
-  if (listed) return { source: listed, model: hinted };
-  if (resolved) return { source: resolved.source, model: hinted };
-  return null;
+  return resolved;
 }
 
 /**
- * What the role list should show. `follow` is true when this role has no
- * binding of its own and therefore uses the default role, or the first
- * usable source when even that is unset.
+ * What settings should show for the default model. `follow` is true when
+ * settings.models.default is unset and the first usable source is used.
  */
-export function effectiveModelFor(settings, roleId, { grokSignedIn = false } = {}) {
+export function effectiveModelFor(settings, { grokSignedIn = false } = {}) {
   const bindings = normalizeRoleModels(settings?.models);
-  const own = roleId ? bindings[roleId] : null;
+  const own = bindings.default;
   if (own) return { sourceId: own.sourceId, model: own.model, follow: false };
-  const resolved = resolveRoleTarget(settings, { roleId, grokSignedIn });
+  const resolved = resolveRoleTarget(settings, { grokSignedIn });
   if (!resolved) return { sourceId: null, model: null, follow: true };
   return { sourceId: resolved.source.id, model: resolved.model, follow: true };
 }
 
-/**
- * One pass over stored role.model strings. A name that appears on an available
- * source becomes settings.models[roleId] unless that role already has a binding.
- * Names that match nothing are dropped. Every role that still has a model
- * string is listed in clearIds so the caller can delete the field.
- * Log lines name the role and the model only — never a key or base URL.
- */
-export function planRoleModelMigration(roles, settings, { grokSignedIn = false } = {}) {
-  const sources = normalizeSources(settings?.sources);
-  const models = { ...normalizeRoleModels(settings?.models) };
-  const clearIds = [];
-  const logs = [];
-  let changed = false;
-  for (const role of roles || []) {
-    const hinted = typeof role?.model === 'string' ? role.model.trim() : '';
-    if (!hinted || !role?.id) continue;
-    clearIds.push(role.id);
-    if (models[role.id]) continue;
-    const source = sources.find((item) => sourceAvailable(item, { grokSignedIn }) && (item.models || []).includes(hinted));
-    if (source) {
-      models[role.id] = { sourceId: source.id, model: hinted };
-      changed = true;
-    } else {
-      logs.push(`PI_WORK_ROLE_MODEL dropped ${role.id} model ${JSON.stringify(hinted)} (not in an available source)`);
-    }
-  }
-  return { models, changed, clearIds, logs };
-}
-
 export function validateRoleModels(settings, models) {
   if (!models || typeof models !== 'object' || Array.isArray(models)) return 'invalid model binding';
+  if (!Object.prototype.hasOwnProperty.call(models, 'default')) return '';
+  const value = models.default;
+  if (value == null) return '';
+  if (typeof value !== 'object' || Array.isArray(value)) return 'invalid model binding';
   const sources = normalizeSources(settings?.sources);
-  for (const [roleId, value] of Object.entries(models)) {
-    if (BLOCKED_KEYS.has(roleId) || !ROLE_ID.test(roleId)) return 'invalid role id';
-    if (value == null) continue;
-    if (typeof value !== 'object' || Array.isArray(value)) return 'invalid model binding';
-    const sourceId = typeof value.sourceId === 'string' ? value.sourceId.trim() : '';
-    const model = typeof value.model === 'string' ? value.model.trim() : '';
-    const source = sources.find((item) => item.id === sourceId);
-    if (!source) return 'unknown source';
-    if (!model || !(source.models || []).includes(model)) return 'model not in source';
-  }
+  const sourceId = typeof value.sourceId === 'string' ? value.sourceId.trim() : '';
+  const model = typeof value.model === 'string' ? value.model.trim() : '';
+  const source = sources.find((item) => item.id === sourceId);
+  if (!source) return 'unknown source';
+  if (!model || !(source.models || []).includes(model)) return 'model not in source';
   return '';
 }
 
