@@ -50,6 +50,23 @@ const AGENTS = [
   },
 ];
 
+function mockedConversation(cid, bag) {
+  return {
+    id: cid,
+    title: '请派子代理',
+    status: 'idle',
+    roleId: null,
+    modelSourceId: null,
+    modelId: null,
+    messages: [
+      { id: 'user-send', role: 'user', text: '请派子代理' },
+      { id: 'asst-reply', role: 'assistant', text: '主对话已收到。' },
+      ...(bag.extraMessages || []),
+    ],
+    agents: bag.agents,
+  };
+}
+
 function agentMessages(aid, extras = {}) {
   const known = AGENTS.find((item) => item.id === aid) || { id: aid };
   return {
@@ -71,15 +88,7 @@ async function mockSubagentApi(page, bag) {
 
     const convGet = pathname.match(/\/api\/conversations\/([^/]+)$/);
     if (method === 'GET' && convGet) {
-      const res = await route.fetch();
-      const json = await res.json();
-      json.agents = bag.agents;
-      json.messages = [...(json.messages || []), ...(bag.extraMessages || [])];
-      await route.fulfill({
-        status: res.status(),
-        contentType: 'application/json',
-        body: JSON.stringify(json),
-      });
+      await route.fulfill({ json: mockedConversation(decodeURIComponent(convGet[1]), bag) });
       return;
     }
 
