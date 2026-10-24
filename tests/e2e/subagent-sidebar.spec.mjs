@@ -246,15 +246,12 @@ test('sidebar tree, pane interrupt/stop, note, and narrow overflow', async ({ pa
     expect(noteColor).not.toBe('rgba(0, 0, 0, 0)');
 
     await page.setViewportSize({ width: 390, height: 844 });
-    const leftShown = await page.evaluate(() => {
-      const el = document.querySelector('.col-left');
-      if (!el) return false;
-      const style = getComputedStyle(el);
-      return style.display !== 'none' && el.getBoundingClientRect().width > 40;
-    });
-    if (!leftShown) {
-      await page.locator('.col-center [data-action="toggle-left"]').click();
-    }
+    // Crossing 860px closes the left overlay in the resize handler. Wait for
+    // that before opening it, otherwise the rows can still be in the DOM
+    // (count 4) while the panel is already display:none.
+    await expect(page.locator('#app-shell')).toHaveClass(/left-closed/);
+    await page.locator('.col-center [data-action="toggle-left"]').click();
+    await expect(page.locator('#app-shell')).not.toHaveClass(/left-closed/);
     await expect(page.getByTestId('subagent-tree-row')).toHaveCount(4);
     await expect(page.getByTestId('subagent-tree-row').first()).toBeVisible();
     const overflow = await page.evaluate(() => {
