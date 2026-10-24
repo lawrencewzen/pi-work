@@ -311,7 +311,7 @@ test('sidebar tree, orbit, pane interrupt/stop, note, and narrow overflow', asyn
     await expect(page.getByTestId('subagent-input')).toHaveCount(0);
     await expect(page.getByTestId('subagent-send')).toHaveCount(0);
     await expect(page.getByTestId('subagent-stop')).toHaveCount(0);
-    await expect(page.getByTestId('subagent-pane')).toContainText('已完成，结果已交回上级');
+    await expect(page.getByTestId('subagent-pane')).toContainText('交回给主 Agent');
 
     const note = page.locator('#center-thread [data-testid=message][data-role=note]');
     await expect(note).toBeVisible();
