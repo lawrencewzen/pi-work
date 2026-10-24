@@ -1,4 +1,4 @@
-// Composer model chip. Ids come from the conversation override, the role
+// Composer model chip. Ids come from the conversation override, the default
 // binding, or the first usable source. Nothing here invents one.
 
 function trimmed(value) {
@@ -76,18 +76,14 @@ function bindingTarget(sources, binding, options) {
 }
 
 /**
- * Role binding, then default, then the first model on the first usable source.
- * A role-template model string prefers a usable source that lists it; otherwise
- * the resolved source keeps that name. String values in `models` are ignored.
+ * Default binding, then the first model on the first usable source.
+ * String values in `models` are ignored.
  */
-export function resolveRoleTarget({ role, roleId, models, sources, grokSignedIn = false } = {}) {
+export function resolveRoleTarget({ models, sources, grokSignedIn = false } = {}) {
   const list = sourceList(sources);
   const map = models && typeof models === 'object' && !Array.isArray(models) ? models : {};
   const options = { grokSignedIn };
-  const rid = trimmed(roleId) || trimmed(role?.id);
-  let resolved = null;
-  if (rid) resolved = bindingTarget(list, bindingOf(map[rid]), options);
-  if (!resolved && rid !== 'default') resolved = bindingTarget(list, bindingOf(map.default), options);
+  let resolved = bindingTarget(list, bindingOf(map.default), options);
   if (!resolved) {
     for (const source of list) {
       if (!sourceUsable(source, options)) continue;
@@ -97,12 +93,7 @@ export function resolveRoleTarget({ role, roleId, models, sources, grokSignedIn 
       break;
     }
   }
-  const hinted = trimmed(role?.model);
-  if (!hinted) return resolved;
-  const listed = list.find((source) => sourceUsable(source, options) && listedModel(source, hinted));
-  if (listed) return { source: listed, model: hinted };
-  if (resolved) return { source: resolved.source, model: hinted };
-  return null;
+  return resolved;
 }
 
 export function resolveDispatchModel(input = {}) {
@@ -155,18 +146,12 @@ export function resolveConversationModel({ conv, sources, grokSignedIn = false }
 
 export function composerAgentPresentation({
   conv,
-  roles,
   models,
   sources,
   grokSignedIn = false,
 } = {}) {
   const pinned = resolveConversationModel({ conv, sources, grokSignedIn });
-  const list = Array.isArray(roles) ? roles : [];
-  const roleId = trimmed(conv?.roleId);
-  const role = list.find((item) => item && item.id === roleId) || null;
   const fallback = resolveDispatchModel({
-    role,
-    roleId,
     models,
     sources,
     grokSignedIn,

@@ -102,7 +102,7 @@ test('an empty model list becomes selectable after a row test and stays saved', 
   await openModels(page, token);
   const row = page.locator(`[data-testid=model-source][data-source-id="${id}"]`);
   await expect(row.getByTestId('model-none-enabled')).toHaveText('未启用模型');
-  const pick = page.locator('[data-testid=model-role][data-role-id=default] [data-testid=model-pick]');
+  const pick = page.locator('[data-testid=model-role] [data-testid=model-pick]');
   await pick.click();
   await expect(page.getByTestId('model-pop-empty')).toContainText('还没有启用的模型');
   await expect(page.getByTestId('model-choose-models')).toHaveText('去选择模型');
@@ -121,7 +121,7 @@ test('an empty model list becomes selectable after a row test and stays saved', 
   await expect(page.getByTestId('composer-agent')).toBeVisible();
   await page.locator('[data-action=open-settings]').click();
   await page.locator('[data-tab=models]').click();
-  const savedPick = page.locator('[data-testid=model-role][data-role-id=default] [data-testid=model-pick]');
+  const savedPick = page.locator('[data-testid=model-role] [data-testid=model-pick]');
   await expect(savedPick).toContainText('deepseek-chat');
   await expect(savedPick).not.toContainText('自动');
 });

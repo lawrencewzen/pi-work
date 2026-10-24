@@ -9,7 +9,6 @@ function carriedText(data) {
 function copyMeta(target, data) {
   if (!data) return;
   if (data.agentId) target.agentId = data.agentId;
-  if (data.roleId) target.roleId = data.roleId;
   if (data.kind) target.kind = data.kind;
   if (data.fromAgent) target.fromAgent = data.fromAgent;
   if (data.toAgent) target.toAgent = data.toAgent;

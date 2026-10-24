@@ -82,3 +82,33 @@ for (const viewport of [
     await expectCompactRows(page);
   });
 }
+
+test('settings has no Agent tab; default model can be chosen, saved, and kept after refresh', async ({ page }) => {
+  const token = await boot();
+  const pageErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(String(err)));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await login(page, srv.url, token);
+  await page.locator('[data-action=open-settings]').click();
+  await expect(page.locator('.sm')).toBeVisible();
+  await expect(page.getByTestId('settings-tab-agents')).toHaveCount(0);
+  await expect(page.locator('[data-action=set-settings-tab][data-tab=agents]')).toHaveCount(0);
+  await page.locator('[data-tab=models]').click();
+  await expect(page.getByTestId('models-page')).toBeVisible();
+  await expect(page.locator('[data-testid=model-role]')).toHaveCount(1);
+  await expect(page.getByText('默认模型', { exact: true }).first()).toBeVisible();
+  const pick = page.getByTestId('model-pick');
+  await pick.click();
+  await page.locator('[data-action=ms-choose-model][data-model="gpt-4o"]').click();
+  await page.getByTestId('model-save').click();
+  await expect(page.locator('.toast-msg')).toContainText('设置已保存');
+  const saved = await api(srv.url, 'GET', '/settings', null, token);
+  expect(saved.status).toBe(200);
+  expect(saved.body.models.default.model).toBe('gpt-4o');
+  await page.reload();
+  await expect(page.getByTestId('composer-agent')).toBeVisible();
+  await page.locator('[data-action=open-settings]').click();
+  await page.locator('[data-tab=models]').click();
+  await expect(page.getByTestId('model-pick')).toContainText('gpt-4o');
+  expect(pageErrors, 'console has no unhandled errors when /api/roles is 404').toEqual([]);
+});

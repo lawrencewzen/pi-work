@@ -59,17 +59,6 @@ import {
   closeGitImportPops,
 } from './git-import-ui.js';
 import {
-  renderAgentsPane,
-  renderAgentSkillsPop,
-  mountAgentsPane,
-  handleAgentAction,
-  onAgentField,
-  onAgentToolChange,
-  onAgentSkillChange,
-  filterAgents,
-  captureAgentDraft,
-} from './agent-settings.js';
-import {
   applyStreamDelta,
   applyMessageDone,
   dropStreamingResidues,
@@ -95,7 +84,6 @@ const state = {
   activeFileContent: null,
   userPickedFile: false,
   settings: {},
-  roles: [],
   plugins: [],
   skills: [],
   pluginQuery: '',
@@ -261,22 +249,6 @@ export function dedupeMessages(messages) {
     }
   }
   return deduped;
-}
-
-const ROLE_LABEL_KEYS = {
-  coder: 'role_coder',
-  tester: 'role_tester',
-  auditor: 'role_auditor',
-  planner: 'role_planner',
-  default: 'role_default',
-  agent: 'agent_name',
-};
-
-export function localizeRoleLabel(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return t('agent_name');
-  const key = ROLE_LABEL_KEYS[raw.toLowerCase()];
-  return key ? t(key) : raw;
 }
 
 /** New-file hunks have an empty old side (`@@ -0,0`). */
@@ -561,7 +533,6 @@ export async function loadInitialData() {
   applyTheme(state.theme, state.appearance);
   applyI18n();
 
-  try { state.roles = await api('/api/roles'); } catch { state.roles = []; }
   try { state.plugins = await api('/api/plugins'); } catch { state.plugins = []; }
   try { state.skills = await api('/api/skills'); } catch { state.skills = []; }
   try { state.about = await api('/api/about'); } catch { state.about = {}; }
@@ -884,7 +855,6 @@ export async function refreshConversationMeta(cid) {
     }
     if (conv.usage) state.activeConversationData.usage = conv.usage;
     if (conv.contextWindow != null) state.activeConversationData.contextWindow = conv.contextWindow;
-    if ('roleId' in conv) state.activeConversationData.roleId = conv.roleId || null;
     if ('modelSourceId' in conv) state.activeConversationData.modelSourceId = conv.modelSourceId || null;
     if ('modelId' in conv) state.activeConversationData.modelId = conv.modelId || null;
     if (conv.contextWindow != null) {
@@ -1236,7 +1206,6 @@ export async function createNewConversation(opts = {}) {
     return;
   }
   const body = { title: opts.title || '' };
-  if (opts.roleId) body.roleId = opts.roleId;
   if (opts.modelSourceId && opts.modelId) {
     body.modelSourceId = opts.modelSourceId;
     body.modelId = opts.modelId;
@@ -1390,7 +1359,6 @@ function sidebarRenderSignature() {
     parts.push(
       agent.id || '',
       agent.status || '',
-      agent.roleId || '',
       agent.name || '',
       agent.brief || '',
       agent.lastText || '',
@@ -1505,7 +1473,7 @@ function subagentSummary(agent) {
   if (fromBrief) return fromBrief;
   const last = String(agent?.lastText || '').replace(/\s+/g, ' ').trim();
   if (last) return last;
-  return realSubagentName(agent) || String(agent?.roleId || '').trim();
+  return realSubagentName(agent);
 }
 
 function isSubagentStuck(agent, now) {
@@ -1821,10 +1789,11 @@ function oneLine(text, max = 72) {
 }
 
 function realSubagentName(agent) {
-  if (isBackgroundSubagent(agent)) return agent.name || agent.roleId || t('agent_name');
-  const roleId = String(agent?.roleId || '').toLowerCase();
-  if (ROLE_LABEL_KEYS[roleId]) return localizeRoleLabel(agent.roleId);
-  return agent?.name || localizeRoleLabel(agent?.roleId);
+  const name = String(agent?.name || '').trim();
+  if (name) return name;
+  const brief = String(agent?.brief || '').trim();
+  if (brief) return brief;
+  return t('agent_name');
 }
 
 function clearSubagentView() {
@@ -1886,7 +1855,6 @@ export async function refreshViewingAgent(cid, aid) {
           ...agents[idx],
           status: body.status || agents[idx].status,
           name: body.name || agents[idx].name,
-          roleId: body.roleId || agents[idx].roleId,
           ...(body.mode === 'background' || body.mode === 'foreground' ? { mode: body.mode } : {}),
           ...extra,
         };
@@ -1946,13 +1914,7 @@ function resolveComposerTarget() {
   const ctx = dispatchContext();
   const pinned = resolveConversationModel(ctx);
   if (pinned) return pinned;
-  const conv = ctx.conv || {};
-  const list = Array.isArray(ctx.roles) ? ctx.roles : [];
-  const roleId = typeof conv.roleId === 'string' ? conv.roleId.trim() : '';
-  const role = list.find((item) => item && item.id === roleId) || list.find((item) => item?.id === 'default') || null;
   return resolveRoleTarget({
-    role,
-    roleId: role?.id || roleId || 'default',
     models: ctx.models,
     sources: ctx.sources,
     grokSignedIn: ctx.grokSignedIn,
@@ -2020,7 +1982,6 @@ function renderComposerContext() {
 function dispatchContext() {
   return {
     conv: state.activeConversationId ? state.activeConversationData : state.draft,
-    roles: state.roles,
     models: state.settings?.models || {},
     sources: state.settings?.sources || [],
     grokSignedIn: Boolean(state.settings?.grok?.signedIn),
@@ -2038,10 +1999,8 @@ function renderComposerAgent() {
   }
 }
 
-function modelForDispatchRole(role) {
+function defaultDispatchModel() {
   return resolveDispatchModel({
-    role,
-    roleId: role?.id || '',
     models: state.settings?.models || {},
     sources: state.settings?.sources || [],
     grokSignedIn: Boolean(state.settings?.grok?.signedIn),
@@ -2063,7 +2022,7 @@ function listedComposerSources() {
 function renderAgentMenuHtml() {
   const conv = (state.activeConversationId ? state.activeConversationData : state.draft) || {};
   const grokSignedIn = Boolean(state.settings?.grok?.signedIn);
-  const defaultModel = modelForDispatchRole((state.roles || []).find((role) => role?.id === 'default') || null);
+  const defaultModel = defaultDispatchModel();
   const followDefault = !String(conv.modelSourceId || '').trim() || !String(conv.modelId || '').trim();
   const selectedSourceId = followDefault ? '' : String(conv.modelSourceId || '');
   const selectedModel = followDefault ? '' : String(conv.modelId || '');
@@ -2521,7 +2480,7 @@ function realSubagentRowHtml(agent) {
   const last = oneLine(agent.lastText || agent.task || '');
   const open = state.viewingAgentId === agent.id;
   return (
-    `<div class="sub-agent-row is-real${open ? ' is-open' : ''}" data-testid="subagent-row" data-agent-id="${escapeHtml(agent.id || '')}" data-role-id="${escapeHtml(agent.roleId || '')}" data-mode="${escapeHtml(mode)}" data-status="${escapeHtml(st)}" data-action="open-subagent" data-ctx="subagent" title="${escapeHtml(t('subagent_open_title'))}">` +
+    `<div class="sub-agent-row is-real${open ? ' is-open' : ''}" data-testid="subagent-row" data-agent-id="${escapeHtml(agent.id || '')}" data-mode="${escapeHtml(mode)}" data-status="${escapeHtml(st)}" data-action="open-subagent" data-ctx="subagent" title="${escapeHtml(t('subagent_open_title'))}">` +
     `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
     `<span class="sub-agent-name">${escapeHtml(name)}</span>` +
     (background ? `<span class="sub-agent-bg" data-testid="subagent-background">${escapeHtml(t('subagent_background'))}</span>` : '') +
@@ -2557,7 +2516,7 @@ function truncationFooterHtml(message, enabled) {
 }
 
 /** Messages → HTML blocks. Shared by the main thread and the sub-agent pane. */
-function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, streamSpin, liveTail, showTruncationContinue } = {}) {
+function threadBlocksHtml(msgs, { afterToolRun, senderName, streamSpin, liveTail, showTruncationContinue } = {}) {
   const rendered = [];
   const toolRun = [];
   const last = msgs[msgs.length - 1];
@@ -2614,7 +2573,7 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, stre
       continue;
     }
     if (!String(m.text || '').trim()) continue;
-    const roleLabel = senderName || assistantSenderText(m, fallbackRoleId);
+    const roleLabel = senderName || '';
     const chip = assistantChip(m);
     const headerBits = [];
     if (roleLabel) headerBits.push(`<span class="msg-sender" data-testid="message-sender">${escapeHtml(roleLabel)}</span>`);
@@ -2664,7 +2623,6 @@ export function renderChatThread() {
   const liveTail = clock && threadEndsWithToolGroup(msgs);
 
   const rendered = threadBlocksHtml(msgs, {
-    fallbackRoleId: conv.roleId,
     streamSpin,
     liveTail,
     showTruncationContinue: !ACTIVE_RUN.has(conv?.status),
@@ -2954,13 +2912,6 @@ export function renderToolRowHtml(tool, tools = []) {
     `</div>` +
     `</div>`
   );
-}
-
-function assistantSenderText(m, fallbackRoleId) {
-  const rid = m?.roleId || m?.agentId || fallbackRoleId;
-  if (!rid || String(rid).toLowerCase() === 'default') return '';
-  const role = (state.roles || []).find((r) => r.id === rid);
-  return localizeRoleLabel(role?.id || role?.name || rid);
 }
 
 function assistantChip(m) {
@@ -3633,7 +3584,6 @@ function modelsCtx() {
     escapeHtml,
     api,
     showToast,
-    localizeRoleLabel,
     confirm: confirmDialog,
     render: renderSettingsModal,
     renderChrome: () => {
@@ -3762,10 +3712,6 @@ export function closeSettings() {
   if (ov) ov.style.display = 'none';
 }
 
-function agentCtx() {
-  return { state, t, escapeHtml, api, showToast, localizeRoleLabel, render: renderSettingsModal, confirm: confirmDialog };
-}
-
 function gitCtx() {
   return { state, t, escapeHtml, api, showToast, render: renderSettingsModal, confirm: confirmDialog };
 }
@@ -3775,7 +3721,6 @@ function gitImportCtx() {
 }
 
 export function renderSettingsModal() {
-  captureAgentDraft(agentCtx());
   let ov = document.getElementById('settings-overlay');
   if (!ov) {
     ov = document.createElement('div');
@@ -3788,16 +3733,13 @@ export function renderSettingsModal() {
   const tTab = state.activeSettingsTab;
 
   const models = tTab === 'models';
-  const agents = tTab === 'agents';
   const git = tTab === 'git';
-  const ctx = models || agents ? modelsCtx() : null;
+  const ctx = models ? modelsCtx() : null;
   const pane = models
     ? renderModelsPane(ctx)
     : git
       ? renderGitPane(gitCtx())
-      : agents
-        ? renderAgentsPane(agentCtx())
-        : `<div class="sm-body"><span class="sm-x" data-action="close-settings">×</span>${renderSettingsTabContent(tTab)}</div>`;
+      : `<div class="sm-body"><span class="sm-x" data-action="close-settings">×</span>${renderSettingsTabContent(tTab)}</div>`;
   ov.innerHTML = `
     <div class="sm">
       <div class="sm-nav">
@@ -3805,19 +3747,16 @@ export function renderSettingsModal() {
         <div class="${tTab === 'general' ? 'on' : ''}" data-action="set-settings-tab" data-tab="general">${escapeHtml(t('settings_tab_general'))}</div>
         <div class="${tTab === 'models' ? 'on' : ''}" data-action="set-settings-tab" data-tab="models">${escapeHtml(t('settings_tab_models'))}</div>
         <div class="${tTab === 'git' ? 'on' : ''}" data-action="set-settings-tab" data-tab="git" data-testid="settings-tab-git">${escapeHtml(t('settings_tab_git'))}</div>
-        <div class="${tTab === 'agents' ? 'on' : ''}" data-action="set-settings-tab" data-tab="agents" data-testid="settings-tab-agents">${escapeHtml(t('settings_tab_agents'))}<span class="sm-nav-new">${escapeHtml(t('settings_tab_new'))}</span></div>
         <div class="${tTab === 'plugins' ? 'on' : ''}" data-action="set-settings-tab" data-tab="plugins">${escapeHtml(t('settings_tab_plugins'))}</div>
         <div class="${tTab === 'skills' ? 'on' : ''}" data-action="set-settings-tab" data-tab="skills">${escapeHtml(t('settings_tab_skills'))}</div>
         <div class="${tTab === 'about' ? 'on' : ''}" data-action="set-settings-tab" data-tab="about">${escapeHtml(t('settings_tab_about'))}</div>
       </div>
       ${pane}
     </div>
-    ${models || agents ? renderModelPop(ctx) : ''}
+    ${models ? renderModelPop(ctx) : ''}
     ${models ? renderContextWindowPop(ctx) : ''}
-    ${agents ? renderAgentSkillsPop(agentCtx()) : ''}
   `;
   if (models) mountModelsPane(state, t);
-  if (agents) mountAgentsPane(state);
 }
 
 function renderSettingsTabContent(tab) {
@@ -3997,34 +3936,9 @@ function renderSkillsListHtml(list, searching = false) {
 
 export function setSettingsTab(tab) {
   closeModelPop(state);
-  if (state.agentsUi) state.agentsUi.skillsOpen = false;
-  state.activeSettingsTab = tab;
+  state.activeSettingsTab = tab === 'agents' ? 'models' : tab;
   renderSettingsModal();
-  if (tab === 'models') refreshGrokStatus();
-  if (tab === 'agents') refreshAgentLists();
-}
-
-async function refreshAgentLists() {
-  const stamp = (state.agentRefresh = (state.agentRefresh || 0) + 1);
-  try {
-    const [roles, skills, plugins, settings] = await Promise.all([
-      api('/api/roles'),
-      api('/api/skills'),
-      api('/api/plugins'),
-      api('/api/settings'),
-    ]);
-    if (stamp !== state.agentRefresh) return;
-    state.roles = roles;
-    state.skills = skills;
-    state.plugins = plugins;
-    state.settings = settings;
-    noteSettingsReloaded(state);
-  } catch { /* keep existing lists */ }
-  if (stamp !== state.agentRefresh) return;
-  if (state.activeSettingsTab !== 'agents') return;
-  const active = document.activeElement;
-  const typing = active && ['ag-name', 'ag-desc', 'ag-prompt', 'ag-search', 'ag-skill-search'].includes(active.id);
-  if (!typing) renderSettingsModal();
+  if (state.activeSettingsTab === 'models') refreshGrokStatus();
 }
 
 function applyChromeLabels() {
@@ -5019,16 +4933,11 @@ window.__app = {
 // ============================================================================
 document.addEventListener('click', (e) => {
   const ui = state.modelsUi;
-  if (ui?.pickerRole && !e.target.closest?.('.model-pop') && !e.target.closest?.('[data-action="toggle-model-pick"]')) {
+  if (ui?.pickerOpen && !e.target.closest?.('.model-pop') && !e.target.closest?.('[data-action="toggle-model-pick"]')) {
     closeModelPop(state);
   }
   if (ui?.contextPicker && !e.target.closest?.('#context-window-pop') && !e.target.closest?.('[data-action="ms-toggle-context-window"]')) {
     closeContextWindowPop(state);
-  }
-  const agentsUi = state.agentsUi;
-  if (agentsUi?.skillsOpen && !e.target.closest?.('.ag-skpop') && !e.target.closest?.('[data-action="ag-skills-open"]')) {
-    agentsUi.skillsOpen = false;
-    document.getElementById('ag-skpop')?.classList.remove('open');
   }
   const agentMenu = document.getElementById('composer-agent-menu');
   if (agentMenu?.classList.contains('is-open') && !e.target.closest('#composer-agent-wrap')) {
@@ -5297,12 +5206,6 @@ document.addEventListener('click', (e) => {
         });
         break;
       }
-      if (action && action.startsWith('ag-')) {
-        void handleAgentAction(action, actionEl, agentCtx()).catch((err) => {
-          showToast(err?.message || 'err_save');
-        });
-        break;
-      }
       break;
   }
 });
@@ -5314,10 +5217,6 @@ document.addEventListener('input', (e) => {
     filterSkills(e.target.value);
   } else if (e.target.id === 'ms-name' || e.target.id === 'ms-url' || e.target.id === 'ms-key' || e.target.id === 'ms-manual' || e.target.id === 'ms-grok-name' || e.target.id === 'ms-search') {
     onModelsField(e.target, modelsCtx());
-  } else if (e.target.id === 'ag-search') {
-    filterAgents(e.target.value, agentCtx());
-  } else if (e.target.id === 'ag-name' || e.target.id === 'ag-desc' || e.target.id === 'ag-prompt' || e.target.id === 'ag-skill-search') {
-    onAgentField(e.target, agentCtx());
   } else if (e.target.id === 'git-url' || e.target.id === 'git-token') {
     onGitField(e.target);
   } else if (e.target.id === 'git-search' || e.target.id === 'git-pick-name' || e.target.id === 'git-addr-name' || e.target.id === 'ws-git-url-input' || e.target.id === 'ws-branch-input') {
@@ -5335,8 +5234,6 @@ document.addEventListener('focusin', (e) => {
 
 document.addEventListener('change', (e) => {
   if (e.target?.matches?.('[data-action="ms-toggle-model"]')) onModelsToggle(e.target, modelsCtx());
-  else if (e.target?.matches?.('[data-testid="agent-tool-check"]')) onAgentToolChange(e.target, agentCtx());
-  else if (e.target?.matches?.('[data-testid="agent-skill-check"]')) onAgentSkillChange(e.target, agentCtx());
 });
 
 // ============================================================================

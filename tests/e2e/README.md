@@ -34,17 +34,17 @@ npm run test:e2e                         # playwright test -c tests/playwright.c
 | [workspaces.md](workspaces.md) | 工作区、本地目录、Git 导入 |
 | [chat.md](chat.md) | 左右气泡、Markdown |
 | [context-chip.md](context-chip.md) | 上下文用量：无用量为 —，模型返回后显示已用 / 窗口 |
-| [agent-chip.md](agent-chip.md) | 调度模型芯片与角色菜单 |
+| [agent-chip.md](agent-chip.md) | 调度模型芯片：显示默认模型、切换对话模型 |
 | [files.md](files.md) | 写文件，Diff / 文件 / Markdown，工具写入后文件树立即更新 |
 | [tool-loop.md](tool-loop.md) | 相同工具连呼、重复翻找与单步工具上限 |
 | [conversation-control.md](conversation-control.md) | 暂停、继续、终止，终止后再次发送 |
 | [running-overview.md](running-overview.md) | 运行中概览 |
 | [grok-login.md](grok-login.md) | Grok 设备码登录、退出登录 |
 | [model-connection.md](model-connection.md) | 未连接模型时报错，登录后真实回复，演示模式有徽章 |
-| [model-sources.md](model-sources.md) | 模型来源增删改测、默认模型、跟随默认、保存条、换主机重填 Key |
+| [model-sources.md](model-sources.md) | 模型来源增删改测、默认模型、保存条、换主机重填 Key |
 | [skills.md](skills.md) | 新建 Skill、开关、启用后影响回复 |
 | [plugins.md](plugins.md) | Echo 列表、开关、调用工具、空导入被拒绝、导入 word-count、重启后仍在、无效插件报错 |
-| [agents.md](agents.md) | Agent 页：主 Agent / 子 Agent 的新建、编辑、复制、恢复默认、删除、模型、Skills；侧栏里的真实子 Agent |
+| [agents.md](agents.md) | 侧栏里的真实子 Agent：前台点开消息、后台标记 |
 | [archive.md](archive.md) | 切换内核前的对话只读归档，并用这段历史开新对话 |
 | [appearance.md](appearance.md) | 语言与主题 |
 
