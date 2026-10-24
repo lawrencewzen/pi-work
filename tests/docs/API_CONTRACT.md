@@ -13,6 +13,7 @@
 | `LLM_API` | `faux` 时使用演示模型；其他值不单独打开演示模型 | 测试可设 `faux` |
 | `PI_WORK_RETRY_BASE_MS` / `PI_WORK_RETRY_MAX` | 交给 Harness `retry`。`PI_WORK_RETRY_MAX` 含第一次尝试，默认 5，`maxRetries` 为该值减 1。`baseDelayMs` 默认 200 | 50 / 5 |
 | `PI_WORK_STREAM_TIMEOUT_MS` | 交给 Harness `stream.timeoutMs`。超时后按 retry 重试。默认 120000 | 不设 |
+| `PI_WORK_MAX_OUTPUT_TOKENS` | OpenAI 兼容源和 Grok 源的 `maxTokens`。默认 32768；非正整数回落默认 | 不设 |
 | `PI_WORK_TOKEN` | 可选登录。不设时 `/api` 与 SSE 不鉴权，不读不写 `auth.token`，`GET /login` 一律 302 `/`，启动不打印 `PI_WORK_LOGIN` / `PI_WORK_TOKEN`。设置后所有 `/api` 需 `Authorization: Bearer` 或 cookie `pi_work_token`；SSE 可用一次性 `?ticket=`；`GET /login?token=` 校验后种 cookie 并 302 `/`，否则 401 | 不设 |
 | `PI_WORK_ALLOWED_HOSTS` | 逗号分隔的额外 Host。不设 `PI_WORK_TOKEN` 且本变量非空时，启动打印一行警告：服务对这些主机开放且没有鉴权 | 不设 |
 | `PI_WORK_KERNEL` | 已废弃，启动不再读取。运行时始终是 Pi Durable Harness | 不设 |
@@ -69,7 +70,7 @@ status 取值：`idle | running | waiting | failed | done | stopped`。应用库
 
 `POST /workspaces` 请求 `{name, gitUrl, branch?}` 时把仓库克隆到数据目录，并创建 `source:'git'` 的工作区。成功 `201`，响应里的 `gitUrl` 已去掉 `user:pass@`。非法地址 `400 {error:'invalid gitUrl'}`；非法分支 `400 {error:'invalid branch'}`。克隆失败 `400 {error:'git clone failed', code}`，`code` 为 `git_not_found` | `auth_failed` | `cert_failed` | `repo_not_found` | `branch_not_found` | `network` | `timeout` | `unknown`。只有 `unknown` 另外带 `detail`（脱敏后的 stderr 末几行）。`http://` 的主机不在 `PI_WORK_GIT_HTTP_HOSTS` 里时，与非法地址相同。
 
-消息 `messages[]`：`{id, role:'user'|'assistant'|'tool', text?, model?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。助手消息在 transcript 里有模型名时带 `model`（这条回复实际调用的模型 id）；没有则不加该字段。用户和工具消息不加 `model`。
+消息 `messages[]`：`{id, role:'user'|'assistant'|'tool', text?, model?, stopReason?, kind?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。助手消息在 transcript 里有模型名时带 `model`（这条回复实际调用的模型 id）；没有则不加该字段。用户和工具消息不加 `model`。助手消息有 `stopReason` 时带上（如 `stop`、`length`）。以 `[auto-continue]` 开头的用户消息带 `kind:'auto-continue'`，界面不画成用户气泡。
 
 ### 旧对话
 
@@ -77,7 +78,7 @@ status 取值：`idle | running | waiting | failed | done | stopped`。应用库
 
 ## 4. SSE：`GET /api/conversations/:cid/events`
 不落库，不使用 `Last-Event-ID`。连接后先推一条当前 `status`，之后只推这次连接上新发生的事件。前端在连接或重连时重新 `GET /conversations/:cid`。事件：
-`status {status}` · `message.delta {messageId, text}` · `message.done {messageId, text?, role?, liveId?, model?}` · `tool.start {tool}` · `tool.end {tool}` · `retry {attempt, delayMs, reason}` · `error {code, message}` · `usage {usage, contextWindow, contextLabel}` · `agent`。`usage` 仅在模型响应带了 token 计数时发送；最新一次调用覆盖上一次，不把多轮相加。助手 `message.done` 在条目里有模型名时带 `model`；流式增量拿不到时，结束后 `GET` 刷新会补上。
+`status {status}` · `message.delta {messageId, text}` · `message.done {messageId, text?, role?, liveId?, model?, stopReason?, kind?}` · `tool.start {tool}` · `tool.end {tool}` · `retry {attempt, delayMs, reason}` · `error {code, message}` · `usage {usage, contextWindow, contextLabel}` · `agent`。`usage` 仅在模型响应带了 token 计数时发送；最新一次调用覆盖上一次，不把多轮相加。助手 `message.done` 在条目里有模型名时带 `model`，有 `stopReason` 时带 `stopReason`；流式增量拿不到时，结束后 `GET` 刷新会补上。自动续写用户消息带 `kind:'auto-continue'`。
 
 `message.delta` 的 `text` 是增量片段，接收方直接拼到当前气泡后面，不能因为这段文字以前出现过就丢掉。同一次生成的增量共用一个 `messageId`（`live-1`、`live-2`……；更早的事件也可能仍是 `live`）。它不是 transcript 里的正式 id。同一时刻最多一个流式气泡。断线后重新 GET 对话，不靠补发 partial。
 
@@ -86,12 +87,12 @@ status 取值：`idle | running | waiting | failed | done | stopped`。应用库
 ## 5. 持久性/恢复语义
 - 工具调用有稳定 `toolCallId`。恢复时已完成的调用**不得重放**（写文件幂等：同 toolCallId 不重复执行）。
 - 进程重启：有 harness id 且未结束的会话由 Harness `resume()` 接着跑，状态是 `running`，完成后 `done`。没有 harness id 的旧对话不参与恢复，也不出现在列表里。`write` / `edit` / `bash` 中断后不重放。
-- 卡住只靠 `stream.timeoutMs`；可重试的模型错误由 Harness `retry` 处理。不自动提交下一句。
+- 卡住只靠 `stream.timeoutMs`；可重试的模型错误由 Harness `retry` 处理。不自动提交下一句用户输入。助手 `stopReason` 为 `length` 时，内核用 GenerationTask `onYield` 在同一 run 里追加一条以 `[auto-continue]` 开头的用户消息继续生成，同一条真实用户消息之后最多连续 8 次。
 - 工具结果会随下一轮请求发回模型。输出为空时用 `(no output)`，避免模型以为调用没有发生。
 - `E_NO_MODEL` 不重试。流超时按 retry 重试，次数用尽后 `failed`。
 
 ## 6. faux 模型脚本
-JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...","tool":"write","args":{...}} | {"tools":[{"tool":"read","args":{...}}]} | {"cut":true} | {"end":true} | {"delayMs":N} ]}`。一个对象是一次模型调用。文字和紧跟的工具调用放在同一个对象里，合成一条助手消息，Harness 自己跑完工具回合。只有文字、没有工具调用时这一轮结束，剩下的对象留给下一条用户消息。`{"cut":true}` 变成可重试的 `terminated` 错误。`{"end":true}` 是空助手消息，占住一轮，让脚本的下一拍留给下一次模型调用。回合上的 `usage` 仅在带有数字 token 字段时进入会话用量（例如 `{"text":"ok","usage":{"total_tokens":16400}}`）；没有 `usage` 时作曲栏保持 `—`。
+JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"tool":"write","args":{...}} | {"text":"...","tool":"write","args":{...}} | {"tools":[{"tool":"read","args":{...}}]} | {"cut":true} | {"end":true} | {"delayMs":N} ]}`。一个对象是一次模型调用。文字和紧跟的工具调用放在同一个对象里，合成一条助手消息，Harness 自己跑完工具回合。只有文字、没有工具调用时这一轮结束，剩下的对象留给下一条用户消息。文字回合可带 `stopReason`（如 `length`），交给 Harness；`length` 会触发内核 `onYield` 自动续写。`{"cut":true}` 变成可重试的 `terminated` 错误。`{"end":true}` 是空助手消息，占住一轮，让脚本的下一拍留给下一次模型调用。回合上的 `usage` 仅在带有数字 token 字段时进入会话用量（例如 `{"text":"ok","usage":{"total_tokens":16400}}`）；没有 `usage` 时作曲栏保持 `—`。
 
 ## 7. data-testid 约定（E2E）
 | testid | 元素 |
@@ -104,6 +105,8 @@ JSON：`{"turns":[ {"text":"..."} | {"tool":"write","args":{...}} | {"text":"...
 | `composer-context` | 作曲栏上下文用量（`已用 x% · 剩 y% · 128k`） |
 | `composer-agent` / `composer-agent-menu` | 作曲栏当前模型；点击按来源列出模型，可选「默认」跟随设置绑定 |
 | `message` (+`data-role`) / `message-body` / `message-sender` / `message-chip` | 消息、渲染体（Markdown → HTML）、发送者小字、该回复实际用的模型标签 |
+| `auto-continue-note` | 自动续写提示行，不是用户气泡 |
+| `output-truncated` / `continue-truncated` | 仍以 `length` 结束时的截断提示和「继续」按钮 |
 | `tool-row` (+`data-tool`,`data-path`) / `tool-row-path` / `tool-row-added` / `tool-row-removed` / `tool-row-detail` | 工具行（点击展开输出；write/edit 打开右栏 diff） |
 | `tool-group-elapsed` | 运行中且组在线程末尾时，摘要行右侧的用时 |
 | `assistant-pending` / `assistant-pending-status` / `assistant-pending-elapsed` | 这一轮还没有工具调用时的思考占位 |

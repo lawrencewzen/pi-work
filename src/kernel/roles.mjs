@@ -8,6 +8,7 @@ import { agentEventData, mapConvStatusToAgent } from '../core/agents.mjs';
 import { TOOLS } from '../core/config.mjs';
 import { resolveConversationModelPatch } from '../core/model-sources.mjs';
 import { createPluginHost } from './plugins.mjs';
+import { isAutoContinueText } from './continuation.mjs';
 import { toolsForRole } from './tools.mjs';
 
 const FALLBACK_ROLE = {
@@ -25,6 +26,7 @@ const DEFAULT_TITLE = 'New conversation';
 export function autoTitleFromText(currentTitle, text) {
   const cur = currentTitle == null ? '' : String(currentTitle);
   if (cur !== '' && cur !== DEFAULT_TITLE) return undefined;
+  if (isAutoContinueText(text)) return undefined;
   return String(text ?? '').slice(0, 48);
 }
 

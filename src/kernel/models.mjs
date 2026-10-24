@@ -24,6 +24,13 @@ import {
 
 const COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 export const GROK_PROVIDER_ID = 'grok-proxy';
+export const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
+
+/** Positive integer from `PI_WORK_MAX_OUTPUT_TOKENS`, otherwise 32768. */
+export function maxOutputTokensFromEnv(env = process.env) {
+  const n = Number(env?.PI_WORK_MAX_OUTPUT_TOKENS);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_OUTPUT_TOKENS;
+}
 
 /**
  * Faux is on only when the process asks for it: `PI_WORK_LLM=faux`,
@@ -42,7 +49,7 @@ export function providerIdForSource(source) {
   return `src-${source.id}`;
 }
 
-function chatModel({ provider, id, api, baseUrl, headers, contextWindow }) {
+function chatModel({ provider, id, api, baseUrl, headers, contextWindow, env }) {
   return {
     id,
     name: id,
@@ -53,7 +60,7 @@ function chatModel({ provider, id, api, baseUrl, headers, contextWindow }) {
     input: ['text'],
     cost: COST,
     contextWindow: contextWindow ?? contextWindowFromEnv(),
-    maxTokens: 4096,
+    maxTokens: maxOutputTokensFromEnv(env),
     ...(headers ? { headers } : {}),
   };
 }
@@ -148,6 +155,7 @@ function createOpenAICompatProvider({ id, baseUrl, apiKey, modelList, contextWin
       api: 'openai-completions',
       baseUrl,
       contextWindow: contextWindowForModel(source, modelId, env),
+      env,
     })),
     api,
   });
@@ -189,6 +197,7 @@ function createGrokProxyProvider({ baseUrl, modelList, version, grokAuth, fetchI
         baseUrl,
         headers,
         contextWindow: contextWindowForModel({ contextWindows }, modelId, env),
+        env,
       });
     }),
     api: {
@@ -230,7 +239,13 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
       if (id && apiFingerprints.has(id)) dropApi(id);
       return;
     }
-    const fingerprint = JSON.stringify([baseUrl, source.apiKey || '', ids, source.contextWindows || null]);
+    const fingerprint = JSON.stringify([
+      baseUrl,
+      source.apiKey || '',
+      ids,
+      source.contextWindows || null,
+      maxOutputTokensFromEnv(env),
+    ]);
     if (apiFingerprints.get(id) === fingerprint) return;
     models.setProvider(createOpenAICompatProvider({
       id,
@@ -248,7 +263,13 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
     if (!ids.length) ids.push(GROK_SESSION_MODEL);
     const baseUrl = grokProxyBase(env);
     const version = grokClientVersion(env);
-    const fingerprint = JSON.stringify([baseUrl, version, ids, source.contextWindows || null]);
+    const fingerprint = JSON.stringify([
+      baseUrl,
+      version,
+      ids,
+      source.contextWindows || null,
+      maxOutputTokensFromEnv(env),
+    ]);
     if (grokFingerprint === fingerprint) return;
     const built = createGrokProxyProvider({
       baseUrl,

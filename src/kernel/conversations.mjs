@@ -27,6 +27,7 @@ import { createRoleHost, installRoleExtensions } from './roles.mjs';
 import { createSubagentExtension, createSubagentHost } from './subagents.mjs';
 import { createWorkspaceExtension, toolsForRole } from './tools.mjs';
 import { installUsageExtension } from './usage.mjs';
+import { installContinuationExtension } from './continuation.mjs';
 import { createWorkspaceEnv } from './workspace-env.mjs';
 
 const DETAIL_CAP = 1024 * 1024;
@@ -97,6 +98,7 @@ export async function openConversationKernel({
   registry.install(createWorkspaceExtension());
   installRoleExtensions(registry, roleBridge);
   installUsageExtension(registry);
+  installContinuationExtension(registry);
   installPluginReload(registry, roleBridge);
   const subagentExtension = createSubagentExtension({
     listRoles: () => store.listRoles(),

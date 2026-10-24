@@ -4,6 +4,7 @@ import { retryDelayMs } from '@earendil-works/pi-ai/utils/retry';
 import { DEFAULT_RETRY_POLICY } from '@earendil-works/pi-durable';
 import { redactAuthText } from '../core/grok-auth.mjs';
 import { overlayContextWindow, presentContext } from '../core/usage.mjs';
+import { isAutoContinueText } from './continuation.mjs';
 import { latestCallUsage, reportedUsage } from './usage.mjs';
 
 /** messageId for an assistant partial that has no transcript entry yet. */
@@ -64,10 +65,14 @@ function messageDone(entry) {
   const text = textOf(message?.content);
   const data = { messageId: String(entry.id) };
   if (text) data.text = text;
-  if (entry.kind === 'pi.user') data.role = 'user';
-  else {
+  if (entry.kind === 'pi.user') {
+    data.role = 'user';
+    if (isAutoContinueText(text)) data.kind = 'auto-continue';
+  } else {
     const model = assistantModelName(entry);
     if (model) data.model = model;
+    const stopReason = message?.stopReason;
+    if (typeof stopReason === 'string' && stopReason) data.stopReason = stopReason;
   }
   return { event: 'message.done', data };
 }
@@ -278,9 +283,12 @@ export function messagesFromEntries(entries) {
       if (entry.kind === 'pi.assistant' && !text) continue;
       const msg = { id: String(entry.id), role: entry.kind === 'pi.user' ? 'user' : 'assistant' };
       if (text) msg.text = text;
+      if (entry.kind === 'pi.user' && isAutoContinueText(text)) msg.kind = 'auto-continue';
       if (entry.kind === 'pi.assistant') {
         const model = assistantModelName(entry);
         if (model) msg.model = model;
+        const stopReason = entry.model?.[0]?.stopReason;
+        if (typeof stopReason === 'string' && stopReason) msg.stopReason = stopReason;
       }
       messages.push(msg);
       continue;

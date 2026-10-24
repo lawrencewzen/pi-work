@@ -330,6 +330,16 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 .handoff-note[data-kind="correction"] { align-self: stretch; border-radius: 8px; background: transparent; color: var(--mute); padding: 0; }
 .handoff-note[data-kind="correction"] span { display: block; overflow-wrap: anywhere; }
 .llm-error { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--err-bg); background: var(--err-bg); color: var(--err-ink); font-size: 13px; }
+.msg-truncated {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.msg-truncated .btn { height: 24px; padding: 0 8px; font-size: 12px; }
 .llm-error-code { font-family: var(--mono); font-size: 11.5px; opacity: .8; margin-bottom: 2px; }
 .thread-empty { margin: auto; text-align: center; color: var(--faint); font-size: 13px; padding: 40px 24px; }
 
