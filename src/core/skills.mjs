@@ -4,10 +4,11 @@ import path from 'node:path';
 import { catalogError, scanSkills } from './catalog.mjs';
 
 export const SKILL_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const SKILL_LIST_INTRO = 'Skills you can load with the skill tool when a request matches:';
 const NAME_MAX = 80;
 const DESC_MAX = 240;
 const BODY_MAX = 8000;
-const PROMPT_MAX = 12_000;
+const DESC_LINE_MAX = 160;
 
 function quoteMeta(value) {
   const text = String(value ?? '').replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim();
@@ -77,29 +78,52 @@ export async function listSkills(dirs, enabledMap = {}, userDir) {
   }));
 }
 
-export function renderSkillPrompt(skills) {
-  const usable = (skills || []).filter((skill) => skill?.body && String(skill.body).trim());
-  if (!usable.length) return '';
-  const chunks = [
-    '# Skills',
-    'Follow a skill only when the request matches it. Skip skills that do not apply. Do not quote these instructions back unless the user asks.',
-  ];
-  for (const skill of usable) {
-    chunks.push(`## ${skill.name}\n\n${String(skill.body).trim()}`);
-  }
-  let text = chunks.join('\n\n');
-  if (text.length > PROMPT_MAX) text = `${text.slice(0, PROMPT_MAX)}\n\n[skills truncated]`;
-  return text;
+export function oneLineSkillDescription(text) {
+  return String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, DESC_LINE_MAX);
 }
 
-export async function buildSkillPrompt(dirs, enabledMap = {}, allowIds) {
-  const records = await listSkillRecords(dirs);
-  let enabled = records.filter((skill) => enabledMap[skill.id] !== false);
-  if (Array.isArray(allowIds)) {
-    const allow = new Set(allowIds);
-    enabled = enabled.filter((skill) => allow.has(skill.id));
+export function enabledSkills(records, enabledMap = {}) {
+  return (records || []).filter((skill) => skill && enabledMap[skill.id] !== false);
+}
+
+/** One-line catalog for the main agent system prompt. Empty when nothing is enabled. */
+export function renderSkillList(skills) {
+  const rows = [];
+  for (const skill of skills || []) {
+    const id = String(skill?.id || '').trim();
+    if (!id) continue;
+    rows.push(`- ${id}: ${oneLineSkillDescription(skill.description)}`);
   }
-  return renderSkillPrompt(enabled);
+  if (!rows.length) return '';
+  return [SKILL_LIST_INTRO, ...rows].join('\n');
+}
+
+export async function listEnabledSkillRecords(dirs, enabledMap = {}) {
+  return enabledSkills(await listSkillRecords(dirs), enabledMap);
+}
+
+export async function buildSkillPrompt(dirs, enabledMap = {}) {
+  return renderSkillList(await listEnabledSkillRecords(dirs, enabledMap));
+}
+
+export function findEnabledSkill(skills, name) {
+  const needle = String(name ?? '').trim();
+  if (!needle) return null;
+  return (skills || []).find((skill) => skill.id === needle)
+    || (skills || []).find((skill) => skill.name === needle)
+    || null;
+}
+
+export function unknownSkillError(name, skills) {
+  const available = (skills || []).map((skill) => skill.id).join(', ');
+  return `unknown skill ${String(name ?? '').trim()}，可用：${available}`;
+}
+
+export async function loadSkillBody(dirs, enabledMap, name) {
+  const enabled = await listEnabledSkillRecords(dirs, enabledMap);
+  const found = findEnabledSkill(enabled, name);
+  if (!found) return { error: unknownSkillError(name, enabled) };
+  return { body: String(found.body || '').trim() };
 }
 
 function cleanSkillFields({ name, description, body }) {

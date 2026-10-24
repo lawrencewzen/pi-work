@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -7,6 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { killChild, request as serverRequest, startServer, stopServer } from './_server.mjs';
 import { autoTitleFromText } from '../../src/kernel/agent-config.mjs';
 import { isAutoContinueText } from '../../src/kernel/continuation.mjs';
+import { createSkillTool, SKILL_TOOL_DESCRIPTION } from '../../src/kernel/skill-tool.mjs';
+import { SKILL_LIST_INTRO } from '../../src/core/skills.mjs';
 
 const TOKEN = 'unit-kernel-agent-config-token';
 const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
@@ -73,10 +75,98 @@ test('new conversation: empty instructions, all tools, enabled skills, Agent nam
     const [call] = await readRecords(record);
     assert.equal(sectionInner(call, 'instructions'), '');
     assert.equal(/You are a helpful coding assistant|default coding Agent|规划角色|编码角色/.test(sectionText(call, 'instructions')), false);
-    assert.match(sectionText(call, 'skills'), /Commit messages|Review notes/);
-    for (const name of ['read', 'write', 'edit', 'ls', 'grep', 'bash', 'echo', 'delegate', 'subagent']) {
+    const skills = sectionInner(call, 'skills');
+    assert.equal(skills.split('\n')[0], SKILL_LIST_INTRO);
+    assert.match(skills, /^- commit-message: /m);
+    assert.match(skills, /^- review-notes: /m);
+    assert.equal(skills.includes('Subject line is imperative'), false);
+    assert.equal(skills.includes('Lead with findings'), false);
+    for (const name of ['read', 'write', 'edit', 'ls', 'grep', 'bash', 'echo', 'skill', 'delegate', 'subagent']) {
       assert.equal(call.tools.includes(name), true, name);
     }
+  } finally {
+    await stopServer(srv);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('skill tool is read-only load-by-name', async () => {
+  const tool = createSkillTool({
+    loadSkill: async (name) => (
+      name === 'ok' ? { body: 'FULL BODY' } : { error: 'unknown skill nope，可用：ok' }
+    ),
+  });
+  assert.equal(tool.name, 'skill');
+  assert.equal(tool.description, SKILL_TOOL_DESCRIPTION);
+  assert.equal(tool.replay, 'safe');
+  assert.deepEqual(Object.keys(tool.parameters?.properties || {}), ['name']);
+  const ok = await tool.execute({ name: 'ok' });
+  assert.equal(ok.isError, undefined);
+  assert.equal(ok.output[0].text, 'FULL BODY');
+  const bad = await tool.execute({ name: 'nope' });
+  assert.equal(bad.isError, true);
+  assert.match(bad.output[0].text, /unknown skill nope/);
+});
+
+test('main agent skill tool loads body; disabled or unknown skills error', { timeout: 40000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kskill-'));
+  const record = path.join(dataDir, 'requests.jsonl');
+  const script = path.join(dataDir, 'faux.json');
+  await writeFile(script, JSON.stringify({
+    turns: [
+      { when: 'load commit skill', tool: 'skill', args: { name: 'commit-message' } },
+      { when: 'load commit skill', tool: 'skill', args: { name: 'Commit messages' } },
+      { when: 'load commit skill', text: 'loaded' },
+      { when: 'load again', tool: 'skill', args: { name: 'commit-message' } },
+      { when: 'load again', tool: 'skill', args: { name: 'missing-skill' } },
+      { when: 'load again', text: 'after-disable' },
+    ],
+  }));
+  const srv = await startServer({
+    token: TOKEN,
+    dataDir,
+    env: {
+      PI_WORK_LLM: 'faux',
+      PI_WORK_FAUX_SCRIPT: script,
+      PI_WORK_FAUX_RECORD: record,
+    },
+  });
+  try {
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'skills' });
+    assert.equal(ws.status, 201);
+    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'load' });
+    assert.equal(conv.status, 201);
+    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'load commit skill' })).status, 202);
+    const first = await waitFor(srv.base, conv.body.id, (body) => body.status === 'done');
+    assert.equal(first.status, 'done', srv.logs());
+    const loaded = (first.messages || []).filter((message) => message.role === 'tool').map((message) => message.text || '');
+    assert.equal(loaded.length, 2, JSON.stringify(first.messages));
+    assert.match(loaded[0], /When the user asks for a commit message/);
+    assert.match(loaded[0], /Subject line is imperative/);
+    assert.equal(loaded[1], loaded[0]);
+    const [call] = await readRecords(record);
+    const catalog = sectionInner(call, 'skills');
+    assert.equal(catalog.split('\n')[0], SKILL_LIST_INTRO);
+    assert.match(catalog, /^- commit-message: /m);
+    assert.equal(catalog.includes('Subject line is imperative'), false);
+    assert.equal((call.tools || []).includes('skill'), true);
+
+    const skillOff = await request(srv.base, 'PUT', '/api/skills/commit-message', { enabled: false });
+    assert.equal(skillOff.status, 200);
+    const conv2 = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'off' });
+    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv2.body.id}/messages`, { text: 'load again' })).status, 202);
+    const second = await waitFor(srv.base, conv2.body.id, (body) => body.status === 'done');
+    assert.equal(second.status, 'done', srv.logs());
+    const errors = (second.messages || []).filter((message) => message.role === 'tool').map((message) => message.text || '');
+    assert.equal(errors.length, 2, JSON.stringify(second.messages));
+    assert.match(errors[0], /^unknown skill commit-message，可用：/);
+    assert.match(errors[0], /review-notes/);
+    assert.equal(errors[0].split('可用：')[1].includes('commit-message'), false);
+    assert.match(errors[1], /^unknown skill missing-skill，可用：/);
+    const later = await readRecords(record);
+    const shut = sectionInner(later[later.length - 1], 'skills');
+    assert.equal(shut.includes('commit-message'), false);
+    assert.match(shut, /review-notes/);
   } finally {
     await stopServer(srv);
     await rm(dataDir, { recursive: true, force: true });

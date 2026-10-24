@@ -6,7 +6,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { load, ROOT } from './_root.mjs';
 
-const { buildSkillPrompt, createSkill, deleteSkill, listSkills, updateSkill, writeSkillFile } = await load('src/core/skills.mjs');
+const {
+  SKILL_LIST_INTRO,
+  buildSkillPrompt,
+  createSkill,
+  deleteSkill,
+  listSkills,
+  loadSkillBody,
+  renderSkillList,
+  updateSkill,
+  writeSkillFile,
+} = await load('src/core/skills.mjs');
 const { clearPluginCache, describePlugins, installPlugin, pluginHandlers } = await load('src/core/plugins.mjs');
 const { mergeSettings, normalizeSettings } = await load('src/core/settings.mjs');
 
@@ -42,12 +52,19 @@ async function writePlugin(dir, id, toolName, source) {
   return folder;
 }
 
-test('bundled skills render into the prompt and can be disabled', async () => {
+test('bundled skills render as a one-line catalog and can be disabled', async () => {
   const enabled = await buildSkillPrompt(bundledSkills, {});
-  assert.match(enabled, /Commit messages/);
-  assert.match(enabled, /imperative/);
-  assert.match(enabled, /Review notes/);
-  assert.match(enabled, /blocker/);
+  assert.equal(
+    enabled,
+    [
+      SKILL_LIST_INTRO,
+      '- commit-message: Write a commit subject and body that state the why, in the user\'s language.',
+      '- review-notes: Review code as a short list of findings ordered by severity.',
+    ].join('\n'),
+  );
+  assert.equal(enabled.includes('Subject line is imperative'), false);
+  assert.equal(enabled.includes('Lead with findings'), false);
+  assert.equal(enabled.includes('# Skills'), false);
   const disabled = await buildSkillPrompt(bundledSkills, { 'commit-message': false, 'review-notes': false });
   assert.equal(disabled, '');
   const listed = await listSkills(bundledSkills, { 'review-notes': false });
@@ -56,15 +73,28 @@ test('bundled skills render into the prompt and can be disabled', async () => {
   assert.equal(listed.some((skill) => Object.hasOwn(skill, 'body')), false);
 });
 
-test('skill prompt allow-list keeps only globally enabled skills', async () => {
-  const subset = await buildSkillPrompt(bundledSkills, {}, ['commit-message']);
-  assert.match(subset, /Commit messages/);
-  assert.equal(subset.includes('Review notes'), false);
-  const none = await buildSkillPrompt(bundledSkills, {}, []);
-  assert.equal(none, '');
-  const disabled = await buildSkillPrompt(bundledSkills, { 'commit-message': false }, ['commit-message', 'review-notes']);
-  assert.equal(disabled.includes('Commit messages'), false);
-  assert.match(disabled, /Review notes/);
+test('skill list flattens descriptions; loadSkillBody matches id then name', async () => {
+  const long = `${'why '.repeat(80)}\nsecond line`;
+  const list = renderSkillList([
+    { id: 'wide', description: long },
+    { id: 'plain', description: 'one line' },
+  ]);
+  assert.equal(list.startsWith(`${SKILL_LIST_INTRO}\n`), true);
+  const wide = list.split('\n').find((line) => line.startsWith('- wide: '));
+  assert.ok(wide);
+  assert.equal(wide.includes('\n'), false);
+  assert.equal(wide.length <= `- wide: `.length + 160, true);
+  assert.match(list, /^- plain: one line$/m);
+
+  const byId = await loadSkillBody(bundledSkills, {}, 'commit-message');
+  assert.match(byId.body, /Subject line is imperative/);
+  const byName = await loadSkillBody(bundledSkills, {}, 'Commit messages');
+  assert.equal(byName.body, byId.body);
+  const unknown = await loadSkillBody(bundledSkills, { 'commit-message': false }, 'commit-message');
+  assert.equal(unknown.body, undefined);
+  assert.match(unknown.error, /^unknown skill commit-message，可用：/);
+  assert.match(unknown.error, /review-notes/);
+  assert.equal(unknown.error.split('可用：')[1].includes('commit-message'), false);
 });
 
 test('user skills override bundled text and reject duplicates', async () => {
@@ -77,8 +107,11 @@ test('user skills override bundled text and reject duplicates', async () => {
     source: 'local',
   });
   const prompt = await buildSkillPrompt([bundledSkills[0], user], {});
-  assert.match(prompt, /USER_SKILL_MARK/);
+  assert.match(prompt, /- commit-message: local override/);
+  assert.equal(prompt.includes('USER_SKILL_MARK'), false);
   assert.equal(prompt.includes('imperative'), false);
+  const loaded = await loadSkillBody([bundledSkills[0], user], {}, 'commit-message');
+  assert.equal(loaded.body, 'USER_SKILL_MARK');
   await assert.rejects(
     () => createSkill(user, { name: 'Commit messages', id: 'commit-message', body: 'again' }, new Set(['commit-message'])),
     (err) => err.catalogCode === 'err_skill_exists',
@@ -89,6 +122,9 @@ test('user skills override bundled text and reject duplicates', async () => {
   assert.equal(updated.body, 'UPDATED_SKILL_BODY');
   const again = await buildSkillPrompt([user], { [created.id]: false });
   assert.equal(again.includes('UPDATED_SKILL_BODY'), false);
+  assert.equal(again.includes(created.id), false);
+  const shutBody = await loadSkillBody([user], { [created.id]: false }, created.id);
+  assert.match(shutBody.error, new RegExp(`unknown skill ${created.id}`));
   const listed = await listSkills([bundledSkills[0], user], {}, user);
   assert.equal(listed.find((skill) => skill.id === 'review-notes').deletable, false);
   assert.equal(listed.find((skill) => skill.id === created.id).deletable, true);
@@ -291,7 +327,10 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
     assert.equal(done.messages.some((message) => message.role === 'tool' && message.text === 'from-plugin'), true);
     const calls = (await fs.readFile(record, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
     const skillText = calls[0].sections.find((section) => section.key === 'skills')?.value || '';
-    assert.match(skillText, /Subject line is imperative/);
+    assert.match(skillText, /Skills you can load with the skill tool when a request matches:/);
+    assert.match(skillText, /^- commit-message: /m);
+    assert.equal(skillText.includes('Subject line is imperative'), false);
+    assert.equal((calls[0].tools || []).includes('skill'), true);
 
     const skillOff = await request('PUT', '/api/skills/commit-message', { enabled: false });
     assert.equal(skillOff.status, 200);
@@ -305,6 +344,8 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
     assert.equal(doneOff.messages.some((message) => message.text === 'from-plugin'), false);
     const later = (await fs.readFile(record, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
     const shut = later[later.length - 1].sections.find((section) => section.key === 'skills')?.value || '';
+    assert.equal(shut.includes('commit-message'), false);
+    assert.match(shut, /review-notes/);
     assert.equal(shut.includes('Subject line is imperative'), false);
   } finally {
     await stopProcess(proc);

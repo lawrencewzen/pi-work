@@ -8,6 +8,7 @@ import { parseSSE } from '../../src/core/sse.mjs';
 import { createExtensionHost } from '../../src/core/extensions.mjs';
 import { openConversationKernel } from '../../src/kernel/conversations.mjs';
 import { DELEGATE_DESCRIPTION, nameFromTask, SUBAGENT_DESCRIPTION } from '../../src/kernel/subagents.mjs';
+import { SKILL_TOOL_DESCRIPTION } from '../../src/kernel/skill-tool.mjs';
 import { createSqliteStore } from '../../src/store/sqlite.mjs';
 import { killChild, request as serverRequest, startServer, stopServer } from './_server.mjs';
 
@@ -235,14 +236,18 @@ test('foreground delegate returns the child answer; tools and name are self-cont
     assert.ok(parentCall, JSON.stringify(records));
     assert.equal(parentCall.toolDescriptions?.delegate, DELEGATE_DESCRIPTION);
     assert.equal(parentCall.toolDescriptions?.subagent, SUBAGENT_DESCRIPTION);
+    assert.equal(parentCall.toolDescriptions?.skill, SKILL_TOOL_DESCRIPTION);
+    assert.equal((parentCall.tools || []).includes('skill'), true);
     assert.equal(/role/i.test(parentCall.toolDescriptions?.delegate || ''), false);
     assert.equal(/Pick a subagent/i.test(JSON.stringify(parentCall.sections || [])), false);
     const childCall = records.find((row) => !(row.tools || []).includes('delegate'));
     assert.ok(childCall, JSON.stringify(records));
     assert.equal((childCall.tools || []).includes('delegate'), false);
     assert.equal((childCall.tools || []).includes('subagent'), false);
+    assert.equal((childCall.tools || []).includes('skill'), false);
     assert.equal(sectionInner(childCall, 'instructions'), '');
     assert.equal(sectionInner(childCall, 'skills'), '');
+    assert.equal(/Skills you can load with the skill tool/i.test(JSON.stringify(childCall.sections || [])), false);
     assert.equal(/Pick a subagent/i.test(JSON.stringify(childCall.sections || [])), false);
     const child = subagentsOf(done).find((agent) => agent.mode === 'foreground');
     assert.ok(child, JSON.stringify(done.agents));
@@ -342,7 +347,9 @@ test('child resolved agent is self-contained: empty instructions, parent model a
     const childToolNames = childAgent.tools.map((tool) => tool.name);
     assert.equal(childToolNames.includes('delegate'), false);
     assert.equal(childToolNames.includes('subagent'), false);
+    assert.equal(childToolNames.includes('skill'), false);
     assert.equal(childToolNames.includes('read'), true);
+    assert.equal(parentAgent.tools.some((tool) => tool.name === 'skill'), true);
     const parentDelegate = parentAgent.tools.find((tool) => tool.name === 'delegate');
     const parentSubagent = parentAgent.tools.find((tool) => tool.name === 'subagent');
     assert.deepEqual(toolPropertyKeys(parentDelegate.parameters), ['task']);
@@ -362,8 +369,10 @@ test('child resolved agent is self-contained: empty instructions, parent model a
     assert.ok(childCall, JSON.stringify(records));
     assert.equal(sectionInner(childCall, 'instructions'), '');
     assert.equal(sectionInner(childCall, 'skills'), '');
+    assert.equal((childCall.tools || []).includes('skill'), false);
     assert.equal(/You are the default coding Agent/i.test(JSON.stringify(childCall.sections || [])), false);
     assert.equal(/Commit messages/i.test(JSON.stringify(childCall.sections || [])), false);
+    assert.equal(/Skills you can load with the skill tool/i.test(JSON.stringify(childCall.sections || [])), false);
   } finally {
     if (kernel) await kernel.close();
     store.close();

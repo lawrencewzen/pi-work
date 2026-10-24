@@ -1,14 +1,17 @@
 // Agent adapter for one Pi Durable conversation.
 // The main agent has empty instructions, every workspace tool, enabled plugin
-// tools, and delegate / subagent. Skills are every globally enabled skill.
+// tools, skill, and delegate / subagent. The skills section is a one-line catalog;
+// the skill tool loads a body on demand. Children get none of that.
 import { randomUUID } from 'node:crypto';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable';
 import { agentEventData, mapConvStatusToAgent } from '../core/agents.mjs';
 import { TOOLS } from '../core/config.mjs';
+import { unknownSkillError } from '../core/skills.mjs';
 import { resolveConversationModelPatch } from '../core/model-sources.mjs';
 import { createPluginHost } from './plugins.mjs';
 import { isAutoContinueText } from './continuation.mjs';
+import { createSkillTool } from './skill-tool.mjs';
 import { workspaceTools } from './tools.mjs';
 
 const LOOSE_PARAMS = Type.Object({}, { additionalProperties: true });
@@ -24,20 +27,28 @@ export function autoTitleFromText(currentTitle, text) {
 }
 
 /**
- * Install the skills section and any builtin tool names the registry does not
- * already provide. A later batch can register the real workspace tools first;
- * those names are left alone. Plugin tools are installed when a conversation
- * is configured.
+ * Install the skills catalog section, the skill loader, and any builtin tool
+ * names the registry does not already provide. A later batch can register the
+ * real workspace tools first; those names are left alone. Plugin tools are
+ * installed when a conversation is configured.
  */
 export function installAgentExtensions(registry, bridge) {
   if (!registry) throw new Error('registry is required');
+  const skillTool = createSkillTool({
+    loadSkill: (name) => (
+      typeof bridge?.loadSkill === 'function'
+        ? bridge.loadSkill(name)
+        : { error: unknownSkillError(name, []) }
+    ),
+  });
+  if (bridge) bridge.skillTool = skillTool;
   registry.install(defineExtension({
     name: 'pi-work-skills',
     sections: [
       section('skills', async (input) => {
         try {
           const names = new Set((input?.agent?.tools || []).map((tool) => tool.name));
-          // Children drop delegate / subagent; they stay self-contained (no skills).
+          // Children drop delegate / subagent / skill; they stay self-contained.
           if (!names.has('delegate') && !names.has('subagent')) return undefined;
           if (typeof bridge.skillPrompt !== 'function') return undefined;
           const text = String((await bridge.skillPrompt()) || '').trim();
@@ -48,6 +59,7 @@ export function installAgentExtensions(registry, bridge) {
         }
       }),
     ],
+    tools: [skillTool],
   }));
   const have = new Set(registry.snapshot().tools().map((item) => item.tool.name));
   const missing = TOOLS.filter((name) => !have.has(name)).map(builtinTool);
@@ -105,6 +117,11 @@ export function createAgentHost({
   if (bridge) {
     bridge.skillPrompt = () => (
       extensions && typeof extensions.skillPrompt === 'function' ? extensions.skillPrompt() : ''
+    );
+    bridge.loadSkill = (name) => (
+      extensions && typeof extensions.loadSkill === 'function'
+        ? extensions.loadSkill(name)
+        : { error: unknownSkillError(name, []) }
     );
   }
 
