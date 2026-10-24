@@ -24,11 +24,13 @@ const HOOK = pathToFileURL(path.join(ROOT, 'tests/unit/kernel-models-token-hook.
 
 test('explicit demo is only the three switches', () => {
   assert.equal(explicitDemo({}), false);
-  assert.equal(explicitDemo({ PI_WORK_LLM: 'faux' }), true);
+  assert.equal(explicitDemo({ WEFT_LLM: 'faux' }), true);
   assert.equal(explicitDemo({ LLM_API: 'faux' }), true);
-  assert.equal(explicitDemo({ PI_WORK_FAUX_SCRIPT: '/tmp/script.json' }), true);
-  assert.equal(explicitDemo({ PI_WORK_LLM: 'openai' }), false);
+  assert.equal(explicitDemo({ WEFT_FAUX_SCRIPT: '/tmp/script.json' }), true);
+  assert.equal(explicitDemo({ WEFT_LLM: 'openai' }), false);
   assert.equal(explicitDemo({ LLM_API_KEY: KEY_DEFAULT }), false);
+  assert.equal(explicitDemo({ [`PI${'_'}WORK_LLM`]: 'faux' }), false);
+  assert.equal(explicitDemo({ [`PI${'_'}WORK_FAUX_SCRIPT`]: '/tmp/script.json' }), false);
 });
 
 test('model routing follows conversation, then default, then first usable source', async () => {
@@ -63,7 +65,7 @@ test('model routing follows conversation, then default, then first usable source
   const routes = createKernelModels({
     models,
     getSettings: async () => settings,
-    env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
+    env: { WEFT_GROK_CLIENT_VERSION: '1.0.50' },
   });
   const main = await routes.modelFor({});
   const pinned = await routes.modelFor({ modelSourceId: 'srccoder', modelId: 'model-coder' });
@@ -127,7 +129,7 @@ test('chatModel uses a source context window and re-registers when it changes', 
   const routes = createKernelModels({
     models,
     getSettings: async () => settings,
-    env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
+    env: { WEFT_GROK_CLIENT_VERSION: '1.0.50' },
   });
   const main = await routes.modelFor({});
   assert.equal(models.getModel(main.provider, 'model-default').contextWindow, 128000);
@@ -156,7 +158,7 @@ test('chatModel reads pi-ai catalog metadata and keeps user/env overrides', asyn
     const routes = createKernelModels({
       models,
       getSettings: async () => settings,
-      env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50', ...env },
+      env: { WEFT_GROK_CLIENT_VERSION: '1.0.50', ...env },
     });
     const ref = await routes.modelFor({});
     return models.getModel(ref.provider, ref.modelId);
@@ -216,7 +218,7 @@ test('chatModel reads pi-ai catalog metadata and keeps user/env overrides', asyn
     baseUrl: 'https://api.deepseek.com/v1',
     apiKey: KEY_DEFAULT,
     models: ['deepseek-flash'],
-  }, { PI_WORK_MAX_OUTPUT_TOKENS: '2048' });
+  }, { WEFT_MAX_OUTPUT_TOKENS: '2048' });
   assert.equal(envMax.contextWindow, 1_000_000);
   assert.equal(envMax.maxTokens, 2048);
 });
@@ -270,7 +272,7 @@ test('deepseek-flash request body matches the pre-catalog shape except max_token
     const routes = createKernelModels({
       models,
       getSettings: async () => settings,
-      env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
+      env: { WEFT_GROK_CLIENT_VERSION: '1.0.50' },
     });
     const ref = await routes.modelFor({});
     const catalogModel = models.getModel(ref.provider, ref.modelId);
@@ -336,7 +338,7 @@ test('modelFor prefers a conversation model and falls back when that source is d
   const routes = createKernelModels({
     models,
     getSettings: async () => settings,
-    env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
+    env: { WEFT_GROK_CLIENT_VERSION: '1.0.50' },
   });
 
   const pinned = await routes.modelFor({
@@ -449,9 +451,9 @@ test('kernel models call each source, refresh Grok once, and hide keys', { timeo
       nodeArgs: ['--import', HOOK],
       formatLog: scrub,
       env: {
-        PI_WORK_GROK_CLIENT_VERSION: '1.0.50',
-        PI_WORK_GROK_PROXY: grokFake.baseUrl,
-        PI_WORK_TEST_GROK_TOKEN_URL: grokFake.tokenUrl,
+        WEFT_GROK_CLIENT_VERSION: '1.0.50',
+        WEFT_GROK_PROXY: grokFake.baseUrl,
+        WEFT_TEST_GROK_TOKEN_URL: grokFake.tokenUrl,
       },
     });
     proc = srv.proc;

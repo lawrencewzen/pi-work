@@ -2,7 +2,7 @@
 
 历史迁移稿，暂停 / recovering / 409 等语义已在 T12-2 移除，当前行为以 docs/ARCHITECTURE.md 为准。
 
-本文是可执行的迁移方案。原型在分支 [`spike/pi-durable-kernel`](https://github.com/lawrencewzen/pi-work/tree/spike/pi-durable-kernel)（提交 `7b7ab38`），不合并。真正换内核按文末分批另派。
+本文是可执行的迁移方案。原型在分支 [`spike/pi-durable-kernel`](https://github.com/lawrencewzen/weft/tree/spike/pi-durable-kernel)（提交 `7b7ab38`），不合并。真正换内核按文末分批另派。
 
 API 以已安装的 `@earendil-works/pi-durable@1.1.0`、`@earendil-works/pi-ai@1.1.0` 的 `dist/**/*.d.ts` 和 `node_modules/@earendil-works/pi-durable/README.md` 为准。GitHub `earendil-works/pi` 上 `main` 的示例 22/23 比 1.1.0 新：示例返回 `{ output }`，已发布的 `ToolExecutionResult` 和 README 用 `content`。原型按已发布包写。
 
@@ -35,7 +35,7 @@ API 以已安装的 `@earendil-works/pi-durable@1.1.0`、`@earendil-works/pi-ai@
 | 1e | 主对话和子对话都打出 `run_start`→`status running`、`message_end`→`message.done`、`tool_execution_start/end`→`tool.start/end`、`usage_changed`→`usage`。子对话 id 来自 `tool_execution_update.details.conversationId`（数字）。快的 faux 回合没有 `message_update`，因为默认 partial 提交间隔是 100ms |
 | 1f | 见下面摘录。恢复后仍是 2 个对话、1 条 `RECOVER_HOLD` 用户消息、根提交 `done`，子结果含 `resumed-after-kill`，父结果含 `parent-finished` |
 | 1g | 前台：`status=unanswered reason=aborted`，子工具结果是 `Tool hold was aborted`。后台：普通 `abort()` 期间 tick 从 1 增到 4；`abort({ background: true })` 之后 tick 停在 4 |
-| 1h | Windows：`windows-latest`，Node v22.23.3，`platform=win32`。[Actions 运行](https://github.com/lawrencewzen/pi-work/actions/runs/38600496463) 成功。`node:sqlite` 同样打印 ExperimentalWarning。bash 经 `cmd.exe` 得到 `bash-ok`，越界仍是 `E_SANDBOX`，cwd 是该对话的临时目录。杀进程用 `taskkill /PID /T /F`，被杀进程退出码是 1、没有 signal；随后的 resume 退出码 0，结果与 Linux 相同 |
+| 1h | Windows：`windows-latest`，Node v22.23.3，`platform=win32`。[Actions 运行](https://github.com/lawrencewzen/weft/actions/runs/38600496463) 成功。`node:sqlite` 同样打印 ExperimentalWarning。bash 经 `cmd.exe` 得到 `bash-ok`，越界仍是 `E_SANDBOX`，cwd 是该对话的临时目录。杀进程用 `taskkill /PID /T /F`，被杀进程退出码是 1、没有 signal；随后的 resume 退出码 0，结果与 Linux 相同 |
 
 1f 摘录：
 
@@ -117,7 +117,7 @@ T4-1（`feat/agents-backend`）会给角色加 description、skills、pluginTool
 
 | 接口 | 新内核下 |
 |---|---|
-| `GET /api/health`、启动行 `PI_WORK_READY` | 不变。Harness 打开失败时进程不要打印 READY |
+| `GET /api/health`、启动行 `WEFT_READY` | 不变。Harness 打开失败时进程不要打印 READY |
 | `POST/GET /workspaces`、文件、树、`workspace-root` | 仍写应用库和磁盘。沙箱仍是 `resolveInWorkspace` / `resolveAllowedWorkspacePath`。与内核无关 |
 | `POST /workspaces/:wid/conversations` | 应用库插入 UUID 行，并 `createConversation({ ownership: "ownerless" })`，把数字 id 记在该行。响应仍是 `{id, workspaceId, title, status:'idle'}`，id 仍是 UUID |
 | `GET /workspaces/:wid/conversations` | 应用库列表。`status` 用 Harness 是否 busy、加上宿主的 paused/stopped 标记合成契约里的枚举 |
@@ -165,11 +165,11 @@ SSE 映射（`spike/lib/events.mjs` 已按这个打日志）：
 
 ## 2c. 数据
 
-现在的库是 `data/pi-work.sqlite`（`src/store/sqlite.mjs`）：`workspaces`、`settings`、`conversations`、`messages`、`tool_calls`、`changes`、`events`、`roles`、`pipelines`、`catalog_tombstones`。Pi Durable 的 sqlite 是另一套表（条目、任务、document、提交），由 `openNodeSqliteStorage` 自己建。两个文件不要合成一个，也不要让两个进程打开同一个 Harness 文件（README：一个进程独占，没有跨进程锁）。
+现在的库是 `data/weft.sqlite`（`src/store/sqlite.mjs`）：`workspaces`、`settings`、`conversations`、`messages`、`tool_calls`、`changes`、`events`、`roles`、`pipelines`、`catalog_tombstones`。Pi Durable 的 sqlite 是另一套表（条目、任务、document、提交），由 `openNodeSqliteStorage` 自己建。两个文件不要合成一个，也不要让两个进程打开同一个 Harness 文件（README：一个进程独占，没有跨进程锁）。
 
 建议：
 
-1. 设置、工作区、角色、流水线、tombstone 留在 `pi-work.sqlite`，不转换。
+1. 设置、工作区、角色、流水线、tombstone 留在 `weft.sqlite`，不转换。
 2. 新对话：应用库只留 UUID、工作区、标题、角色、流水线步骤、Harness 数字 id、宿主状态。正文、工具结果、恢复点放在 `data/harness/session.sqlite`。
 3. 旧对话只读归档。打开时仍从 `messages` / `tool_calls` / `changes` 读，状态显示为已归档。`POST` 消息返回明确错误，并提供「用这段历史开一条新对话」：只复制用户和助手的可见文本，不重放工具。不要把旧行导入成 `pi.user` / `pi.tool-result`。工具日志的 before/after 哈希、流水线步骤和「已完成的 toolCallId 不重放」都对不齐，导入是有损的。
 4. 不写双向同步。切换之后，新消息只进 Harness。
@@ -188,7 +188,7 @@ SSE 映射（`spike/lib/events.mjs` 已按这个打日志）：
 |---|---|---|
 | `npm run check`、`npm test` | 必须保持绿色。直接 import `createOrchestrator` 的用例先别改 | 编排器用例改成打门面或打 Harness。纯函数（paths、diff、retry、sse、config、usage）不动 |
 | Playwright | 继续打 HTTP 契约 | 同一套用例打新内核。不改 `data-testid` |
-| 演示模型 | `PI_WORK_LLM=faux` / `LLM_API=faux` / `PI_WORK_FAUX_SCRIPT` 才启用 | 同样的三个开关。没有 Grok 会话、API Key、Base URL 时仍然失败为 `E_NO_MODEL`，界面仍标「演示模型」 |
+| 演示模型 | `WEFT_LLM=faux` / `LLM_API=faux` / `WEFT_FAUX_SCRIPT` 才启用 | 同样的三个开关。没有 Grok 会话、API Key、Base URL 时仍然失败为 `E_NO_MODEL`，界面仍标「演示模型」 |
 | 原型冒烟 | 留在 spike 分支 | 缩成内核单测：重开、不重复提交、沙箱、前台恢复。Windows 用 `windows-latest` 跑这组，直到 `/bin/sh` 的适配进了产品代码 |
 
 ## 2e. 分批
@@ -209,15 +209,15 @@ SSE 映射（`spike/lib/events.mjs` 已按这个打日志）：
 | T5-8 | 用量芯片用最近一次调用，`usage` SSE 字段不变 | T5-2、T5-4 | 可与 T5-6、T5-7 并行 | 第二次调用覆盖第一次，不把 `pi.usage` 的累计值显示出来；没有 usage 时芯片是 `—` | 小 |
 | T5-9 | Skills section；插件工具注册、热替换按 README 的「下一阶段生效」 | T5-2、T5-5 | 可与 T5-6 并行 | 现有 skills/plugins 单测在默认路径下仍绿；新路径下启用的 skill 出现在系统提示，禁用的插件不出现在工具列表 | 中 |
 | T5-10 | 旧对话只读归档；新对话走 Harness。不导入旧正文 | T5-2 | 可与 T5-3 之后的批并行 | 旧 id 仍能 `GET` 消息和 diff；对旧 id 发消息得到明确错误；新对话重启后还在 | 读路径分叉。中 |
-| T5-11 | 默认改为 Harness。删除编排器的运行循环。保留 paths、diff、retry 纯函数、sse 格式、config、usage、model-sources。**已完成：不再读取 `PI_WORK_KERNEL`，启动只打开 Harness。** | T5-3 到 T5-10 | 最后 | `npm run check`、`npm test`、Playwright 全绿；未配置模型不会落到 faux；进程杀掉后一条带前台子 Agent 的对话能跑完 | 测试改写面大 |
+| T5-11 | 默认改为 Harness。删除编排器的运行循环。保留 paths、diff、retry 纯函数、sse 格式、config、usage、model-sources。**已完成：不再读取 `WEFT_KERNEL`，启动只打开 Harness。** | T5-3 到 T5-10 | 最后 | `npm run check`、`npm test`、Playwright 全绿；未配置模型不会落到 faux；进程杀掉后一条带前台子 Agent 的对话能跑完 | 测试改写面大 |
 
 T5-11 之前产品行为就是今天的行为。T5-11 之后产品行为是契约加上 2f 的决定。
 
 ### T5-2 开关
 
-T5-11 之后这只开关已经去掉：启动始终打开 Harness，不再读取 `PI_WORK_KERNEL`，也没有编排器可退回。下面是 T5-2 当时的范围，留作迁移记录。
+T5-11 之后这只开关已经去掉：启动始终打开 Harness，不再读取 `WEFT_KERNEL`，也没有编排器可退回。下面是 T5-2 当时的范围，留作迁移记录。
 
-`PI_WORK_KERNEL=durable` 时，进程启动打开 `<dataDir>/harness/session.sqlite` 上的 Pi Durable Harness，并调用 `harness.resume()`。下面这些接口改走内核，其它接口和默认路径不动：
+`WEFT_KERNEL=durable` 时，进程启动打开 `<dataDir>/harness/session.sqlite` 上的 Pi Durable Harness，并调用 `harness.resume()`。下面这些接口改走内核，其它接口和默认路径不动：
 
 - `POST /api/workspaces/:wid/conversations`
 - `GET /api/workspaces/:wid/conversations`
@@ -225,9 +225,9 @@ T5-11 之后这只开关已经去掉：启动始终打开 Harness，不再读取
 - `POST /api/conversations/:cid/messages`
 - `GET /api/conversations/:cid/events`
 
-Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
+Harness 打开失败时进程退出，不打印 `WEFT_READY`。
 
-演示模型仍只在 `PI_WORK_LLM=faux`、`LLM_API=faux` 或设置了 `PI_WORK_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`。显式剧本（`PI_WORK_FAUX_SCRIPT`）按已提交的助手条数取下一拍。一段文字紧跟工具调用时合成一条助手消息，由 Harness 跑完工具回合；一段文字后面没有工具调用时这一轮结束。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。未设置 `PI_WORK_FAUX_TEXT` 时演示回复是空字符串，不会冒出一行 `ok`。`PI_WORK_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `PI_WORK_FAUX_HOLD_READY` 写出一个就绪文件。
+演示模型仍只在 `WEFT_LLM=faux`、`LLM_API=faux` 或设置了 `WEFT_FAUX_SCRIPT` 时启用，这一路径用的是 pi-ai 的 `fauxProvider`。显式剧本（`WEFT_FAUX_SCRIPT`）按已提交的助手条数取下一拍。一段文字紧跟工具调用时合成一条助手消息，由 Harness 跑完工具回合；一段文字后面没有工具调用时这一轮结束。没有显式演示模式时，Harness 以 `no_model` 结束这次提交，门面映射成现有的 `E_NO_MODEL`。未设置 `WEFT_FAUX_TEXT` 时演示回复是空字符串，不会冒出一行 `ok`。`WEFT_FAUX_HOLD=1` 让这次模型调用不返回，供杀进程恢复测试使用，配合 `WEFT_FAUX_HOLD_READY` 写出一个就绪文件。
 
 ## 2f. 风险和要拍板的决定
 
@@ -259,7 +259,7 @@ Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
 - 在 spike 分支上 `npm run check`、`npm test`（113 项）通过。该分支的 `check` 多检查了 `spike/` 下的入口；`main` 上的 `check` 不含这些文件。
 - 没有跑 Playwright。原型没有页面。
 - 没有调用真实的 `cli-chat-proxy.grok.com` 或 `auth.x.ai`。Grok 断言打在本地假服务上。
-- Windows：GitHub Actions [`38600496463`](https://github.com/lawrencewzen/pi-work/actions/runs/38600496463)，`windows-2025`，Node v22.23.3，结论 success。日志里的 `=== smoke passed ===` 和 `1f result` 与 Linux 一致：`conversations:2`、`holdUserEntries:1`、`rootRequestStatus:done`，子文本含 `resumed-after-kill`。
+- Windows：GitHub Actions [`38600496463`](https://github.com/lawrencewzen/weft/actions/runs/38600496463)，`windows-2025`，Node v22.23.3，结论 success。日志里的 `=== smoke passed ===` 和 `1f result` 与 Linux 一致：`conversations:2`、`holdUserEntries:1`、`rootRequestStatus:done`，子文本含 `resumed-after-kill`。
 
 ## 已拍板的决定（2026-10-14）
 
@@ -273,7 +273,7 @@ Harness 打开失败时进程退出，不打印 `PI_WORK_READY`。
 6. **旧对话**：只读归档，不导入。可查看消息和 Diff，不能再发消息，提供「用这段历史开新对话」（只复制可见文本）。设置、工作区、角色、流水线全部保留。
 7. **Grok**：用本文的自定义 provider，不改 `xaiProvider`，不加依赖。
 8. **Windows shell**：工具批次里把 bash 改成不依赖 `/bin/sh` 的实现，`windows-latest` 跑冒烟。
-9. **子 Agent 并发上限**：沿用原型（在创建那次 commit 里数花名册中未停止的子 Agent），默认不限，`PI_WORK_MAX_SUBAGENTS` 可选限制；子 Agent 被停止后释放名额。
+9. **子 Agent 并发上限**：沿用原型（在创建那次 commit 里数花名册中未停止的子 Agent），默认不限，`WEFT_MAX_SUBAGENTS` 可选限制；子 Agent 被停止后释放名额。
 10. **流水线**：同一对话内按步 `configure` + `submit` 交接，不拆成子 Agent。
 11. **子 Agent 事件**：不混进父对话 SSE，父对话只看到工具结果；界面需要查看子 Agent 时单独挂 watch。
 12. **Node 版本**：切换默认内核的那一批把 `engines` 抬到 `>=22.19`。

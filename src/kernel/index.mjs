@@ -38,7 +38,7 @@ export function watchHarnessClosed(harness) {
   if (!harness || typeof harness.closed?.then !== 'function') return;
   harness.closed.then((end) => {
     if (end?.reason !== 'failed') return;
-    console.error(`PI_WORK_HARNESS_CLOSED ${formatClosedError(end.error)}`);
+    console.error(`WEFT_HARNESS_CLOSED ${formatClosedError(end.error)}`);
     process.exit(1);
   });
 }

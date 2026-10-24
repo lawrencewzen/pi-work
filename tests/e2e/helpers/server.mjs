@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-export const ROOT = process.env.PI_WORK_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+export const ROOT = process.env.WEFT_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 export const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../fixtures');
 
 /**
@@ -20,7 +20,7 @@ async function tmpBase() {
 
 export async function tmpdir(p = 'piw-e2e-') { return fs.realpath(await fs.mkdtemp(path.join(await tmpBase(), p))); }
 
-/** Child directories the server will accept. Pass `root` as PI_WORK_WORKSPACE_ROOT. */
+/** Child directories the server will accept. Pass `root` as WEFT_WORKSPACE_ROOT. */
 export async function prepareWorkspaces(names = ['repo']) {
   const root = await tmpdir('piw-wsroot-');
   const dirs = [];
@@ -32,20 +32,20 @@ export async function prepareWorkspaces(names = ['repo']) {
   return { root, dirs };
 }
 
-/** Start server.mjs with faux LLM. Returns {url, dataDir, proc, kill(signal), logs()}. Login is off unless extraEnv sets PI_WORK_TOKEN. */
+/** Start server.mjs with faux LLM. Returns {url, dataDir, proc, kill(signal), logs()}. Login is off unless extraEnv sets WEFT_TOKEN. */
 export async function startServer({ script = 'basic.json', dataDir, port = 0, extraEnv = {} } = {}) {
   dataDir ??= await tmpdir('piw-data-');
   const env = {
     ...process.env,
     PORT: String(port),
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: path.join(FIXTURES, script),
-    PI_WORK_RETRY_BASE_MS: '50',
-    PI_WORK_RETRY_MAX: '5',
+    WEFT_DATA_DIR: dataDir,
+    WEFT_LLM: 'faux',
+    WEFT_FAUX_SCRIPT: path.join(FIXTURES, script),
+    WEFT_RETRY_BASE_MS: '50',
+    WEFT_RETRY_MAX: '5',
     ...extraEnv,
   };
-  if (!Object.prototype.hasOwnProperty.call(extraEnv, 'PI_WORK_TOKEN')) delete env.PI_WORK_TOKEN;
+  if (!Object.prototype.hasOwnProperty.call(extraEnv, 'WEFT_TOKEN')) delete env.WEFT_TOKEN;
   const proc = spawn(process.execPath, ['server.mjs'], {
     cwd: ROOT,
     env,
@@ -54,7 +54,7 @@ export async function startServer({ script = 'basic.json', dataDir, port = 0, ex
   let log = '';
   const url = await new Promise((resolve, reject) => {
     const to = setTimeout(() => reject(new Error('server not ready:\n' + log)), 20000);
-    const on = (b) => { log += b; const m = log.match(/PI_WORK_READY (http:\/\/\S+)/); if (m) { clearTimeout(to); resolve(m[1]); } };
+    const on = (b) => { log += b; const m = log.match(/WEFT_READY (http:\/\/\S+)/); if (m) { clearTimeout(to); resolve(m[1]); } };
     proc.stdout.on('data', on); proc.stderr.on('data', on);
     proc.on('exit', (c) => { clearTimeout(to); reject(new Error(`server exited ${c}:\n${log}`)); });
   });

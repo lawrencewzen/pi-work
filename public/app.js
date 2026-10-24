@@ -93,9 +93,9 @@ const state = {
   allRunningList: [],
   eventSource: null,
   unauthorized: false,
-  theme: localStorage.getItem('piwork_theme') || 'white',
-  appearance: localStorage.getItem('piwork_appearance') || 'light',
-  fontSize: localStorage.getItem('piwork_font_size') || 'md',
+  theme: localStorage.getItem('weft_theme') || 'white',
+  appearance: localStorage.getItem('weft_appearance') || 'light',
+  fontSize: localStorage.getItem('weft_font_size') || 'md',
   activeSettingsTab: 'general',
   expandedTools: new Set(),
   expandedToolGroups: new Set(),
@@ -116,11 +116,11 @@ const state = {
   allowedWorkspaceRoot: '',
   // Layout (prototype): side panels, widths, which projects are expanded
   // Below the overlay widths a side panel floats over the chat, so it starts closed there.
-  leftOpen: window.innerWidth >= 860 ? readPref('piwork_left_open', true) : false,
-  rightOpen: window.innerWidth >= 1180 ? readPref('piwork_right_open', true) : false,
-  leftW: clampNum(Number(localStorage.getItem('piwork_left_w')) || 264, 200, 420),
-  rightW: clampNum(Number(localStorage.getItem('piwork_right_w')) || 440, 320, 900),
-  openProjects: new Set(readJson('piwork_open_projects', [])),
+  leftOpen: window.innerWidth >= 860 ? readPref('weft_left_open', true) : false,
+  rightOpen: window.innerWidth >= 1180 ? readPref('weft_right_open', true) : false,
+  leftW: clampNum(Number(localStorage.getItem('weft_left_w')) || 264, 200, 420),
+  rightW: clampNum(Number(localStorage.getItem('weft_right_w')) || 440, 320, 900),
+  openProjects: new Set(readJson('weft_open_projects', [])),
   diffs: {},
   closedChangeFiles: new Set(),
   contextWindowOverrides: {},
@@ -491,8 +491,8 @@ export function applyTheme(family = state.theme, mode = state.appearance) {
   if (!THEME_FAMILIES.has(family)) family = 'white';
   state.theme = family;
   state.appearance = mode;
-  localStorage.setItem('piwork_theme', family);
-  localStorage.setItem('piwork_appearance', mode);
+  localStorage.setItem('weft_theme', family);
+  localStorage.setItem('weft_appearance', mode);
 
   let effectiveMode = mode;
   if (mode === 'system') {
@@ -547,7 +547,7 @@ export async function loadWorkspaces() {
     state.workspaces = [];
   }
 
-  const savedWsId = localStorage.getItem('piwork_active_ws');
+  const savedWsId = localStorage.getItem('weft_active_ws');
   if (savedWsId && state.workspaces.some((w) => w.id === savedWsId)) {
     state.activeWorkspaceId = savedWsId;
   } else if (state.workspaces.length > 0) {
@@ -583,7 +583,7 @@ export async function loadConversations(wid, { draft = false } = {}) {
     state.conversations = [];
   }
 
-  const savedCid = localStorage.getItem('piwork_active_conv');
+  const savedCid = localStorage.getItem('weft_active_conv');
   if (draft) {
     state.activeConversationId = null;
   } else if (savedCid && state.conversations.some((c) => c.id === savedCid)) {
@@ -639,7 +639,7 @@ export async function selectWorkspace(wid, { draft = false } = {}) {
   state.workspaceTreeFor = null;
   state.treeLoadingFor = null;
   state.treeGen += 1;
-  localStorage.setItem('piwork_active_ws', wid);
+  localStorage.setItem('weft_active_ws', wid);
   resetRightPanelAndStatus();
   renderChatThread();
   await loadConversations(wid, { draft });
@@ -755,7 +755,7 @@ export async function selectConversation(cid) {
   clearSubagentView();
 
   state.activeConversationId = cid;
-  localStorage.setItem('piwork_active_conv', cid);
+  localStorage.setItem('weft_active_conv', cid);
   state.activeConversationData = null;
   state.diffs = {};
   state.closedChangeFiles = new Set();
@@ -789,7 +789,7 @@ export async function selectConversation(cid) {
     state.changes = [];
   }
 
-  const savedTab = localStorage.getItem('piwork_active_right_tab') || 'diff';
+  const savedTab = localStorage.getItem('weft_active_right_tab') || 'diff';
   state.activeRightTab = savedTab === 'agent' || savedTab === 'markdown' ? 'diff' : savedTab;
   state.userPickedFile = false;
 
@@ -1223,7 +1223,7 @@ export async function createNewConversation(opts = {}) {
 
 export async function loadFileOrDiff(filePath) {
   state.activeFilePath = filePath;
-  localStorage.setItem('piwork_active_file', filePath);
+  localStorage.setItem('weft_active_file', filePath);
   const tab = state.activeRightTab;
   const cid = state.activeConversationId;
 
@@ -3200,7 +3200,7 @@ function revealMainConversationPane() {
   const leaveAgent = state.activeRightTab === 'agent' || Boolean(state.viewingAgentId);
   clearSubagentView();
   state.activeRightTab = 'diff';
-  localStorage.setItem('piwork_active_right_tab', 'diff');
+  localStorage.setItem('weft_active_right_tab', 'diff');
   if (!leaveAgent) return;
   renderConversations();
   refreshChangeDiffs();
@@ -3509,7 +3509,7 @@ export function openFileInEditor() {
   }
   const isMd = state.activeFilePath.endsWith('.md');
   state.activeRightTab = isMd ? 'editor' : 'file';
-  localStorage.setItem('piwork_active_right_tab', state.activeRightTab);
+  localStorage.setItem('weft_active_right_tab', state.activeRightTab);
   setRightOpen(true);
   syncRightTabActive();
   loadFileOrDiff(state.activeFilePath);
@@ -3522,7 +3522,7 @@ export function switchRightTab(tab) {
   }
   const leaveAgent = state.activeRightTab === 'agent' || Boolean(state.viewingAgentId);
   state.activeRightTab = tab;
-  if (tab !== 'agent') localStorage.setItem('piwork_active_right_tab', tab);
+  if (tab !== 'agent') localStorage.setItem('weft_active_right_tab', tab);
   if (leaveAgent) clearSubagentView();
   setRightOpen(true);
   syncRightTabActive();
@@ -3846,14 +3846,14 @@ function renderSettingsTabContent(tab) {
     return `
       <h2>${escapeHtml(t('settings_tab_about'))}</h2>
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
-        <div style="width:44px;height:44px;border-radius:10px;background:var(--text-primary);color:var(--text-inverse);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700">π</div>
+        <div style="width:44px;height:44px;border-radius:10px;background:var(--text-primary);color:var(--text-inverse);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700">W</div>
         <div>
-          <b style="font-size:15px">${escapeHtml(pkg.name || 'pi-work')}</b>
+          <b style="font-size:15px">${escapeHtml(t('app_name'))}</b>
           <div style="color:var(--text-muted);font-size:12px">${escapeHtml(t('about_desc'))}</div>
         </div>
       </div>
       <div class="row"><div class="l"><b>${escapeHtml(t('about_version'))}</b></div><span>${escapeHtml(pkg.version || '0.2.0')}</span></div>
-      <div class="row"><div class="l"><b>${escapeHtml(t('about_repo'))}</b></div><a href="https://github.com/lawrencewzen/pi-work" target="_blank" rel="noopener">github.com/lawrencewzen/pi-work</a></div>
+      <div class="row"><div class="l"><b>${escapeHtml(t('about_repo'))}</b></div><a href="https://github.com/lawrencewzen/weft" target="_blank" rel="noopener">github.com/lawrencewzen/weft</a></div>
       <div class="row"><div class="l"><b>${escapeHtml(t('about_license'))}</b></div><span>MIT</span></div>
       <div class="row"><div class="l"><b>${escapeHtml(t('about_thanks'))}</b><span>${escapeHtml(t('about_upstream'))}</span></div><a href="https://github.com/xiaomoBoy/pi-durable-assistant" target="_blank" rel="noopener">xiaomoBoy/pi-durable-assistant</a></div>
       <div class="row"><div class="l"><b>${escapeHtml(t('about_runtime'))}</b></div><span><span class="dot"></span>${escapeHtml(t('about_runtime_connected'))}</span></div>
@@ -3942,7 +3942,7 @@ export function setSettingsTab(tab) {
 }
 
 function applyChromeLabels() {
-  document.title = 'pi-work';
+  document.title = 'Weft';
   applyI18n();
 }
 
@@ -3991,7 +3991,7 @@ export async function switchThemeFamily(family) {
 
 export function switchFontSize(sz) {
   state.fontSize = sz;
-  localStorage.setItem('piwork_font_size', sz);
+  localStorage.setItem('weft_font_size', sz);
   document.documentElement.setAttribute('data-font-size', sz);
   renderSettingsModal();
 }
@@ -4216,7 +4216,7 @@ export async function startNewConversation(wid) {
     }
     state.activeConversationId = null;
     state.activeConversationData = null;
-    localStorage.removeItem('piwork_active_conv');
+    localStorage.removeItem('weft_active_conv');
     resetRightPanelAndStatus();
     renderConversations();
     renderChatThread();
@@ -4554,7 +4554,7 @@ export async function submitNewSkill() {
 
 export async function switchWorkspaceAndConv(wid, cid) {
   if (wid && state.activeWorkspaceId !== wid) {
-    if (cid) localStorage.setItem('piwork_active_conv', cid);
+    if (cid) localStorage.setItem('weft_active_conv', cid);
     await selectWorkspace(wid);
   }
   if (state.activeConversationId !== cid) {
@@ -4572,7 +4572,7 @@ const LEFT_OVERLAY_BELOW = 860;
 const RIGHT_OVERLAY_BELOW = 1180;
 
 function persistOpenProjects() {
-  localStorage.setItem('piwork_open_projects', JSON.stringify([...state.openProjects]));
+  localStorage.setItem('weft_open_projects', JSON.stringify([...state.openProjects]));
 }
 
 function openProject(wid) {
@@ -4602,13 +4602,13 @@ export function applyLayout() {
 
 export function setLeftOpen(open) {
   state.leftOpen = Boolean(open);
-  if (window.innerWidth >= LEFT_OVERLAY_BELOW) localStorage.setItem('piwork_left_open', String(state.leftOpen));
+  if (window.innerWidth >= LEFT_OVERLAY_BELOW) localStorage.setItem('weft_left_open', String(state.leftOpen));
   applyLayout();
 }
 
 export function setRightOpen(open) {
   state.rightOpen = Boolean(open);
-  if (window.innerWidth >= RIGHT_OVERLAY_BELOW) localStorage.setItem('piwork_right_open', String(state.rightOpen));
+  if (window.innerWidth >= RIGHT_OVERLAY_BELOW) localStorage.setItem('weft_right_open', String(state.rightOpen));
   applyLayout();
 }
 
@@ -4617,9 +4617,9 @@ let lastLayoutWidth = window.innerWidth;
 function onLayoutResize() {
   const vw = window.innerWidth;
   if (lastLayoutWidth >= LEFT_OVERLAY_BELOW && vw < LEFT_OVERLAY_BELOW) state.leftOpen = false;
-  if (lastLayoutWidth < LEFT_OVERLAY_BELOW && vw >= LEFT_OVERLAY_BELOW) state.leftOpen = readPref('piwork_left_open', true);
+  if (lastLayoutWidth < LEFT_OVERLAY_BELOW && vw >= LEFT_OVERLAY_BELOW) state.leftOpen = readPref('weft_left_open', true);
   if (lastLayoutWidth >= RIGHT_OVERLAY_BELOW && vw < RIGHT_OVERLAY_BELOW) state.rightOpen = false;
-  if (lastLayoutWidth < RIGHT_OVERLAY_BELOW && vw >= RIGHT_OVERLAY_BELOW) state.rightOpen = readPref('piwork_right_open', true);
+  if (lastLayoutWidth < RIGHT_OVERLAY_BELOW && vw >= RIGHT_OVERLAY_BELOW) state.rightOpen = readPref('weft_right_open', true);
   lastLayoutWidth = vw;
   applyLayout();
 }
@@ -4654,8 +4654,8 @@ function startDividerDrag(e, side) {
     window.removeEventListener('mouseup', up);
     shell?.classList.remove('is-dragging');
     divider.classList.remove('is-active');
-    localStorage.setItem('piwork_left_w', String(state.leftW));
-    localStorage.setItem('piwork_right_w', String(state.rightW));
+    localStorage.setItem('weft_left_w', String(state.leftW));
+    localStorage.setItem('weft_right_w', String(state.rightW));
   };
   window.addEventListener('mousemove', move);
   window.addEventListener('mouseup', up);
@@ -4666,8 +4666,8 @@ function startDividerDrag(e, side) {
 function resetDivider(side) {
   if (side === 'left') state.leftW = 264;
   else state.rightW = 440;
-  localStorage.setItem('piwork_left_w', String(state.leftW));
-  localStorage.setItem('piwork_right_w', String(state.rightW));
+  localStorage.setItem('weft_left_w', String(state.leftW));
+  localStorage.setItem('weft_right_w', String(state.rightW));
   applyLayout();
 }
 
@@ -4779,8 +4779,8 @@ async function removeWorkspace(wid) {
     state.activeWorkspaceId = null;
     state.activeConversationId = null;
     state.activeConversationData = null;
-    localStorage.removeItem('piwork_active_ws');
-    localStorage.removeItem('piwork_active_conv');
+    localStorage.removeItem('weft_active_ws');
+    localStorage.removeItem('weft_active_conv');
   }
   showToast('ws_removed', { name: ws.name });
   await loadWorkspaces();

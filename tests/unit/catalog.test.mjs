@@ -34,7 +34,7 @@ test('sqlite catalog tombstones still round-trip', async () => {
 
 test('startup drops pipelines and roles; leftover role_id is not read', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-drop-roles-'));
-  const dbPath = path.join(dir, 'pi-work.sqlite');
+  const dbPath = path.join(dir, 'weft.sqlite');
   const raw = new DatabaseSync(dbPath);
   raw.exec(`
     CREATE TABLE conversations (

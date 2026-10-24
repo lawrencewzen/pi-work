@@ -79,9 +79,9 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
   try {
     srv = await startServer({
       extraEnv: {
-        PI_WORK_KERNEL: 'durable',
-        PI_WORK_FAUX_SCRIPT: scriptPath,
-        PI_WORK_WORKSPACE_ROOT: prepared.root,
+        WEFT_KERNEL: 'durable',
+        WEFT_FAUX_SCRIPT: scriptPath,
+        WEFT_WORKSPACE_ROOT: prepared.root,
       },
     });
 

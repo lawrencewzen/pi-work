@@ -406,7 +406,7 @@ export async function migrateWeftIds(dataDir, { log = console } = {}) {
       inspect.close();
     }
   } catch (err) {
-    log.error?.(`PI_WORK_WEFT_IDS inspect failed: ${formatError(err)}`);
+    log.error?.(`WEFT_WEFT_IDS inspect failed: ${formatError(err)}`);
     return { status: 'failed', error: err };
   }
   if (!needed) return { status: 'skipped', reason: 'current' };
@@ -416,7 +416,7 @@ export async function migrateWeftIds(dataDir, { log = console } = {}) {
     backupDir = await uniqueBackupDir(path.resolve(dataDir), backupStamp());
     await copyHarnessFiles(dataDir, backupDir);
   } catch (err) {
-    log.error?.(`PI_WORK_WEFT_IDS backup failed: ${formatError(err)}`);
+    log.error?.(`WEFT_WEFT_IDS backup failed: ${formatError(err)}`);
     return { status: 'failed', error: err, backupDir };
   }
 
@@ -426,7 +426,7 @@ export async function migrateWeftIds(dataDir, { log = console } = {}) {
     db.exec('BEGIN IMMEDIATE');
     applyForwardRewrite(db);
     db.exec('COMMIT');
-    log.log?.(`PI_WORK_WEFT_IDS migrated backup=${backupDir}`);
+    log.log?.(`WEFT_WEFT_IDS migrated backup=${backupDir}`);
     return { status: 'migrated', backupDir };
   } catch (err) {
     try {
@@ -434,7 +434,7 @@ export async function migrateWeftIds(dataDir, { log = console } = {}) {
     } catch {
       /* keep the original error */
     }
-    log.error?.(`PI_WORK_WEFT_IDS failed: ${formatError(err)}`);
+    log.error?.(`WEFT_WEFT_IDS failed: ${formatError(err)}`);
     return { status: 'failed', error: err, backupDir };
   } finally {
     try {

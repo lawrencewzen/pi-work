@@ -14,7 +14,7 @@
  * Hypotheses (called out where they affect the wire):
  * - The subscription proxy rejects client versions below 1.0.13 (HTTP 426).
  *   Prefer `grok --version` when it reports a version at least that floor.
- *   Otherwise send 1.0.50. Override with PI_WORK_GROK_CLIENT_VERSION.
+ *   Otherwise send 1.0.50. Override with WEFT_GROK_CLIENT_VERSION.
  * - Extra proxy headers `x-grok-client-identifier` / `user-agent` are included
  *   because public clients report HTTP 426 without them. Official
  *   grok_auth_credentials.rs documents Authorization + X-XAI-Token-Auth.
@@ -57,7 +57,7 @@ export class GrokAuthError extends Error {
 }
 
 export function grokAuthFilePath(env = process.env, home = os.homedir()) {
-  if (env.PI_WORK_GROK_AUTH) return env.PI_WORK_GROK_AUTH;
+  if (env.WEFT_GROK_AUTH) return env.WEFT_GROK_AUTH;
   const dir = env.GROK_HOME || path.join(home, '.grok');
   return path.join(dir, 'auth.json');
 }
@@ -111,7 +111,7 @@ export function resetGrokClientVersionCache() {
  * GROK_CLIENT_VERSION_DEFAULT.
  */
 export function resolveGrokClientVersion(env = process.env, readCli = readGrokCliVersion) {
-  const override = String(env?.PI_WORK_GROK_CLIENT_VERSION ?? '').trim();
+  const override = String(env?.WEFT_GROK_CLIENT_VERSION ?? '').trim();
   if (override) return override;
   let detected = '';
   try {
@@ -124,7 +124,7 @@ export function resolveGrokClientVersion(env = process.env, readCli = readGrokCl
 }
 
 export function grokClientVersion(env = process.env, readCli) {
-  const override = String(env?.PI_WORK_GROK_CLIENT_VERSION ?? '').trim();
+  const override = String(env?.WEFT_GROK_CLIENT_VERSION ?? '').trim();
   if (override) return override;
   if (typeof readCli === 'function') return resolveGrokClientVersion({}, readCli);
   if (cachedCliVersion === undefined) cachedCliVersion = resolveGrokClientVersion({});
@@ -132,7 +132,7 @@ export function grokClientVersion(env = process.env, readCli) {
 }
 
 export function grokProxyBase(env = process.env) {
-  return String(env.PI_WORK_GROK_PROXY || GROK_PROXY_BASE).replace(/\/$/, '');
+  return String(env.WEFT_GROK_PROXY || GROK_PROXY_BASE).replace(/\/$/, '');
 }
 
 export function decodeJwtPayload(token) {
@@ -390,8 +390,8 @@ function namedRuntime(value) {
 }
 
 /**
- * A scripted model is used only when it is requested: `PI_WORK_LLM=faux`,
- * `LLM_API=faux`, or `PI_WORK_FAUX_SCRIPT`. Explicit `openai` forces the real
+ * A scripted model is used only when it is requested: `WEFT_LLM=faux`,
+ * `LLM_API=faux`, or `WEFT_FAUX_SCRIPT`. Explicit `openai` forces the real
  * client. Otherwise a Grok session, API key, or base URL selects that client.
  * With none of those, return `none` so the server refuses the turn.
  */

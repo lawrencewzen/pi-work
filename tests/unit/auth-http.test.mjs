@@ -40,16 +40,32 @@ function assertSecurityHeaders(headers) {
   assert.equal(headers['x-frame-options'], 'DENY');
 }
 
-test('resolveAuthToken only enables login for a non-empty PI_WORK_TOKEN', () => {
+test('resolveAuthToken only enables login for a non-empty WEFT_TOKEN', () => {
   assert.deepEqual(resolveAuthToken({}), { token: '', enabled: false });
-  assert.deepEqual(resolveAuthToken({ PI_WORK_TOKEN: '   ' }), { token: '', enabled: false });
-  assert.deepEqual(resolveAuthToken({ PI_WORK_TOKEN: 'abc' }), { token: 'abc', enabled: true });
+  assert.deepEqual(resolveAuthToken({ WEFT_TOKEN: '   ' }), { token: '', enabled: false });
+  assert.deepEqual(resolveAuthToken({ WEFT_TOKEN: 'abc' }), { token: 'abc', enabled: true });
   assert.equal(unauthenticatedHostsWarning({}), '');
   assert.equal(
-    unauthenticatedHostsWarning({ PI_WORK_ALLOWED_HOSTS: 'lab.example' }),
-    'PI_WORK_WARN 服务对这些主机开放且没有鉴权: lab.example',
+    unauthenticatedHostsWarning({ WEFT_ALLOWED_HOSTS: 'lab.example' }),
+    'WEFT_WARN 服务对这些主机开放且没有鉴权: lab.example',
   );
-  assert.equal(unauthenticatedHostsWarning({ PI_WORK_TOKEN: 'abc', PI_WORK_ALLOWED_HOSTS: 'lab.example' }), '');
+  assert.equal(unauthenticatedHostsWarning({ WEFT_TOKEN: 'abc', WEFT_ALLOWED_HOSTS: 'lab.example' }), '');
+});
+
+test('legacy env names no longer enable login or host warnings', async () => {
+  const legacyToken = `PI${'_'}WORK_TOKEN`;
+  const legacyHosts = `PI${'_'}WORK_ALLOWED_HOSTS`;
+  assert.deepEqual(resolveAuthToken({ [legacyToken]: 'abc' }), { token: '', enabled: false });
+  assert.equal(unauthenticatedHostsWarning({ [legacyHosts]: 'lab.example' }), '');
+
+  const srv = await startServer({ env: { [legacyToken]: TOKEN } });
+  try {
+    const settings = await raw({ port: srv.port, path: '/api/settings' });
+    assert.equal(settings.status, 200);
+    assert.doesNotMatch(srv.logs(), /WEFT_TOKEN/);
+  } finally {
+    await stopServer(srv);
+  }
 });
 
 test('acceptance 1: fresh data dir serves /api without credentials and does not create auth.token', async () => {
@@ -65,10 +81,10 @@ test('acceptance 1: fresh data dir serves /api without credentials and does not 
     );
 
     const log = srv.logs();
-    assert.match(log, /PI_WORK_READY http:\/\/127\.0\.0\.1:\d+/);
+    assert.match(log, /WEFT_READY http:\/\/127\.0\.0\.1:\d+/);
     assert.equal(new URL(srv.base).hostname, '127.0.0.1');
-    assert.doesNotMatch(log, /PI_WORK_LOGIN/);
-    assert.doesNotMatch(log, /PI_WORK_TOKEN/);
+    assert.doesNotMatch(log, /WEFT_LOGIN/);
+    assert.doesNotMatch(log, /WEFT_TOKEN/);
 
     for (const reqPath of ['/login', '/login/', '/login?token=anything']) {
       const login = await raw({ port: srv.port, path: reqPath });
@@ -102,17 +118,17 @@ test('acceptance 1: fresh data dir serves /api without credentials and does not 
     const settings = await raw({ port: again.port, path: '/api/settings' });
     assert.equal(settings.status, 200);
     assert.equal(await fs.readFile(path.join(plantedDir, 'auth.token'), 'utf8'), planted);
-    assert.doesNotMatch(again.logs(), /PI_WORK_LOGIN/);
+    assert.doesNotMatch(again.logs(), /WEFT_LOGIN/);
     assert.doesNotMatch(again.logs(), /planted-file-token/);
   } finally {
     await stopServer(again);
   }
 });
 
-test('acceptance 2: PI_WORK_TOKEN keeps 401, cookie login, and SSE tickets', async () => {
+test('acceptance 2: WEFT_TOKEN keeps 401, cookie login, and SSE tickets', async () => {
   const srv = await startServer({
     token: TOKEN,
-    env: { PI_WORK_ALLOWED_HOSTS: 'lab.example' },
+    env: { WEFT_ALLOWED_HOSTS: 'lab.example' },
   });
   try {
     const open = await raw({ port: srv.port, path: '/api/settings' });
@@ -126,7 +142,7 @@ test('acceptance 2: PI_WORK_TOKEN keeps 401, cookie login, and SSE tickets', asy
     assert.equal(login.status, 302);
     assert.equal(login.headers.location, '/');
     const setCookie = [].concat(login.headers['set-cookie'] || []).join('\n');
-    assert.match(setCookie, new RegExp(`pi_work_token=${TOKEN}`));
+    assert.match(setCookie, new RegExp(`weft_token=${TOKEN}`));
     assert.match(setCookie, /HttpOnly/);
     assert.match(setCookie, /SameSite=Strict/);
     assertSecurityHeaders(login.headers);
@@ -134,7 +150,7 @@ test('acceptance 2: PI_WORK_TOKEN keeps 401, cookie login, and SSE tickets', asy
     const withCookie = await raw({
       port: srv.port,
       path: '/api/settings',
-      headers: { cookie: `pi_work_token=${TOKEN}` },
+      headers: { cookie: `weft_token=${TOKEN}` },
     });
     assert.equal(withCookie.status, 200);
 
@@ -179,8 +195,8 @@ test('acceptance 2: PI_WORK_TOKEN keeps 401, cookie login, and SSE tickets', asy
     assert.equal(reused.status, 401);
 
     const log = srv.logs();
-    assert.match(log, /PI_WORK_READY http:\/\/127\.0\.0\.1:\d+/);
-    assert.doesNotMatch(log, /PI_WORK_LOGIN/);
+    assert.match(log, /WEFT_READY http:\/\/127\.0\.0\.1:\d+/);
+    assert.doesNotMatch(log, /WEFT_LOGIN/);
     assert.doesNotMatch(log, /没有鉴权/);
     assert.doesNotMatch(log, new RegExp(TOKEN));
     await assert.rejects(fs.access(path.join(srv.dataDir, 'auth.token')), (err) => err.code === 'ENOENT');
@@ -230,16 +246,16 @@ test('acceptance 3: Host, Origin, and Content-Type guards stay on without a toke
   }
 });
 
-test('acceptance 4: PI_WORK_ALLOWED_HOSTS without a token prints a warning', async () => {
-  const srv = await startServer({ env: { PI_WORK_ALLOWED_HOSTS: 'lab.example,other.internal' } });
+test('acceptance 4: WEFT_ALLOWED_HOSTS without a token prints a warning', async () => {
+  const srv = await startServer({ env: { WEFT_ALLOWED_HOSTS: 'lab.example,other.internal' } });
   try {
     const settings = await raw({ port: srv.port, path: '/api/settings' });
     assert.equal(settings.status, 200);
     const log = srv.logs();
-    assert.match(log, /PI_WORK_WARN 服务对这些主机开放且没有鉴权: lab\.example,other\.internal/);
-    assert.match(log, /PI_WORK_READY http:\/\/127\.0\.0\.1:\d+/);
-    assert.doesNotMatch(log, /PI_WORK_LOGIN/);
-    assert.doesNotMatch(log, /PI_WORK_TOKEN/);
+    assert.match(log, /WEFT_WARN 服务对这些主机开放且没有鉴权: lab\.example,other\.internal/);
+    assert.match(log, /WEFT_READY http:\/\/127\.0\.0\.1:\d+/);
+    assert.doesNotMatch(log, /WEFT_LOGIN/);
+    assert.doesNotMatch(log, /WEFT_TOKEN/);
   } finally {
     await stopServer(srv);
   }

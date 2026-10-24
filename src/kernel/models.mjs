@@ -37,13 +37,13 @@ function clonePlain(value) {
 }
 
 function explicitMaxOutputTokens(env = process.env) {
-  const raw = env?.PI_WORK_MAX_OUTPUT_TOKENS;
+  const raw = env?.WEFT_MAX_OUTPUT_TOKENS;
   if (raw == null || raw === '') return null;
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** Positive integer from `PI_WORK_MAX_OUTPUT_TOKENS`, otherwise 32768. */
+/** Positive integer from `WEFT_MAX_OUTPUT_TOKENS`, otherwise 32768. */
 export function maxOutputTokensFromEnv(env = process.env) {
   return explicitMaxOutputTokens(env) ?? DEFAULT_MAX_OUTPUT_TOKENS;
 }
@@ -61,13 +61,13 @@ function maxTokensForModel(catalog, contextWindow, env) {
 }
 
 /**
- * Faux is on only when the process asks for it: `PI_WORK_LLM=faux`,
- * `LLM_API=faux`, or `PI_WORK_FAUX_SCRIPT`. Anything else stays off.
+ * Faux is on only when the process asks for it: `WEFT_LLM=faux`,
+ * `LLM_API=faux`, or `WEFT_FAUX_SCRIPT`. Anything else stays off.
  */
 export function explicitDemo(env = process.env) {
-  return selectChatRuntime(env?.PI_WORK_LLM, {
+  return selectChatRuntime(env?.WEFT_LLM, {
     llmApi: env?.LLM_API,
-    fauxScript: Boolean(String(env?.PI_WORK_FAUX_SCRIPT || '').trim()),
+    fauxScript: Boolean(String(env?.WEFT_FAUX_SCRIPT || '').trim()),
   }) === 'faux';
 }
 

@@ -177,7 +177,7 @@ export function scriptShouldContinue(turns, context) {
 }
 
 export function loadScriptTurns(env = process.env) {
-  const scriptPath = String(env?.PI_WORK_FAUX_SCRIPT || '').trim();
+  const scriptPath = String(env?.WEFT_FAUX_SCRIPT || '').trim();
   if (!scriptPath) return null;
   try {
     const script = JSON.parse(readFileSync(scriptPath, 'utf8'));
@@ -245,12 +245,12 @@ export function createScriptFloorExtension() {
   });
 }
 
-/** Explicit demo script only. PI_WORK_FAUX_TOOL_LOG records the offered tool names for tests. */
+/** Explicit demo script only. WEFT_FAUX_TOOL_LOG records the offered tool names for tests. */
 export function scriptedDemoStep(scriptPath, env = process.env, hooks = {}) {
   const script = JSON.parse(readFileSync(scriptPath, 'utf8'));
   const turns = script?.turns;
-  const logPath = String(env.PI_WORK_FAUX_TOOL_LOG || '').trim();
-  const ready = String(env.PI_WORK_FAUX_HOLD_READY || '').trim();
+  const logPath = String(env.WEFT_FAUX_TOOL_LOG || '').trim();
+  const ready = String(env.WEFT_FAUX_HOLD_READY || '').trim();
   return async (context, streamOptions) => {
     if (logPath) appendFileSync(logPath, `${JSON.stringify(offeredToolNames(context))}\n`);
     const have = scriptAssistantCount(context);
@@ -265,7 +265,7 @@ export function scriptedDemoStep(scriptPath, env = process.env, hooks = {}) {
     const delay = Number(scriptPool(turns, view)[used]?.delayMs);
     if (Number.isFinite(delay) && delay > 0) {
       if (ready) writeFileSync(ready, 'seen');
-      const tick = String(env.PI_WORK_FAUX_DELAY_TICK ?? '1') !== '0';
+      const tick = String(env.WEFT_FAUX_DELAY_TICK ?? '1') !== '0';
       const signal = streamOptions?.signal;
       const end = Date.now() + delay;
       while (Date.now() < end && !signal?.aborted) {
@@ -291,12 +291,12 @@ function parseFauxPlan(raw) {
   if (!text) return null;
   const parsed = JSON.parse(text);
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error('PI_WORK_FAUX_PLAN must be a non-empty JSON array');
+    throw new Error('WEFT_FAUX_PLAN must be a non-empty JSON array');
   }
   return parsed.map((item) => {
     if (item === 'hold') return 'hold';
     if (typeof item === 'string') return item;
-    throw new Error('PI_WORK_FAUX_PLAN items must be strings');
+    throw new Error('WEFT_FAUX_PLAN items must be strings');
   });
 }
 
@@ -326,7 +326,7 @@ function requestSnapshot(context) {
 }
 
 function fauxProviderOptions(env) {
-  const tps = Number(env?.PI_WORK_FAUX_TPS);
+  const tps = Number(env?.WEFT_FAUX_TPS);
   if (!Number.isFinite(tps) || tps <= 0) return undefined;
   return { tokensPerSecond: tps };
 }
@@ -362,12 +362,12 @@ function holdForStream(streamOptions) {
 /** Install the demo faux provider used by tests. Same behavior as before the move. */
 export function installDemo(models, env) {
   const faux = registerFaux(models, fauxProviderOptions(env));
-  const text = String(env.PI_WORK_FAUX_TEXT || '');
-  const holdAll = String(env.PI_WORK_FAUX_HOLD || '').trim() === '1';
-  const ready = String(env.PI_WORK_FAUX_HOLD_READY || '').trim();
-  const scriptPath = String(env.PI_WORK_FAUX_SCRIPT || '').trim();
-  const recordPath = String(env.PI_WORK_FAUX_RECORD || '').trim();
-  const plan = holdAll ? null : parseFauxPlan(env.PI_WORK_FAUX_PLAN);
+  const text = String(env.WEFT_FAUX_TEXT || '');
+  const holdAll = String(env.WEFT_FAUX_HOLD || '').trim() === '1';
+  const ready = String(env.WEFT_FAUX_HOLD_READY || '').trim();
+  const scriptPath = String(env.WEFT_FAUX_SCRIPT || '').trim();
+  const recordPath = String(env.WEFT_FAUX_RECORD || '').trim();
+  const plan = holdAll ? null : parseFauxPlan(env.WEFT_FAUX_PLAN);
   const scripted = !holdAll && !plan && scriptPath ? scriptedDemoStep(scriptPath, env) : null;
   let cursor = 0;
   const step = async (context, streamOptions) => {

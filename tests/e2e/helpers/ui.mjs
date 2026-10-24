@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test';
 
-/** Open the workbench. Pass token only when the server was started with PI_WORK_TOKEN. */
+/** Open the workbench. Pass token only when the server was started with WEFT_TOKEN. */
 export async function login(page, url, token) {
   const target = token ? `${url}/login?token=${encodeURIComponent(token)}` : `${url}/`;
   await page.goto(target);

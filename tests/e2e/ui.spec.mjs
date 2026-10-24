@@ -8,7 +8,7 @@ let srv, ws;
 test.beforeEach(async () => {
   const prepared = await prepareWorkspaces(['ws']);
   ws = prepared.dirs[0];
-  srv = await startServer({ script: 'basic.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: prepared.root } });
+  srv = await startServer({ script: 'basic.json', extraEnv: { WEFT_WORKSPACE_ROOT: prepared.root } });
 });
 test.afterEach(async () => { await srv?.kill(); });
 

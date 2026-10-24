@@ -131,8 +131,8 @@ async function boot(page) {
   await fs.writeFile(scriptPath, JSON.stringify({ turns: [{ text: '主对话已收到。' }] }));
   const srv = await startServer({
     extraEnv: {
-      PI_WORK_FAUX_SCRIPT: scriptPath,
-      PI_WORK_WORKSPACE_ROOT: prepared.root,
+      WEFT_FAUX_SCRIPT: scriptPath,
+      WEFT_WORKSPACE_ROOT: prepared.root,
     },
   });
   const bag = {

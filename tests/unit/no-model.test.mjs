@@ -50,7 +50,7 @@ test('unconfigured server refuses a turn instead of answering with the faux scri
 
 test('an explicit faux script still answers and is marked as the demo runtime', async () => {
   const script = path.join(ROOT, 'tests/fixtures/usage.json');
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_FAUX_SCRIPT: script } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_FAUX_SCRIPT: script } });
   try {
     const settings = await request(srv.base, 'GET', '/api/settings');
     assert.equal(settings.body.runtime, 'faux');

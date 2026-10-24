@@ -427,10 +427,10 @@ test('legacy harness ids migrate on startup: roster, notes, waiting reporter, bo
     { when: 'hold-bg', delayMs: 8000, text: 'BG_ANSWER' },
   ]);
   const env = {
-    PI_WORK_RETRY_MAX: '2',
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
-    PI_WORK_FAUX_HOLD_READY: ready,
+    WEFT_RETRY_MAX: '2',
+    WEFT_LLM: 'faux',
+    WEFT_FAUX_SCRIPT: script,
+    WEFT_FAUX_HOLD_READY: ready,
   };
   let proc = null;
   try {

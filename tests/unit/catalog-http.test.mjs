@@ -19,7 +19,7 @@ function api(url, method, p, body) {
 }
 
 test('retired role and pipeline routes are 404; leftover pipelineId is ignored', async () => {
-  const srv = await startServer({ extraEnv: { PI_WORK_TOKEN: TOKEN } });
+  const srv = await startServer({ extraEnv: { WEFT_TOKEN: TOKEN } });
   try {
     assert.equal((await api(srv.url, 'GET', '/roles')).status, 404);
     assert.equal((await api(srv.url, 'POST', '/roles', { name: 'Scribe' })).status, 404);

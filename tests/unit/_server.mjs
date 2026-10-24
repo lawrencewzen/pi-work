@@ -5,29 +5,29 @@ import path from 'node:path';
 import { ROOT } from './_root.mjs';
 
 const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_TEXT',
-  'PI_WORK_FAUX_PLAN',
-  'PI_WORK_FAUX_RECORD',
-  'PI_WORK_FAUX_HOLD',
-  'PI_WORK_FAUX_HOLD_READY',
-  'PI_WORK_FAUX_TPS',
-  'PI_WORK_FAUX_TOOL_LOG',
-  'PI_WORK_MAX_SUBAGENTS',
-  'PI_WORK_MAX_OUTPUT_TOKENS',
+  'WEFT_LLM',
+  'WEFT_FAUX_SCRIPT',
+  'WEFT_FAUX_TEXT',
+  'WEFT_FAUX_PLAN',
+  'WEFT_FAUX_RECORD',
+  'WEFT_FAUX_HOLD',
+  'WEFT_FAUX_HOLD_READY',
+  'WEFT_FAUX_TPS',
+  'WEFT_FAUX_TOOL_LOG',
+  'WEFT_MAX_SUBAGENTS',
+  'WEFT_MAX_OUTPUT_TOKENS',
   'LLM_API',
   'LLM_API_KEY',
   'LLM_BASE_URL',
   'LLM_MODEL',
   'LLM_CONTEXT_WINDOW',
-  'PI_WORK_GROK_AUTH',
+  'WEFT_GROK_AUTH',
   'GROK_HOME',
-  'PI_WORK_GROK_PROXY',
-  'PI_WORK_GROK_CLIENT_VERSION',
-  'PI_WORK_TEST_GROK_TOKEN_URL',
-  'PI_WORK_TOKEN',
-  'PI_WORK_ALLOWED_HOSTS',
+  'WEFT_GROK_PROXY',
+  'WEFT_GROK_CLIENT_VERSION',
+  'WEFT_TEST_GROK_TOKEN_URL',
+  'WEFT_TOKEN',
+  'WEFT_ALLOWED_HOSTS',
 ];
 
 function childEnv(dataDir, { token, extra = {} } = {}) {
@@ -39,11 +39,11 @@ function childEnv(dataDir, { token, extra = {} } = {}) {
   return {
     ...env,
     PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_GROK_AUTH: path.join(dataDir, 'auth.json'),
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '5',
-    ...(token ? { PI_WORK_TOKEN: token } : {}),
+    WEFT_DATA_DIR: dataDir,
+    WEFT_GROK_AUTH: path.join(dataDir, 'auth.json'),
+    WEFT_RETRY_BASE_MS: '20',
+    WEFT_RETRY_MAX: '5',
+    ...(token ? { WEFT_TOKEN: token } : {}),
     ...extra,
   };
 }
@@ -96,7 +96,7 @@ export async function startServer({
     }, 20000);
     const onData = (buf) => {
       log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
+      const match = log.match(/WEFT_READY (http:\/\/\S+)/);
       if (match && expectReady) {
         clearTimeout(timer);
         resolve(match[1]);

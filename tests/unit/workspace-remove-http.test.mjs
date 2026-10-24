@@ -4,7 +4,7 @@ import { startServer, prepareWorkspaces, api } from '../e2e/helpers/server.mjs';
 
 test('removing a workspace hides it, keeps files and chats, and re-adding the path brings it back', async () => {
   const { root, dirs: [dir] } = await prepareWorkspaces(['keep-me']);
-  const srv = await startServer({ extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     const ws = await api(srv.url, 'POST', '/workspaces', { name: 'keep', path: dir });
     assert.equal(ws.status, 201);
@@ -31,7 +31,7 @@ test('removing a workspace hides it, keeps files and chats, and re-adding the pa
 
 test('a workspace with a running chat is not removed', async () => {
   const { root, dirs: [dir] } = await prepareWorkspaces(['busy']);
-  const srv = await startServer({ script: 'slow.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ script: 'slow.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     const ws = await api(srv.url, 'POST', '/workspaces', { name: 'busy', path: dir });
     const conv = await api(srv.url, 'POST', `/workspaces/${ws.body.id}/conversations`, {});

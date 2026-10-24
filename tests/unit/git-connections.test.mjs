@@ -16,7 +16,7 @@ const BAD = 'glpat-unit-secret-bad1';
 const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, AUTH);
 
 function readSettings(dataDir) {
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'), { readOnly: true });
+  const db = new DatabaseSync(path.join(dataDir, 'weft.sqlite'), { readOnly: true });
   try {
     const row = db.prepare('SELECT json FROM settings WHERE id = ?').get('app');
     return row ? JSON.parse(row.json) : null;
@@ -26,7 +26,7 @@ function readSettings(dataDir) {
 }
 
 function readWorkspaces(dataDir) {
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'), { readOnly: true });
+  const db = new DatabaseSync(path.join(dataDir, 'weft.sqlite'), { readOnly: true });
   try {
     return db.prepare('SELECT id, name, path, source, git_url, branch, root_path, worktrees_json FROM workspaces').all();
   } finally {
@@ -84,7 +84,7 @@ test('GitLab connection API masks tokens and lists projects', async () => {
       },
     ],
   });
-  const server = await startServer({ token: AUTH, env: { PI_WORK_RETRY_MAX: '2' } });
+  const server = await startServer({ token: AUTH, env: { WEFT_RETRY_MAX: '2' } });
   try {
     const unsaved = await request(server.base, 'POST', '/api/git/connections/test', {
       kind: 'gitlab-self',
@@ -287,7 +287,7 @@ test('import uses the connection token and does not persist it', async () => {
   const server = await startServer({
     token: AUTH,
     env: {
-      PI_WORK_RETRY_MAX: '2',
+      WEFT_RETRY_MAX: '2',
       GIT_CONFIG_GLOBAL: config,
       GIT_CONFIG_NOSYSTEM: '1',
       HELPER_LOG: log,
@@ -369,7 +369,7 @@ test('address import uses a saved connection for the same host', async () => {
       },
     ],
   });
-  const server = await startServer({ token: AUTH, env: { PI_WORK_RETRY_MAX: '2' } });
+  const server = await startServer({ token: AUTH, env: { WEFT_RETRY_MAX: '2' } });
   try {
     const created = await request(server.base, 'POST', '/api/git/connections', {
       kind: 'gitlab-self',

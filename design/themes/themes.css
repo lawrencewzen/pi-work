@@ -1,4 +1,4 @@
-/* pi-work themes: set <html data-theme="claude-dark"> etc. */
+/* Weft themes: set <html data-theme="claude-dark"> etc. */
 [data-theme="white-light"]{color-scheme:light;
 --bg-app:#ffffff;--bg-sidebar:#fafafa;--bg-surface:#ffffff;--bg-surface-subtle:#f7f7f7;--bg-hover:#f2f2f2;--bg-active:#ebebeb;
 --border-subtle:#ececec;--border-strong:#dedede;--border-focus:#9a9a9a;--text-primary:#1a1a1a;--text-secondary:#6b6b6b;--text-muted:#9a9a9a;--text-inverse:#ffffff;

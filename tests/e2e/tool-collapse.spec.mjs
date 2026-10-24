@@ -28,7 +28,7 @@ async function switchLanguage(page, lang) {
 test('seven tool calls collapse to one summary, then a row, then the output', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
   await seedReads(ws);
-  const srv = await startServer({ script: 'tool-collapse.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ script: 'tool-collapse.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     await openApp(page, srv);
     await createWorkspace(page, 'demo', ws);
@@ -74,7 +74,7 @@ test('seven tool calls collapse to one summary, then a row, then the output', as
 test('a probing read stays gray, collapsed, and out of the red failure count', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
   await fs.writeFile(path.join(ws, 'a.txt'), 'ok\n');
-  const srv = await startServer({ script: 'tool-probe.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ script: 'tool-probe.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     await openApp(page, srv);
     await createWorkspace(page, 'demo', ws);
@@ -99,7 +99,7 @@ test('a probing read stays gray, collapsed, and out of the red failure count', a
 
 test('a failed call keeps the summary collapsed and shows the failure count', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
-  const srv = await startServer({ script: 'tool-fail.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ script: 'tool-fail.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     await openApp(page, srv);
     await createWorkspace(page, 'demo', ws);
@@ -122,7 +122,7 @@ test('a failed call keeps the summary collapsed and shows the failure count', as
 
 test('a running call shows a spinner and the current action without opening the group', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
-  const srv = await startServer({ script: 'tool-run.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ script: 'tool-run.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     await openApp(page, srv);
     await createWorkspace(page, 'demo', ws);
@@ -144,7 +144,7 @@ test('a running call shows a spinner and the current action without opening the 
 test('a long group hides earlier calls until clicked; failed rows start expanded', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
   await seedLong(ws);
-  const srv = await startServer({ script: 'tool-long.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ script: 'tool-long.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     await openApp(page, srv);
     await createWorkspace(page, 'demo', ws);
@@ -178,7 +178,7 @@ test('a long group hides earlier calls until clicked; failed rows start expanded
 
 test('a command row shows the last 5 lines until show-all', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
-  const srv = await startServer({ script: 'tool-bash-lines.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ script: 'tool-bash-lines.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     await openApp(page, srv);
     await createWorkspace(page, 'demo', ws);
@@ -206,7 +206,7 @@ test('a command row shows the last 5 lines until show-all', async ({ page }) => 
 
 test('an edit row opens the file diff in the right pane', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ws']);
-  const srv = await startServer({ script: 'tool-edit.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  const srv = await startServer({ script: 'tool-edit.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     await openApp(page, srv);
     await createWorkspace(page, 'demo', ws);

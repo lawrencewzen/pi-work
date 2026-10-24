@@ -9,7 +9,7 @@ import { exportLegacyConversations } from '../../scripts/export-legacy-conversat
 test('export writes markdown for conversations that have no harness id', async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-legacy-'));
   const outDir = path.join(dataDir, 'out');
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'));
+  const db = new DatabaseSync(path.join(dataDir, 'weft.sqlite'));
   db.exec(`
     CREATE TABLE conversations (
       id TEXT PRIMARY KEY,
@@ -47,7 +47,7 @@ test('export writes markdown for conversations that have no harness id', async (
   assert.equal(text.includes('不要导出'), false);
   assert.equal(text.includes('hidden'), false);
 
-  const again = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'), { readOnly: true });
+  const again = new DatabaseSync(path.join(dataDir, 'weft.sqlite'), { readOnly: true });
   const count = again.prepare('SELECT COUNT(*) AS n FROM messages').get();
   again.close();
   assert.equal(count.n, 4);

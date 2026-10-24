@@ -1,6 +1,6 @@
 # Sub-agents
 
-Sub-agents follow Pi Durable's Abort and Subagents section and examples 22 (foreground) and 23 (background). The Harness owns the child conversation, its submission, abort, and restart reuse. pi-work configures a self-contained child from the task text only (empty instructions, no role template, no skills) and reads what the tools already committed.
+Sub-agents follow Pi Durable's Abort and Subagents section and examples 22 (foreground) and 23 (background). The Harness owns the child conversation, its submission, abort, and restart reuse. Weft configures a self-contained child from the task text only (empty instructions, no role template, no skills) and reads what the tools already committed.
 
 A conversation has one main agent (`agents[0]`, `name: 'Agent'`, empty instructions). Extra agents are sub-agent instances spawned with `delegate` / `subagent`, each in its own Harness conversation. The host does not rotate agents in the same chat. The child cannot see the parent conversation or the parent's instructions; everything it needs goes in `task` / `message`.
 
@@ -45,7 +45,7 @@ curl -sN -H 'Accept: text/event-stream' \
 #   brief / startedAt / lastActivityAt / endedAt / currentAction fields
 ```
 
-`POST .../agents/:aid/messages` 把用户的话 `steer` 进该子对话，并给主对话写一条 `app.pi-work.user-to-subagent`（带 model 的 write，不新开一轮）。主对话 GET 的 `messages` 把它映射成 `role:'note'`，文案是「你对 <名字> 说：<text>」。子 Agent 自己的记录里仍是普通 user 消息。子 Agent 只有一层，上级一律是主对话。
+`POST .../agents/:aid/messages` 把用户的话 `steer` 进该子对话，并给主对话写一条 `app.weft.user-to-subagent`（带 model 的 write，不新开一轮）。主对话 GET 的 `messages` 把它映射成 `role:'note'`，文案是「你对 <名字> 说：<text>」。子 Agent 自己的记录里仍是普通 user 消息。子 Agent 只有一层，上级一律是主对话。
 
 The list is rebuilt from the Harness after a process restart: tool-result `details.conversationId`, the ownership index, the background name document, and each child's `viewState`. Child transcript events stay on the child conversation; the parent SSE does not mix in `message.delta` / `tool.*` from the child.
 
@@ -55,7 +55,7 @@ From the repo root, Node 22:
 
 ```bash
 export PATH=$HOME/.local/node22/bin:$PATH
-PORT=3000 PI_WORK_LLM=faux PI_WORK_FAUX_SCRIPT=examples/faux/subagents.json node server.mjs
+PORT=3000 WEFT_LLM=faux WEFT_FAUX_SCRIPT=examples/faux/subagents.json node server.mjs
 ```
 
 Create a workspace and a conversation, then send a message that causes the main agent to call `delegate` / `subagent`.

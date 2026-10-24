@@ -54,7 +54,7 @@ function assistant(text, usage, { omitted = false } = {}) {
     content: [{ type: 'text', text }],
     ...(usage ? { usage } : {}),
   };
-  if (omitted) message.piWorkUsageOmitted = true;
+  if (omitted) message.weftUsageOmitted = true;
   return { kind: 'pi.assistant', model: [message] };
 }
 
@@ -135,7 +135,7 @@ test('a script turn replaces the faux estimate and an omitted turn does not clea
     messages: [{ role: 'assistant' }, { role: 'assistant' }],
   });
   applyStampedUsage(plain);
-  assert.equal(plain.piWorkUsageOmitted, true);
+  assert.equal(plain.weftUsageOmitted, true);
   const kept = latestCallUsage([
     { kind: 'pi.assistant', model: [estimated] },
     { kind: 'pi.assistant', model: [plain] },
@@ -152,8 +152,8 @@ async function kernelPresented(script, window) {
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: scriptPath,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_SCRIPT: scriptPath,
       LLM_CONTEXT_WINDOW: window,
     },
   });
@@ -270,9 +270,9 @@ test('importing and toggling a plugin applies on the next request; a running cal
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: scriptPath,
-      PI_WORK_FAUX_RECORD: record,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_SCRIPT: scriptPath,
+      WEFT_FAUX_RECORD: record,
     },
   });
   try {
@@ -319,8 +319,8 @@ test('replacing a plugin module keeps the running call and serves the new code n
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: scriptPath,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_SCRIPT: scriptPath,
     },
   });
   try {

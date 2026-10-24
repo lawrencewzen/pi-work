@@ -1,6 +1,6 @@
 # 手工验收用例
 
-`tests/e2e/` 里的 Markdown 是功能验收的唯一清单。每个功能一个文件，里面是步骤和预期结果。由 cloud agent 在真实运行的 pi-work 上逐条执行（可以用浏览器自动操作），全部通过才算接受。
+`tests/e2e/` 里的 Markdown 是功能验收的唯一清单。每个功能一个文件，里面是步骤和预期结果。由 cloud agent 在真实运行的 Weft 上逐条执行（可以用浏览器自动操作），全部通过才算接受。
 
 同目录下的 `*.spec.mjs` 是旧的自动化子集，不能代替这里的用例。Linux CI 的 `e2e` job（`.github/workflows/v3-ci.yml`）跑这一套。
 
@@ -13,8 +13,8 @@ npx playwright install chromium          # CI 用：npx playwright install --wit
 npm run test:e2e                         # playwright test -c tests/playwright.config.mjs
 ```
 
-- 用例自己起 `server.mjs`，走演示模型（`PI_WORK_LLM=faux`），不需要登录或 API Key。
-- 用系统 Chrome 时设 `PI_WORK_CHROME`（例如 `/usr/bin/google-chrome`）。
+- 用例自己起 `server.mjs`，走演示模型（`WEFT_LLM=faux`），不需要登录或 API Key。
+- 用系统 Chrome 时设 `WEFT_CHROME`（例如 `/usr/bin/google-chrome`）。
 - 默认用测试结果证明，确实需要看画面时另行说明。Playwright 失败时仍会留下报告（`screenshot: only-on-failure`），CI 作为 artifact 保留 7 天。
 - Windows CI 不跑 e2e。
 

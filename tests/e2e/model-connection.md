@@ -4,7 +4,7 @@
 
 ## MC-1 未连接模型时发送
 
-没有任何可用模型来源：没有已登录的 Grok，也没有带 Key 的 API 来源。服务器不要带 `LLM_API=faux`、`PI_WORK_LLM=faux` 或 `PI_WORK_FAUX_SCRIPT` 启动。
+没有任何可用模型来源：没有已登录的 Grok，也没有带 Key 的 API 来源。服务器不要带 `LLM_API=faux`、`WEFT_LLM=faux` 或 `WEFT_FAUX_SCRIPT` 启动。
 
 ### 步骤
 
@@ -24,7 +24,7 @@
 
 ### 步骤
 
-1. 仍不要设置 `LLM_API=faux` 或 `PI_WORK_FAUX_SCRIPT`。
+1. 仍不要设置 `LLM_API=faux` 或 `WEFT_FAUX_SCRIPT`。
 2. 在设置 → 模型用「＋ 添加 → Grok Build」完成登录，或添加一个可用的 API 来源并给默认模型选上、保存。
 3. 新建一条对话，发送 `用一句话回答：1+1 等于几？`，等到结束。
 
@@ -36,7 +36,7 @@
 
 ## MC-3 演示模式有徽章
 
-用演示模型重新启动，例如 `LLM_API=faux npm start`，或 `PI_WORK_FAUX_SCRIPT=tests/fixtures/usage.json npm start`。
+用演示模型重新启动，例如 `LLM_API=faux npm start`，或 `WEFT_FAUX_SCRIPT=tests/fixtures/usage.json npm start`。
 
 ### 步骤
 

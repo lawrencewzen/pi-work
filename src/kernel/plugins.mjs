@@ -50,7 +50,7 @@ async function readSpecs(extensions) {
       list = await extensions.pluginTools();
     }
   } catch (err) {
-    console.error(`PI_WORK_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
+    console.error(`WEFT_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
     list = [];
   }
   return (Array.isArray(list) ? list : []).filter((tool) => (
@@ -76,7 +76,7 @@ export function installPluginReload(registry, bridge) {
           try {
             if (typeof bridge?.afterTools === 'function') await bridge.afterTools(api.conversationId);
           } catch (err) {
-            console.error(`PI_WORK_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
+            console.error(`WEFT_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
           }
         },
       }),

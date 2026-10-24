@@ -1,4 +1,4 @@
-/* pi-work themes: <html data-theme="white-light"> etc.
+/* Weft themes: <html data-theme="white-light"> etc.
    Two families from the design prototype: white = 石墨 (graphite), claude = 陶土 (terracotta).
    Legacy family ids (codex / grok / cursor) fall back to white in app.js. */
 [data-theme="white-light"]{color-scheme:light;

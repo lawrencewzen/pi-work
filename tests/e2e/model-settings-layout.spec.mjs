@@ -9,7 +9,7 @@ let srv;
 test.afterEach(async () => { await srv?.kill(); srv = null; });
 
 function addGrokSource(dataDir) {
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'));
+  const db = new DatabaseSync(path.join(dataDir, 'weft.sqlite'));
   const row = db.prepare('SELECT json FROM settings WHERE id = ?').get('app');
   const settings = JSON.parse(row.json);
   settings.sources = Array.isArray(settings.sources) ? settings.sources : [];
@@ -32,7 +32,7 @@ async function boot() {
   const root = await tmpdir('piw-wsroot-');
   srv = await startServer({
     script: 'basic.json',
-    extraEnv: { PI_WORK_WORKSPACE_ROOT: root },
+    extraEnv: { WEFT_WORKSPACE_ROOT: root },
   });
   const token = '';
   const created = await api(srv.url, 'POST', '/sources', {

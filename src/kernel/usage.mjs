@@ -8,8 +8,8 @@ import { defineExtension, GenerationTask, hook } from '@earendil-works/pi-durabl
 import { EXT_USAGE } from './ids.mjs';
 import { normalizeUsage } from '../core/usage.mjs';
 
-const MARK = 'piWorkScriptUsage';
-const OMITTED = 'piWorkUsageOmitted';
+const MARK = 'weftScriptUsage';
+const OMITTED = 'weftUsageOmitted';
 
 function zeroUsage() {
   return {

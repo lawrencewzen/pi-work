@@ -1,4 +1,4 @@
-// pi-work i18n dictionary and helpers
+// Weft i18n dictionary and helpers
 
 export const translations = {
   zh: {
@@ -82,7 +82,7 @@ export const translations = {
     theme_graphite: '石墨',
     theme_terra: '陶土',
     settings_short: '设置',
-    app_name: 'pi-work',
+    app_name: 'Weft',
     app_badge: 'workbench',
     demo_model_badge: '演示模型',
     workspaces_and_chats: '工作区 & 对话',
@@ -110,9 +110,9 @@ export const translations = {
     ws_err_git_url: '仅支持 https/ssh 的 Git 地址',
     ws_err_branch: '分支名无效',
     ws_err_clone: 'Git 克隆失败，请检查仓库地址后重试',
-    ws_err_git_not_found: '找不到 git。请安装 Git for Windows，或设置 PI_WORK_GIT_BIN。',
+    ws_err_git_not_found: '找不到 git。请安装 Git for Windows，或设置 WEFT_GIT_BIN。',
     ws_err_git_auth: '认证失败。请先在本机用 git 克隆一次以保存凭证，或配置 SSH 密钥。',
-    ws_err_git_cert: '证书校验失败。请配置 CA（可设置 PI_WORK_GIT_CA_FILE）。',
+    ws_err_git_cert: '证书校验失败。请配置 CA（可设置 WEFT_GIT_CA_FILE）。',
     ws_err_git_repo: '仓库不存在，或没有访问权限。',
     ws_err_git_branch: '分支不存在。',
     ws_err_git_network: '网络连接失败。请检查仓库地址和网络。',
@@ -315,7 +315,7 @@ export const translations = {
     no_file_open: '暂无打开的文件',
     no_diff_available: '暂无 Diff',
     editor_save_btn: '保存文件',
-    empty_chat_title: 'pi-work · Durable Agent',
+    empty_chat_title: 'Weft · Durable Agent',
     settings_tab_general: '通用',
     settings_tab_models: '模型',
     settings_tab_git: 'Git',
@@ -330,7 +330,7 @@ export const translations = {
     git_empty_reserved: 'GitHub、Gitea 先预留。现在可以在「其他」里记下地址和令牌，导入时仍用填写地址。',
     git_section: '已连接的服务',
     git_section_meta: '{ok} 个可用 · {bad} 个需要处理',
-    git_footnote_before: '测试只检查令牌能不能访问 API。克隆时 pi-work 把令牌交给 git，不放进地址，也不留在 ',
+    git_footnote_before: '测试只检查令牌能不能访问 API。克隆时 Weft 把令牌交给 git，不放进地址，也不留在 ',
     git_footnote_after: '。GitHub、Gitea 预留，项目列表目前只支持 GitLab。',
     git_row_test: '测试',
     git_row_edit: '编辑',
@@ -357,7 +357,7 @@ export const translations = {
     git_token_ph: 'glpat-…',
     git_token_need: '需要',
     git_token_and: '和',
-    git_token_mid: '。令牌只由 pi-work 保存在本机；克隆时交给 git，不写进仓库地址，也不写入 ',
+    git_token_mid: '。令牌只由 Weft 保存在本机；克隆时交给 git，不写进仓库地址，也不写入 ',
     git_token_end: '。',
     git_token_hint_new: '保存后只显示掩码。',
     git_token_hint_edit: '这是已保存令牌的掩码，不是令牌本身。留空表示不修改。要更换时，删掉掩码再填入新令牌。',
@@ -582,7 +582,7 @@ export const translations = {
     plugin_import_title: '导入插件',
     plugin_path_label: '插件目录',
     plugin_path_placeholder: '例如：examples/plugins/word-count',
-    plugin_path_hint: '填写运行 pi-work 的机器上的目录。绝对路径，或相对于安装目录的路径（如 examples/plugins/word-count）都可以。目录里要有 plugin.json，且 main 指向可加载的 .mjs。只填名称不会安装。',
+    plugin_path_hint: '填写运行 Weft 的机器上的目录。绝对路径，或相对于安装目录的路径（如 examples/plugins/word-count）都可以。目录里要有 plugin.json，且 main 指向可加载的 .mjs。只填名称不会安装。',
     plugin_tools_label: '工具',
     plugin_not_loaded: '未能加载',
     search_skills_placeholder: '搜索 Skills…',
@@ -606,7 +606,7 @@ export const translations = {
     empty_skills_hint: '用「新建 Skill」写一条说明，或把 SKILL.md 放到 skills/ 目录',
     empty_search_plugins: '无匹配插件',
     empty_search_skills: '无匹配 Skills',
-    about_title: '关于 pi-work',
+    about_title: '关于 Weft',
     about_desc: '面向个人的多 Agent 编码工作台，支持断点续跑和角色协作。',
     about_version: '版本',
     about_repo: '仓库',
@@ -739,7 +739,7 @@ export const translations = {
     theme_graphite: 'Graphite',
     theme_terra: 'Terracotta',
     settings_short: 'Settings',
-    app_name: 'pi-work',
+    app_name: 'Weft',
     app_badge: 'workbench',
     demo_model_badge: 'Demo model',
     workspaces_and_chats: 'Workspaces & chats',
@@ -767,9 +767,9 @@ export const translations = {
     ws_err_git_url: 'Only https/ssh Git URLs are supported',
     ws_err_branch: 'Invalid branch name',
     ws_err_clone: 'Git clone failed. Check the repository URL and try again',
-    ws_err_git_not_found: 'git was not found. Install Git for Windows, or set PI_WORK_GIT_BIN.',
+    ws_err_git_not_found: 'git was not found. Install Git for Windows, or set WEFT_GIT_BIN.',
     ws_err_git_auth: 'Authentication failed. Clone once with git on this machine to save credentials, or set up an SSH key.',
-    ws_err_git_cert: 'Certificate check failed. Configure a CA (PI_WORK_GIT_CA_FILE).',
+    ws_err_git_cert: 'Certificate check failed. Configure a CA (WEFT_GIT_CA_FILE).',
     ws_err_git_repo: 'Repository not found, or access was denied.',
     ws_err_git_branch: 'Branch not found.',
     ws_err_git_network: 'Could not connect. Check the repository URL and the network.',
@@ -972,7 +972,7 @@ export const translations = {
     no_file_open: 'No file opened',
     no_diff_available: 'No diff available',
     editor_save_btn: 'Save File',
-    empty_chat_title: 'pi-work · Durable Agent',
+    empty_chat_title: 'Weft · Durable Agent',
     settings_tab_general: 'General',
     settings_tab_models: 'Models',
     settings_tab_git: 'Git',
@@ -983,11 +983,11 @@ export const translations = {
     git_lead: 'After you connect, a new workspace can pick a project from the list instead of pasting a URL.',
     git_add: '+ Add',
     git_empty_title: 'No Git service connected',
-    git_empty_body: 'You can still import without a connection. Choose “Enter a URL” on a new workspace and pi-work uses the credentials git already has on this machine. A project list is available after you add GitLab.',
+    git_empty_body: 'You can still import without a connection. Choose “Enter a URL” on a new workspace and Weft uses the credentials git already has on this machine. A project list is available after you add GitLab.',
     git_empty_reserved: 'GitHub and Gitea are reserved. You can save an address and token under Other, then import by URL.',
     git_section: 'Connected services',
     git_section_meta: '{ok} ready · {bad} need attention',
-    git_footnote_before: 'Test only checks that the token can call the API. When cloning, pi-work hands the token to git. It is not placed in the URL or left in ',
+    git_footnote_before: 'Test only checks that the token can call the API. When cloning, Weft hands the token to git. It is not placed in the URL or left in ',
     git_footnote_after: '. GitHub and Gitea are reserved. The project list supports GitLab only.',
     git_row_test: 'Test',
     git_row_edit: 'Edit',
@@ -1014,7 +1014,7 @@ export const translations = {
     git_token_ph: 'glpat-…',
     git_token_need: 'Needs',
     git_token_and: 'and',
-    git_token_mid: '. pi-work keeps the token on this machine and hands it to git when cloning. It is not written into the repository URL or ',
+    git_token_mid: '. Weft keeps the token on this machine and hands it to git when cloning. It is not written into the repository URL or ',
     git_token_end: '.',
     git_token_hint_new: 'Only a mask is shown after saving.',
     git_token_hint_edit: 'This is a mask of the saved token, not the token. Leave it empty to keep the current token. To replace it, clear the mask and paste a new token.',
@@ -1239,7 +1239,7 @@ export const translations = {
     plugin_import_title: 'Import Plugin',
     plugin_path_label: 'Plugin directory',
     plugin_path_placeholder: 'e.g. examples/plugins/word-count',
-    plugin_path_hint: 'Directory on the machine running pi-work. An absolute path or a path relative to the install directory (for example examples/plugins/word-count) both work. It needs plugin.json and a main .mjs that exports its tools. A name alone is not installed.',
+    plugin_path_hint: 'Directory on the machine running Weft. An absolute path or a path relative to the install directory (for example examples/plugins/word-count) both work. It needs plugin.json and a main .mjs that exports its tools. A name alone is not installed.',
     plugin_tools_label: 'Tools',
     plugin_not_loaded: 'Failed to load',
     search_skills_placeholder: 'Search skills…',
@@ -1263,7 +1263,7 @@ export const translations = {
     empty_skills_hint: 'Use New Skill, or add a SKILL.md under skills/',
     empty_search_plugins: 'No matching plugins',
     empty_search_skills: 'No matching skills',
-    about_title: 'About pi-work',
+    about_title: 'About Weft',
     about_desc: 'A personal multi-agent coding workbench with durable runs and role collaboration.',
     about_version: 'Version',
     about_repo: 'Repository',
@@ -1317,7 +1317,7 @@ export const translations = {
   },
 };
 
-let currentLocale = localStorage.getItem('piwork_lang') || 'zh';
+let currentLocale = localStorage.getItem('weft_lang') || 'zh';
 if (!translations[currentLocale]) currentLocale = 'zh';
 
 export function getLocale() {
@@ -1327,7 +1327,7 @@ export function getLocale() {
 export function setLocale(lang) {
   if (translations[lang]) {
     currentLocale = lang;
-    localStorage.setItem('piwork_lang', lang);
+    localStorage.setItem('weft_lang', lang);
     document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   }
 }

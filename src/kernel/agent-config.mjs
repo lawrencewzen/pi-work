@@ -55,7 +55,7 @@ export function installAgentExtensions(registry, bridge) {
           const text = String((await bridge.skillPrompt()) || '').trim();
           return text || undefined;
         } catch (err) {
-          console.error(`PI_WORK_KERNEL_AGENT ${err instanceof Error ? err.message : err}`);
+          console.error(`WEFT_KERNEL_AGENT ${err instanceof Error ? err.message : err}`);
           return undefined;
         }
       }),
@@ -172,7 +172,7 @@ export function createAgentHost({
       try {
         await configure(conv);
       } catch (err) {
-        console.error(`PI_WORK_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
+        console.error(`WEFT_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
       }
     }
   }
@@ -197,7 +197,7 @@ export function createAgentHost({
     try {
       agents = await describeAgents({ ...conv, status: conv.status }, msgs || []);
     } catch (err) {
-      console.error(`PI_WORK_KERNEL_AGENT ${err instanceof Error ? err.message : err}`);
+      console.error(`WEFT_KERNEL_AGENT ${err instanceof Error ? err.message : err}`);
       return;
     }
     const agent = agents[0];

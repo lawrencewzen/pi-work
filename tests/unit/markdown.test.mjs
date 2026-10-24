@@ -102,16 +102,16 @@ test('strips javascript: links', () => {
 });
 
 const STRIP = [
-  'PI_WORK_LLM',
-  'PI_WORK_FAUX_SCRIPT',
-  'PI_WORK_FAUX_TEXT',
+  'WEFT_LLM',
+  'WEFT_FAUX_SCRIPT',
+  'WEFT_FAUX_TEXT',
   'LLM_API',
   'LLM_API_KEY',
   'LLM_BASE_URL',
   'LLM_MODEL',
-  'PI_WORK_GROK_AUTH',
+  'WEFT_GROK_AUTH',
   'GROK_HOME',
-  'PI_WORK_TOKEN',
+  'WEFT_TOKEN',
 ];
 
 function childEnv(dataDir) {
@@ -120,10 +120,10 @@ function childEnv(dataDir) {
   return {
     ...env,
     PORT: '0',
-    PI_WORK_DATA_DIR: dataDir,
-    PI_WORK_GROK_AUTH: path.join(dataDir, 'grok-auth.json'),
-    PI_WORK_RETRY_BASE_MS: '20',
-    PI_WORK_RETRY_MAX: '5',
+    WEFT_DATA_DIR: dataDir,
+    WEFT_GROK_AUTH: path.join(dataDir, 'grok-auth.json'),
+    WEFT_RETRY_BASE_MS: '20',
+    WEFT_RETRY_MAX: '5',
   };
 }
 
@@ -154,7 +154,7 @@ test('vendor ESM files are served locally and node_modules is not exposed', asyn
       const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 20000);
       const onData = (buf) => {
         log += buf;
-        const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
+        const match = log.match(/WEFT_READY (http:\/\/\S+)/);
         if (match) {
           clearTimeout(timer);
           resolve(match[1]);

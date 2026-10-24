@@ -25,7 +25,7 @@ async function realOrResolve(p) {
 }
 
 export function defaultWorkspaceRoot() {
-  const env = String(process.env.PI_WORK_WORKSPACE_ROOT || '').trim();
+  const env = String(process.env.WEFT_WORKSPACE_ROOT || '').trim();
   if (env) return path.resolve(env);
   const home = os.homedir();
   const projects = path.join(home, 'projects');
@@ -37,7 +37,7 @@ const SYSTEM_PREFIXES = ['/etc', '/var', '/usr', '/bin', '/boot', '/dev', '/proc
 
 /**
  * Resolve `inputPath` with realpath and allow it only under DATA_DIR/workspaces
- * or PI_WORK_WORKSPACE_ROOT. Never allow `/`, `$HOME` itself, `~/.ssh`, `~/.gnupg`,
+ * or WEFT_WORKSPACE_ROOT. Never allow `/`, `$HOME` itself, `~/.ssh`, `~/.gnupg`,
  * or system directories.
  */
 export async function resolveAllowedWorkspacePath(inputPath, { dataDir } = {}) {

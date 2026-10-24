@@ -612,7 +612,7 @@ export function createSubagentHost({
     const stream = await watchEvents(harness, childId, context);
     childWatches.set(childId, stream);
     const run = () => publish(parentCid, childId).catch((err) => {
-      console.error(`PI_WORK_KERNEL_SUBAGENT ${err instanceof Error ? err.message : err}`);
+      console.error(`WEFT_KERNEL_SUBAGENT ${err instanceof Error ? err.message : err}`);
     });
     await run();
     stream.start(() => run());
@@ -623,7 +623,7 @@ export function createSubagentHost({
     if (!parentCid) return;
     setImmediate(() => {
       attach(parentCid, childId).catch((err) => {
-        console.error(`PI_WORK_KERNEL_SUBAGENT ${err instanceof Error ? err.message : err}`);
+        console.error(`WEFT_KERNEL_SUBAGENT ${err instanceof Error ? err.message : err}`);
       });
     });
   }

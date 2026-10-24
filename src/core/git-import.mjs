@@ -36,12 +36,12 @@ export function parseHttpHostAllowlist(value) {
 function httpHostsFrom(opts) {
   if (Array.isArray(opts.httpHosts)) return opts.httpHosts.map((h) => String(h).trim().toLowerCase()).filter(Boolean);
   const env = Object.prototype.hasOwnProperty.call(opts, 'env') ? opts.env : process.env;
-  return parseHttpHostAllowlist(env?.PI_WORK_GIT_HTTP_HOSTS);
+  return parseHttpHostAllowlist(env?.WEFT_GIT_HTTP_HOSTS);
 }
 
 /**
  * Allowed clone URLs: https:, ssh:, git@host:path, and http: for hosts in
- * PI_WORK_GIT_HTTP_HOSTS. Reject file:, ext:, ftp:, git:, and hosts or path
+ * WEFT_GIT_HTTP_HOSTS. Reject file:, ext:, ftp:, git:, and hosts or path
  * components that start with `-`.
  */
 export function validateGitUrl(url, opts = {}) {
@@ -100,12 +100,12 @@ export function stripGitUrlCredentials(url) {
 }
 
 export function resolveGitBin(env = process.env) {
-  const bin = String(env?.PI_WORK_GIT_BIN || '').trim();
+  const bin = String(env?.WEFT_GIT_BIN || '').trim();
   return bin || 'git';
 }
 
 export function resolveGitCaFile(env = process.env) {
-  const file = String(env?.PI_WORK_GIT_CA_FILE || '').trim();
+  const file = String(env?.WEFT_GIT_CA_FILE || '').trim();
   return file || null;
 }
 
@@ -313,7 +313,7 @@ export async function cloneGitRepo({ url, branch, dest, env = process.env, conne
   let trimmed = String(url || '').trim();
   if (connection) trimmed = sanitizeConnectionCloneUrl(trimmed, connection);
   const validateEnv = connection && /^http:\/\//i.test(trimmed)
-    ? { ...env, PI_WORK_GIT_HTTP_HOSTS: new URL(trimmed).hostname }
+    ? { ...env, WEFT_GIT_HTTP_HOSTS: new URL(trimmed).hostname }
     : env;
   if (!validateGitUrl(trimmed, { env: validateEnv })) throw badRequest('invalid gitUrl');
   if (!validateBranch(branch)) throw badRequest('invalid branch');
@@ -325,7 +325,7 @@ export async function cloneGitRepo({ url, branch, dest, env = process.env, conne
     url: trimmed,
     branch,
     dest,
-    env: connectionCa ? { ...env, PI_WORK_GIT_CA_FILE: connectionCa } : env,
+    env: connectionCa ? { ...env, WEFT_GIT_CA_FILE: connectionCa } : env,
   });
   const childEnv = token || connectionCa
     ? buildConnectionCloneEnv(plan.env, { token, caFile: connectionCa, origin: new URL(trimmed).origin })
