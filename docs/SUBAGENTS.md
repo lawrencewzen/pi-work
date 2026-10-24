@@ -1,8 +1,8 @@
 # Sub-agents
 
-Sub-agents follow Pi Durable's Abort and Subagents section and examples 22 (foreground) and 23 (background). The Harness owns the child conversation, its submission, abort, and restart reuse. pi-work only configures a child from a role template and reads what the tools already committed.
+Sub-agents follow Pi Durable's Abort and Subagents section and examples 22 (foreground) and 23 (background). The Harness owns the child conversation, its submission, abort, and restart reuse. pi-work configures a self-contained child from the task text only (empty instructions, no role template, no skills) and reads what the tools already committed.
 
-A conversation has one main agent (the conversation role, or `default`). Extra agents are sub-agent instances spawned with `delegate` / `subagent`, each in its own Harness conversation. The host does not rotate roles in the same chat.
+A conversation has one main agent (the conversation role, or `default`). Extra agents are sub-agent instances spawned with `delegate` / `subagent`, each in its own Harness conversation. The host does not rotate roles in the same chat. The child cannot see the parent conversation or the parent's instructions; everything it needs goes in `task` / `message`.
 
 A conversation still has a role chip on `GET /api/conversations/:cid` (`agents` without `mode`). Real sub-agent instances are appended after that chip.
 
@@ -10,8 +10,8 @@ A conversation still has a role chip on `GET /api/conversations/:cid` (`agents` 
 
 The main agent has two tools. Children are configured with this extension removed, so they cannot spawn further sub-agents.
 
-- **`delegate`** (example 22, `replay: 'safe'`): parameters `{ agent, task }`. Creates a child owned by `{ kind: 'task', taskId: api.taskId }`, reuses it on rerun with `tx.scanConversations({ ownerTaskId })`, publishes `api.details({ conversationId, roleId, name })`, submits with `requestId` `subagent:${api.taskId}`, and returns the child's answer. The tool `description` lists available roles (`id`, name, and the role's "when to use" description) so the main agent can pick one. Aborting only that child returns `[subagent <name> was stopped by the user]` to the caller so the parent turn continues; aborting the caller itself still throws `AbortError`.
-- **`subagent`** (example 23, `replay: 'unsafe'`): `action` is `spawn` / `send` / `wait` / `stop` / `list`. Each named child is owned by a background anchor task, so the parent's Esc and idle waits do not stop it. A background reporter delivers the message and posts the answer back to the main conversation as a follow-up. Request IDs keep a restart from sending a message or a report twice. The name → conversation map is the example 23 document, not a separate roster.
+- **`delegate`** (example 22, `replay: 'safe'`): parameters `{ task }`. Creates a child owned by `{ kind: 'task', taskId: api.taskId }`, reuses it on rerun with `tx.scanConversations({ ownerTaskId })`, publishes `api.details({ conversationId, name })` (`name` is the first line of `task`, one line, at most 30 characters), submits with `requestId` `subagent:${api.taskId}`, and returns the child's answer. The child is configured with `instructions: ''`, the parent's workspace and plugin tools (no `delegate` / `subagent`), the copied parent model, and the parent's `cwd`. Aborting only that child returns `[subagent <name> was stopped by the user]` to the caller so the parent turn continues; aborting the caller itself still throws `AbortError`.
+- **`subagent`** (example 23, `replay: 'unsafe'`): `action` is `spawn` / `send` / `wait` / `stop` / `list`. Spawn parameters are `{ name, message }`. Each named child is owned by a background anchor task, so the parent's Esc and idle waits do not stop it. A background reporter delivers the message and posts the answer back to the main conversation as a follow-up. Request IDs keep a restart from sending a message or a report twice. The name → conversation map is the example 23 document, not a separate roster. `[subagent <name> answered, no reply needed]` uses the spawn `name`.
 
 `POST /api/conversations/:cid/stop` calls `conversation.abort(context, { background: true })`, which also stops background sub-agents.
 
@@ -20,7 +20,7 @@ The main agent has two tools. Children are configured with this extension remove
 ```bash
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>
 # → agents: role chip, then
-#   {id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode,
+#   {id, name, status, step, totalSteps, toolCalls, lastText, mode,
 #    brief?, startedAt?, lastActivityAt?, endedAt?, currentAction?}
 #   id is <cid>:sub:<child conversation id>
 #   mode is foreground | background
@@ -30,7 +30,7 @@ curl -sS http://127.0.0.1:3000/api/conversations/<cid>
 #   missing timestamps or text omit that field
 
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/messages
-# → {id, roleId, name, status, mode, messages}
+# → {id, name, status, mode, messages}
 
 curl -sS -X POST http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/messages \
   -H 'content-type: application/json' -d '{"text":"改用 pnpm"}'

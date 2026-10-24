@@ -201,9 +201,9 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 
 主 Agent 始终可以派子 Agent。未知对话的 `GET /api/conversations/:cid/agents/:aid/messages` 是 `404 {error:'conversation not found'}`。
 
-主 Agent 多两个工具：`delegate`（前台，参数 `{agent, task}`，`agent` 是角色 id）和 `subagent`（后台，`action` 为 `spawn` / `send` / `wait` / `stop` / `list`）。写法照 Pi Durable README「Abort and Subagents」与示例 22（前台）/ 23（后台）：前台子对话由工具任务拥有，重启时 `scanConversations({ ownerTaskId })` 复用，`requestId` 为 `subagent:<taskId>`；后台子对话由 background 锚点任务拥有，答案由 reporter 以 follow-up 送回主对话。没有自写花名册、并发上限或暂停同步。`delegate` 的 `description` 动态列出可用角色的 id、名称和「什么时候用」的描述。子 Agent 按该角色的模型绑定、工具白名单、Skills 和插件工具各自 `configure`，不能再派子 Agent。单独中止一个前台子对话时，调用方收到 `[subagent <name> was stopped by the user]`（不是错误），本轮继续；中止主 Agent 仍会停掉这一轮。
+主 Agent 多两个工具：`delegate`（前台，参数只有 `{task}`）和 `subagent`（后台，`action` 为 `spawn` / `send` / `wait` / `stop` / `list`；spawn 参数 `{name, message}`）。写法照 Pi Durable README「Abort and Subagents」与示例 22（前台）/ 23（后台）：前台子对话由工具任务拥有，重启时 `scanConversations({ ownerTaskId })` 复用，`requestId` 为 `subagent:<taskId>`；后台子对话由 background 锚点任务拥有，答案由 reporter 以 follow-up 送回主对话。没有自写花名册、并发上限或暂停同步。两个工具的 `description` 都说明子 Agent 看不到本对话和主 Agent 的提示词，需要的内容全部写进 `task` / `message`。子 Agent 是自包含派活：`instructions` 为空字符串，不带角色文字、不带 Skills，工具是主 Agent 的工作区工具和插件工具（没有 `delegate` / `subagent`），模型与 `cwd` 沿用父对话。不能再派子 Agent。前台 `name` 取 `task` 第一行（压成一行，最多 30 字）；后台用 spawn 的 `name`。单独中止一个前台子对话时，调用方收到 `[subagent <name> was stopped by the user]`（不是错误），本轮继续；中止主 Agent 仍会停掉这一轮。
 
-`GET /api/conversations/:cid` 的 `agents` 在当前角色芯片之后追加真实子 Agent 实例：`{id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}`，以及拿得到才返回的 `brief`、`startedAt`、`lastActivityAt`、`endedAt`、`currentAction`。名单从 Harness 读：工具调用的 `details.conversationId`、所有权索引、后台名称文档、子对话 `viewState`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。角色芯片没有 `mode`，也没有下面这些可选字段。没有子 Agent 时，`agents` 只有当前角色那一项。
+`GET /api/conversations/:cid` 的 `agents` 在当前角色芯片之后追加真实子 Agent 实例：`{id, name, status, step, totalSteps, toolCalls, lastText, mode}`，以及拿得到才返回的 `brief`、`startedAt`、`lastActivityAt`、`endedAt`、`currentAction`。不返回 `roleId`。名单从 Harness 读：工具调用的 `details.conversationId`、所有权索引、后台名称文档、子对话 `viewState`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。角色芯片没有 `mode`，也没有下面这些可选字段。没有子 Agent 时，`agents` 只有当前角色那一项。
 
 可选字段都来自子对话 transcript，缺数据就不返回，不编造：
 
@@ -217,7 +217,7 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 
 | 方法 路径 | 响应 |
 |---|---|
-| `GET /api/conversations/:cid/agents/:aid/messages` | `200 {id, roleId, name, status, mode, messages}`。`mode` 与芯片相同。`messages` 与父对话消息同形。对话不存在 `404 {error:'conversation not found'}`；`aid` 不是这个对话的子 Agent `404 {error:'agent not found'}` |
+| `GET /api/conversations/:cid/agents/:aid/messages` | `200 {id, name, status, mode, messages}`。`mode` 与芯片相同。`messages` 与父对话消息同形。对话不存在 `404 {error:'conversation not found'}`；`aid` 不是这个对话的子 Agent `404 {error:'agent not found'}` |
 | `POST /api/conversations/:cid/agents/:aid/messages` | `{text}`。`200 {ok:true}`。对运行中的子对话 `submit({type:'input', content, whenBusy:'steer'})`；再给主对话写一条 `app.pi-work.user-to-subagent`，不唤醒主对话。空文本 `400 {error:'text required'}`；未知对话或子 Agent `404`；`status` 不是 `running` `409 {error:'agent not running'}` |
 | `POST /api/conversations/:cid/agents/:aid/stop` | `200 {status:'stopped'}`。只 abort 这个子对话，不碰主对话和其他子 Agent。未知 `404`。主对话 SSE 推一条该子 Agent 的 `agent` 事件，`status` 为 `stopped` |
 | `POST /api/conversations/:cid/stop` | `200 {status:'stopped'}`。停掉这条对话里的全部工作，包括后台子 Agent |

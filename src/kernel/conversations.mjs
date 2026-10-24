@@ -102,9 +102,8 @@ export async function openConversationKernel({
   installContinuationExtension(registry);
   installPluginReload(registry, roleBridge);
   const subagentExtension = createSubagentExtension({
-    listRoles: () => store.listRoles(),
-    prepareChild: (role, parent) => subagentApi.prepareChild(role, parent),
-    onChild: (parentId, childId, roleId) => subagentApi.onChild?.(parentId, childId, roleId),
+    prepareChild: (parent) => subagentApi.prepareChild(parent),
+    onChild: (parentId, childId) => subagentApi.onChild?.(parentId, childId),
   });
   roleBridge.extraTools = () => subagentExtension.tools || [];
   registry.install(subagentExtension);
@@ -257,13 +256,6 @@ export async function openConversationKernel({
     return null;
   }
 
-  async function resolveChildModel(role) {
-    const model = await modelRoutes.modelFor({ roleId: role?.id });
-    if (model) return model;
-    if (faux) return undefined;
-    return null;
-  }
-
   const subagents = createSubagentHost({
     store,
     harness,
@@ -271,8 +263,6 @@ export async function openConversationKernel({
     readTranscript,
     emit: (cid, event, data) => deliver(cid, { event, data }),
     watchEvents,
-    resolveModel: resolveChildModel,
-    collectTools: (role, options) => roles.collectTools(role, options),
     cidFor,
   });
   subagentApi.prepareChild = subagents.prepareChild;
@@ -284,10 +274,6 @@ export async function openConversationKernel({
     listSubagents: (conv) => subagents.listSubagents(conv),
     emit: (cid, event, data) => deliver(cid, { event, data }),
   });
-  const resolveParentRole = roleBridge.resolveRole;
-  roleBridge.resolveRole = async (harnessId) => (
-    await subagents.roleFor(harnessId) || resolveParentRole(harnessId)
-  );
 
   const stored = await store.listKernelConversations();
   await roles.seed(stored);
