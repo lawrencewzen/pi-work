@@ -88,7 +88,7 @@ const state = {
   activeConversationData: null,
   // 尚未创建的新对话（草稿）选好的模型，发出第一条消息时随创建请求带上
   draft: { modelSourceId: '', modelId: '' },
-  activeRightTab: 'diff', // 'diff' | 'file' | 'markdown' | 'editor'
+  activeRightTab: 'diff', // 'diff' | 'file' | 'markdown' | 'editor' | 'agent'
   changes: [],
   activeFilePath: null,
   activeDiff: null,
@@ -116,6 +116,8 @@ const state = {
   expandedToolGroupOlder: new Set(),
   viewingAgentId: null,
   viewingAgent: null,
+  subagentPickerOpen: false,
+  subagentPickerAnimate: false,
   collapsedSubagentTrees: new Set(),
   pendingSubagentNudges: {},
   subagentDrafts: {},
@@ -964,9 +966,9 @@ export function connectSSE(cid) {
       }
       renderConversations();
       renderChatThread();
-      if (data.id && data.id === state.viewingAgentId) {
+      if (state.activeRightTab === 'agent') {
         renderRightPanel();
-        scheduleViewingAgentRefresh(cid);
+        if (data.id && data.id === state.viewingAgentId) scheduleViewingAgentRefresh(cid);
       }
       scheduleConversationRefresh(cid);
     } catch { /* ignore */ }
@@ -1634,6 +1636,29 @@ function subagentTreeHtml(convId, agents) {
   );
 }
 
+function tickPanelSubagentClocks(byId, now) {
+  if (state.activeRightTab !== 'agent') return;
+  if (state.viewingAgentId && state.viewingAgent) {
+    byId.set(state.viewingAgentId, { ...(byId.get(state.viewingAgentId) || {}), ...state.viewingAgent });
+  }
+  let restyle = false;
+  document.querySelectorAll('[data-testid="subagent-card"], [data-testid="subagent-banner"]').forEach((el) => {
+    const agent = byId.get(el.getAttribute('data-agent-id'));
+    if (!agent) return;
+    if (el.getAttribute('data-visual') !== subagentVisualStatus(agent, now)) restyle = true;
+  });
+  if (restyle) {
+    renderRightPanel();
+    return;
+  }
+  document.querySelectorAll('[data-subagent-time]').forEach((el) => {
+    const agent = byId.get(el.getAttribute('data-subagent-time'));
+    if (!agent) return;
+    const next = subagentTimeText(agent, now);
+    if (el.textContent !== next) el.textContent = next;
+  });
+}
+
 function tickSubagentClock() {
   const now = Date.now();
   const agents = listedSubagents(state.activeConversationData?.agents || []);
@@ -1654,6 +1679,7 @@ function tickSubagentClock() {
     const actionEl = row.querySelector('[data-testid="subagent-tree-action"]');
     if (actionEl && actionEl.textContent !== action) actionEl.textContent = action;
   });
+  tickPanelSubagentClocks(byId, now);
   const cluster = document.querySelector('[data-testid="subagent-orbit-cluster"]');
   if (!cluster) return;
   const live = agents.filter(isLiveSubagent).length;
@@ -1804,6 +1830,8 @@ function realSubagentName(agent) {
 function clearSubagentView() {
   state.viewingAgentId = null;
   state.viewingAgent = null;
+  state.subagentPickerOpen = false;
+  state.subagentPickerAnimate = false;
   if (subagentPollTimer) {
     clearTimeout(subagentPollTimer);
     subagentPollTimer = null;
@@ -1850,12 +1878,17 @@ export async function refreshViewingAgent(cid, aid) {
     if (Array.isArray(agents)) {
       const idx = agents.findIndex((agent) => agent.id === aid);
       if (idx >= 0) {
+        const extra = {};
+        for (const key of ['brief', 'startedAt', 'endedAt', 'lastActivityAt', 'currentAction', 'step', 'totalSteps', 'lastText']) {
+          if (body[key] != null) extra[key] = body[key];
+        }
         agents[idx] = {
           ...agents[idx],
           status: body.status || agents[idx].status,
           name: body.name || agents[idx].name,
           roleId: body.roleId || agents[idx].roleId,
           ...(body.mode === 'background' || body.mode === 'foreground' ? { mode: body.mode } : {}),
+          ...extra,
         };
       }
     }
@@ -1882,6 +1915,7 @@ export async function openSubagent(agentId) {
     messages: same ? (state.viewingAgent?.messages || []) : [],
     loading: true,
   };
+  state.subagentPickerOpen = false;
   state.activeRightTab = 'agent';
   setRightOpen(true);
   renderChatThread();
@@ -3192,21 +3226,138 @@ function renderChangesPaneHtml(visible) {
   );
 }
 
+function subagentDotClass(visual) {
+  return `dot-${String(visual || 'waiting').replace(/[^a-z0-9_-]/gi, '')}`;
+}
+
+function subagentPanelSummary(agent) {
+  const fromBrief = firstBriefLine(agent?.brief);
+  if (fromBrief) return fromBrief;
+  return realSubagentName(agent) || t('agent_name');
+}
+
+function subagentPanelSubtitle(agent, visual) {
+  if (visual === 'running' || visual === 'stuck') {
+    const action = subagentActionText(agent, visual);
+    return action ? t('subagent_now', { action }) : '';
+  }
+  if (visual === 'done' || visual === 'stopped') return firstBriefLine(agent?.lastText);
+  return '';
+}
+
+function revealMainConversationPane() {
+  const leaveAgent = state.activeRightTab === 'agent' || Boolean(state.viewingAgentId);
+  clearSubagentView();
+  state.activeRightTab = 'diff';
+  localStorage.setItem('piwork_active_right_tab', 'diff');
+  if (!leaveAgent) return;
+  renderConversations();
+  refreshChangeDiffs();
+  renderRightPanel();
+}
+
+function showSubagentOverview() {
+  clearSubagentView();
+  state.activeRightTab = 'agent';
+  setRightOpen(true);
+  renderConversations();
+  renderRightPanel();
+}
+
+function closeSubagentPicker() {
+  if (!state.subagentPickerOpen) return;
+  state.subagentPickerOpen = false;
+  document.querySelector('[data-testid="subagent-picker"]')?.remove();
+  const toggle = document.querySelector('[data-testid="subagent-picker-toggle"]');
+  if (toggle) toggle.setAttribute('aria-expanded', 'false');
+}
+
+function toggleSubagentPicker() {
+  if (state.subagentPickerOpen) {
+    closeSubagentPicker();
+    return;
+  }
+  state.subagentPickerOpen = true;
+  state.subagentPickerAnimate = true;
+  renderRightPanel();
+  state.subagentPickerAnimate = false;
+}
+
+function subagentRowBits(agent) {
+  const visual = subagentVisualStatus(agent);
+  return {
+    visual,
+    summary: subagentPanelSummary(agent),
+    sub: subagentPanelSubtitle(agent, visual),
+    time: subagentTimeText(agent),
+    dot: subagentDotClass(visual),
+  };
+}
+
+function subagentCardHtml(agent) {
+  const bits = subagentRowBits(agent);
+  const aid = agent.id || '';
+  return (
+    `<button type="button" class="subagent-card" data-testid="subagent-card" data-action="open-subagent" data-agent-id="${escapeHtml(aid)}" data-status="${escapeHtml(agent.status || 'waiting')}" data-visual="${escapeHtml(bits.visual)}">` +
+    `<span class="status-dot ${escapeHtml(bits.dot)}"></span>` +
+    `<span class="subagent-card-main">` +
+    `<span class="subagent-card-summary">${escapeHtml(bits.summary)}</span>` +
+    (bits.sub ? `<span class="subagent-card-sub">${escapeHtml(bits.sub)}</span>` : '') +
+    `</span>` +
+    `<span class="subagent-time" data-subagent-time="${escapeHtml(aid)}">${escapeHtml(bits.time)}</span>` +
+    `<span class="subagent-card-go" aria-hidden="true">›</span>` +
+    `</button>`
+  );
+}
+
+function subagentPickerHtml(currentId) {
+  const agents = listedSubagents(state.activeConversationData?.agents || []);
+  return (
+    `<div class="subagent-picker${state.subagentPickerAnimate ? ' is-entering' : ' is-open'}" data-testid="subagent-picker" role="menu">` +
+    agents.map((agent) => {
+      const bits = subagentRowBits(agent);
+      const aid = agent.id || '';
+      const current = aid === currentId;
+      return (
+        `<button type="button" class="subagent-picker-item${current ? ' is-current' : ''}" role="menuitem" data-testid="subagent-picker-item" data-action="open-subagent" data-agent-id="${escapeHtml(aid)}">` +
+        `<span class="status-dot ${escapeHtml(bits.dot)}"></span>` +
+        `<span class="subagent-picker-summary">${escapeHtml(bits.summary)}</span>` +
+        `<span class="subagent-time" data-subagent-time="${escapeHtml(aid)}">${escapeHtml(bits.time)}</span>` +
+        `</button>`
+      );
+    }).join('') +
+    `</div>`
+  );
+}
+
+function renderSubagentOverviewHtml() {
+  const agents = listedSubagents(state.activeConversationData?.agents || []);
+  const n = agents.length;
+  return (
+    `<div class="subagent-overview" data-testid="subagent-overview">` +
+    `<div class="subagent-crumb" data-testid="subagent-crumb">` +
+    `<span class="agent-pane-tag">${escapeHtml(t('subagent_tag'))}</span>` +
+    `<span class="tab-count">${escapeHtml(String(n))}</span>` +
+    `</div>` +
+    `<div class="subagent-cards">${agents.map(subagentCardHtml).join('')}</div>` +
+    `</div>`
+  );
+}
+
 function renderAgentTab() {
   const slot = document.getElementById('agent-tab-slot');
   if (!slot) return;
-  if (!state.viewingAgentId) {
+  const agents = listedSubagents(state.activeConversationData?.agents || []);
+  if (!agents.length) {
     slot.innerHTML = '';
+    if (state.activeRightTab === 'agent') state.activeRightTab = 'diff';
     return;
   }
-  const agent = viewingAgentInfo();
-  const st = agent.status || 'waiting';
+  const n = agents.length;
   slot.innerHTML =
-    `<span class="tab-sep"></span>` +
-    `<button type="button" class="tab-btn agent-tab${state.activeRightTab === 'agent' ? ' active' : ''}" data-action="switch-right-tab" data-tab="agent" data-testid="agent-tab" title="${escapeHtml(t('subagent_tab_title'))}">` +
-    `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
-    `<span class="agent-tab-name">${escapeHtml(realSubagentName(agent))}</span>` +
-    `<span class="tab-close" data-action="close-subagent" data-testid="subagent-back" title="${escapeHtml(t('btn_close'))}" aria-label="${escapeHtml(t('subagent_back'))}">×</span>` +
+    `<button type="button" class="tab-btn${state.activeRightTab === 'agent' ? ' active' : ''}" data-action="switch-right-tab" data-tab="agent" data-testid="agent-tab" title="${escapeHtml(t('subagent_tab_title'))}">` +
+    `<span>${escapeHtml(t('subagent_tag'))}</span>` +
+    `<span class="tab-count">${escapeHtml(String(n))}</span>` +
     `</button>`;
 }
 
@@ -3224,32 +3375,20 @@ function pendingNudgeHtml(item) {
   );
 }
 
-function agentPaneFootHtml(agent, name) {
+function agentPaneFootHtml(agent) {
   const st = agent.status || 'waiting';
-  if (st === 'running') {
-    return (
-      `<div class="agent-pane-foot is-composer">` +
-      `<div class="agent-pane-composer">` +
-      `<textarea data-testid="subagent-input" rows="1" placeholder="${escapeHtml(t('subagent_interrupt_placeholder', { name }))}"></textarea>` +
-      `<button type="button" class="btn-send" data-testid="subagent-send" data-action="send-subagent" title="${escapeHtml(t('send_title'))}">${SEND_ICON}</button>` +
-      `<button type="button" class="btn g agent-pane-stop" data-testid="subagent-stop" data-action="stop-subagent" title="${escapeHtml(t('subagent_stop_title'))}">${escapeHtml(t('subagent_stop'))}</button>` +
-      `</div>` +
-      `<div class="agent-pane-hint-line">${escapeHtml(t('subagent_interrupt_hint'))}</div>` +
-      `</div>`
-    );
-  }
-  if (st === 'stopped') return `<div class="agent-pane-foot is-empty"></div>`;
-  if (st === 'done') {
-    return (
-      `<div class="agent-pane-foot is-hint">` +
-      `<div class="agent-pane-hint-line">${escapeHtml(t('subagent_hint_done_parent', { name }))}</div>` +
-      `</div>`
-    );
-  }
+  if (st !== 'running') return `<div class="agent-pane-foot is-empty"></div>`;
   return (
-    `<div class="agent-pane-foot">` +
-    `<div class="agent-pane-hint">${escapeHtml(t('subagent_hint_running', { name }))}</div>` +
-    `</div>`
+    `<div class="agent-pane-foot is-composer">` +
+    `<div class="subagent-composer">` +
+    `<textarea data-testid="subagent-input" rows="2" placeholder="${escapeHtml(t('subagent_interrupt_placeholder'))}"></textarea>` +
+    `<div class="subagent-composer-bar">` +
+    `<span class="subagent-composer-hint">${escapeHtml(t('subagent_interrupt_hint'))}</span>` +
+    `<button type="button" class="subagent-stop-btn" data-testid="subagent-stop" data-action="stop-subagent" title="${escapeHtml(t('subagent_stop_title'))}">` +
+    `<span class="subagent-stop-sq" aria-hidden="true"></span>${escapeHtml(t('subagent_stop'))}` +
+    `</button>` +
+    `<button type="button" class="btn-send" data-testid="subagent-send" data-action="send-subagent" title="${escapeHtml(t('send_title'))}">${SEND_ICON}</button>` +
+    `</div></div></div>`
   );
 }
 
@@ -3257,51 +3396,61 @@ function renderAgentPaneHtml() {
   const agent = viewingAgentInfo();
   const st = agent.status || 'waiting';
   const name = realSubagentName(agent);
+  const bits = subagentRowBits(agent);
   const msgs = dedupeMessages(state.viewingAgent?.messages || []);
   const firstUser = msgs.find((m) => isPromptUserMessage(m));
   const rest = firstUser ? msgs.filter((m) => m !== firstUser) : msgs;
   const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant' && m.text);
   const done = st === 'done';
-  const toolCount = msgs.filter((m) => m.role === 'tool').length;
-  const meta = [modelForDispatchRole((state.roles || []).find((r) => r.id === agent.roleId) || null), toolCount ? t('tool_calls_count', { n: toolCount }) : '']
-    .filter(Boolean).join(' · ');
   const pending = state.pendingSubagentNudges[agent.id] || [];
+  const threadMsgs = done && lastAssistant ? rest.filter((m) => m !== lastAssistant) : rest;
   let thread;
   if (state.viewingAgent?.loading && !msgs.length) thread = `<div class="pane-empty">${escapeHtml(t('subagent_loading'))}</div>`;
-  else if (!msgs.length && !pending.length) thread = `<div class="pane-empty">${escapeHtml(t('subagent_empty'))}</div>`;
-  else thread = threadBlocksHtml(done && lastAssistant ? rest.filter((m) => m !== lastAssistant) : rest, { senderName: name }).join('');
+  else if (!threadMsgs.length && !pending.length && !(done && lastAssistant) && st !== 'stopped') {
+    thread = `<div class="pane-empty">${escapeHtml(t('subagent_empty'))}</div>`;
+  } else thread = threadBlocksHtml(threadMsgs, { senderName: name }).join('');
   const pendingHtml = pending.map(pendingNudgeHtml).join('');
+  const brief = String(agent.brief || firstUser?.text || '').trim();
+  const briefHtml = brief
+    ? `<div class="agent-pane-brief" data-testid="subagent-brief"><span class="k">${escapeHtml(t('subagent_brief'))}</span><span class="v">${escapeHtml(brief)}</span></div>`
+    : '';
   const stoppedNote = st === 'stopped'
     ? `<div class="subagent-stopped-note" data-testid="subagent-stopped-note"><div class="subagent-stopped-title">${escapeHtml(t('subagent_stopped_title'))}</div><div class="subagent-stopped-body">${escapeHtml(t('subagent_stopped_body'))}</div></div>`
     : '';
+  const resultHtml = done && lastAssistant
+    ? `<div class="agent-pane-result msg-group" data-testid="subagent-handed-back">` +
+      `<span class="k">${escapeHtml(t('subagent_handed_back'))}</span>` +
+      `<div class="msg-body" data-testid="message" data-role="assistant"><span class="msg-sender" data-testid="message-sender">${escapeHtml(name)}</span><div data-testid="message-body">${renderMarkdown(lastAssistant.text)}</div></div>` +
+      `</div>`
+    : '';
   return (
     `<div class="agent-pane" data-testid="subagent-pane">` +
+    `<div class="subagent-crumb" data-testid="subagent-crumb">` +
+    `<button type="button" class="agent-pane-tag" data-action="show-subagent-overview">${escapeHtml(t('subagent_tag'))}</button>` +
+    `<span class="subagent-crumb-sep" aria-hidden="true">›</span>` +
+    `<button type="button" class="subagent-crumb-now" data-action="toggle-subagent-picker" data-testid="subagent-picker-toggle" aria-expanded="${state.subagentPickerOpen ? 'true' : 'false'}" title="${escapeHtml(t('subagent_switch'))}">` +
+    `<span class="subagent-crumb-label" data-testid="subagent-banner-text">${escapeHtml(bits.summary)}</span>` +
+    `<span class="subagent-crumb-caret" aria-hidden="true">▾</span>` +
+    `</button>` +
+    (state.subagentPickerOpen ? subagentPickerHtml(agent.id) : '') +
+    `</div>` +
     `<div class="agent-pane-body">` +
-    `<div class="agent-pane-head" data-testid="subagent-banner">` +
-    `<span class="agent-pane-tag">${escapeHtml(t('subagent_tag'))}</span>` +
-    `<span class="agent-pane-name" data-testid="subagent-banner-text">${escapeHtml(name)}</span>` +
-    `<span class="agent-pane-status status-text-${escapeHtml(st)}">${escapeHtml(t(`status_${st}`) || st)}</span>` +
-    (isBackgroundSubagent(agent) ? `<span class="sub-agent-bg">${escapeHtml(t('subagent_background'))}</span>` : '') +
-    `<span class="agent-pane-meta">${escapeHtml(meta)}</span>` +
+    `<div class="subagent-detail-head" data-testid="subagent-banner" data-visual="${escapeHtml(bits.visual)}" data-agent-id="${escapeHtml(agent.id || '')}">` +
+    `<span class="status-dot ${escapeHtml(bits.dot)}"></span>` +
+    `<span class="subagent-detail-summary">${escapeHtml(bits.summary)}</span>` +
+    `<span class="subagent-time" data-subagent-time="${escapeHtml(agent.id || '')}">${escapeHtml(bits.time)}</span>` +
     `</div>` +
-    (firstUser
-      ? `<div class="agent-pane-brief" data-testid="message" data-role="user"><span class="k">${escapeHtml(t('subagent_brief'))}</span><span class="v" data-testid="message-body">${escapeHtml(firstUser.text || '')}</span></div>`
-      : '') +
-    `<div class="agent-pane-thread" data-testid="subagent-thread">${thread}${pendingHtml}` +
-    (done && lastAssistant
-      ? `<div class="agent-pane-result msg-group" data-testid="message" data-role="assistant"><span class="k" data-testid="message-sender">${escapeHtml(name)}</span><div class="msg-body" data-testid="message-body">${renderMarkdown(lastAssistant.text)}</div></div>`
-      : '') +
-    stoppedNote +
+    briefHtml +
+    `<div class="agent-pane-thread" data-testid="subagent-thread">${thread}${pendingHtml}${resultHtml}${stoppedNote}</div>` +
     `</div>` +
-    `</div>` +
-    agentPaneFootHtml(agent, name) +
+    agentPaneFootHtml(agent) +
     `</div>`
   );
 }
 
 export function renderRightPanel() {
-  syncRightTabActive();
   renderAgentTab();
+  syncRightTabActive();
   renderRightOpenDot();
   const panel = document.getElementById('right-panel');
   if (!panel) return;
@@ -3318,7 +3467,12 @@ export function renderRightPanel() {
   const viewport = document.getElementById('right-viewport');
   if (!viewport) return;
 
-  if (state.activeRightTab === 'agent' && state.viewingAgentId) {
+  if (state.activeRightTab === 'agent') {
+    armSubagentClock();
+    if (!state.viewingAgentId) {
+      viewport.innerHTML = renderSubagentOverviewHtml();
+      return;
+    }
     const body = viewport.querySelector('.agent-pane-body');
     const stick = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 80;
     const draftEl = viewport.querySelector('[data-testid="subagent-input"]');
@@ -3411,14 +3565,17 @@ export function openFileInEditor() {
 }
 
 export function switchRightTab(tab) {
-  state.activeRightTab = tab;
-  if (tab !== 'agent') localStorage.setItem('piwork_active_right_tab', tab);
-  setRightOpen(true);
-  syncRightTabActive();
   if (tab === 'agent') {
-    renderRightPanel();
+    showSubagentOverview();
     return;
   }
+  const leaveAgent = state.activeRightTab === 'agent' || Boolean(state.viewingAgentId);
+  state.activeRightTab = tab;
+  if (tab !== 'agent') localStorage.setItem('piwork_active_right_tab', tab);
+  if (leaveAgent) clearSubagentView();
+  setRightOpen(true);
+  syncRightTabActive();
+  if (leaveAgent) renderConversations();
   if (tab === 'file') {
     ensureWorkspaceTree();
     if (state.activeFilePath) loadFileOrDiff(state.activeFilePath);
@@ -4488,7 +4645,9 @@ export async function switchWorkspaceAndConv(wid, cid) {
   }
   if (state.activeConversationId !== cid) {
     await selectConversation(cid);
+    return;
   }
+  revealMainConversationPane();
 }
 
 
@@ -4879,6 +5038,9 @@ document.addEventListener('click', (e) => {
   if (contextMenu?.classList.contains('is-open') && !e.target.closest('#composer-context-wrap')) {
     closeContextMenu();
   }
+  if (state.subagentPickerOpen && !e.target.closest?.('[data-testid="subagent-picker"], [data-action="toggle-subagent-picker"]')) {
+    closeSubagentPicker();
+  }
   if (e.target.id === 'settings-overlay') {
     closeSettings();
     return;
@@ -5092,6 +5254,12 @@ document.addEventListener('click', (e) => {
     case 'open-subagent':
       openSubagent(actionEl.getAttribute('data-agent-id'));
       break;
+    case 'show-subagent-overview':
+      showSubagentOverview();
+      break;
+    case 'toggle-subagent-picker':
+      toggleSubagentPicker();
+      break;
     case 'toggle-subagent-tree':
       toggleSubagentTree(actionEl.getAttribute('data-conv-id'));
       break;
@@ -5211,6 +5379,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Escape') {
       if (confirmPending) {
         finishConfirm(false);
+        return;
+      }
+      if (state.subagentPickerOpen) {
+        closeSubagentPicker();
         return;
       }
       const menu = document.getElementById('ctx-menu');

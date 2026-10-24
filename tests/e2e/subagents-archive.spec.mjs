@@ -169,27 +169,26 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(page.locator('#center-thread')).not.toContainText('主 Agent');
     await expect(page.locator('body')).not.toContainText('sk-scout-test');
 
-    // A sub-agent opens in a closable tab of the right panel; the main chat stays usable.
+    // A sub-agent opens in the right-panel detail; the main chat stays usable.
     await foreground.click();
-    await expect(page.getByTestId('subagent-banner-text')).toHaveText('侦察');
+    await expect(page.getByTestId('subagent-banner-text')).toHaveText(FOREGROUND_TASK);
     await expect(page.locator('.agent-pane-tag')).toHaveText('子 Agent');
-    await expect(page.getByTestId('subagent-back')).toHaveAttribute('aria-label', '返回主对话');
     const transcript = page.getByTestId('subagent-pane');
-    await expect(transcript.locator('[data-testid=message][data-role=user]')).toContainText(FOREGROUND_TASK);
+    await expect(page.getByTestId('subagent-brief')).toContainText(FOREGROUND_TASK);
+    await expect(transcript.locator('[data-testid=subagent-thread] [data-testid=message][data-role=user]')).toHaveCount(0);
     await expect(transcript.locator('[data-testid=message][data-role=assistant]')).toContainText(CHILD_TEXT);
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await expect(page.getByTestId('chat-input')).toBeEnabled();
 
     await switchLanguage(page, 'en');
     await expect(page.locator('.agent-pane-tag')).toHaveText('Sub-agent');
-    await expect(page.getByTestId('subagent-back')).toHaveAttribute('aria-label', 'Back to main chat');
     await expect(page.locator('#center-thread')).not.toContainText('Main agent');
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await expect(background.getByTestId('subagent-background')).toHaveText('Background');
     await switchLanguage(page, 'zh');
-    await expect(page.getByTestId('subagent-back')).toHaveAttribute('aria-label', '返回主对话');
+    await expect(page.locator('.agent-pane-tag')).toHaveText('子 Agent');
 
-    await page.getByTestId('subagent-back').click();
+    await page.locator('.conv-tree-node.conv-active .conv-node-title').click();
     await expect(page.getByTestId('subagent-banner')).toHaveCount(0);
     await expect(page.getByTestId('chat-input')).toBeEnabled();
     await expect(page.getByTestId('message').filter({ hasText: '主对话已汇总。' })).toBeVisible();
@@ -208,7 +207,8 @@ test('sidebar lists foreground and background sub-agents and opens the transcrip
     await expect(transcript.locator('[data-testid=message-sender]')).toHaveText('侦察');
     await assertNarrowWorkbench(page);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
-    await page.getByTestId('subagent-back').click();
+    await page.locator('.conv-tree-node.conv-active .conv-node-title').click();
+    await expect(page.getByTestId('subagent-banner')).toHaveCount(0);
   } finally {
     await srv?.kill();
     await child.close();
