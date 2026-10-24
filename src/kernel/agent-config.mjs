@@ -11,6 +11,7 @@ import { unknownSkillError } from '../core/skills.mjs';
 import { resolveConversationModelPatch } from '../core/model-sources.mjs';
 import { createPluginHost } from './plugins.mjs';
 import { isAutoContinueText } from './continuation.mjs';
+import { EXT_BUILTIN_TOOLS, EXT_SKILLS } from './ids.mjs';
 import { createSkillTool } from './skill-tool.mjs';
 import { workspaceTools } from './tools.mjs';
 
@@ -43,7 +44,7 @@ export function installAgentExtensions(registry, bridge) {
   });
   if (bridge) bridge.skillTool = skillTool;
   registry.install(defineExtension({
-    name: 'pi-work-skills',
+    name: EXT_SKILLS,
     sections: [
       section('skills', async (input) => {
         try {
@@ -64,7 +65,7 @@ export function installAgentExtensions(registry, bridge) {
   const have = new Set(registry.snapshot().tools().map((item) => item.tool.name));
   const missing = TOOLS.filter((name) => !have.has(name)).map(builtinTool);
   if (missing.length) {
-    registry.install(defineExtension({ name: 'pi-work-builtin-tools', tools: missing }));
+    registry.install(defineExtension({ name: EXT_BUILTIN_TOOLS, tools: missing }));
   }
 }
 

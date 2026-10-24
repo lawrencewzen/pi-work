@@ -5,6 +5,7 @@ import { appendFile, writeFile } from 'node:fs/promises';
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
 import { defineExtension, GenerationTask, hook, ProviderDoc } from '@earendil-works/pi-durable';
+import { EXT_FAUX_SCRIPT } from './ids.mjs';
 import { registerFaux } from './index.mjs';
 import { stampScriptTurn } from './usage.mjs';
 
@@ -226,7 +227,7 @@ export function fauxTurnFromScript(turns, context) {
  */
 export function createScriptFloorExtension() {
   return defineExtension({
-    name: 'pi-work-faux-script',
+    name: EXT_FAUX_SCRIPT,
     hooks: [
       hook(GenerationTask, {
         async beforeRequest(_request, api, context) {

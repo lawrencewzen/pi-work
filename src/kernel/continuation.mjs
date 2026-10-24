@@ -1,6 +1,7 @@
 // Auto-continue when a generation hits the output length cap.
 // Continuation is Harness `onYield` only; this module does not schedule a run.
 import { defineExtension, GenerationTask, hook } from '@earendil-works/pi-durable';
+import { EXT_CONTINUATION } from './ids.mjs';
 import {
   CONTINUE_TEXT,
   MAX_AUTO_CONTINUES,
@@ -79,7 +80,7 @@ async function messagesForYield(api, context) {
 export function installContinuationExtension(registry) {
   if (!registry) throw new Error('registry is required');
   registry.install(defineExtension({
-    name: 'pi-work-continuation',
+    name: EXT_CONTINUATION,
     hooks: [
       hook(GenerationTask, {
         async onYield(answer, api, context) {

@@ -15,6 +15,12 @@ import {
 } from '@earendil-works/pi-durable';
 import { agentEventData } from '../core/agents.mjs';
 import { textOf } from './events.mjs';
+import {
+  EXT_SUBAGENTS,
+  SUBAGENT_ANCHOR_KIND,
+  SUBAGENT_REPORTER_KIND,
+  SUBAGENTS_DOC_KIND,
+} from './ids.mjs';
 
 export const DELEGATE_DESCRIPTION = 'Run a self-contained task on a subagent and return its answer. The subagent cannot see this conversation, or your instructions; put everything it needs in task: what to do, where, when it is done, and what to report back.';
 export const SUBAGENT_DESCRIPTION = `${DELEGATE_DESCRIPTION} On spawn, pass that text as message. \`name\` is used later with send, wait, and stop.`;
@@ -23,7 +29,7 @@ const NAME_CAP = 30;
 
 // Example 23: the main conversation maps background names to child conversations.
 export const Subagents = defineDoc({
-  kind: 'app.pi-work.subagents',
+  kind: SUBAGENTS_DOC_KIND,
   version: 1,
   scope: 'conversation',
   history: 'latest',
@@ -33,7 +39,7 @@ export const Subagents = defineDoc({
 });
 
 const Anchor = defineTask({
-  name: 'app.pi-work.subagent-anchor',
+  name: SUBAGENT_ANCHOR_KIND,
   version: 1,
   initial: () => ({ phase: 'done' }),
   phases: {
@@ -49,7 +55,7 @@ const Anchor = defineTask({
 });
 
 const Reporter = defineTask({
-  name: 'app.pi-work.subagent-reporter',
+  name: SUBAGENT_REPORTER_KIND,
   version: 1,
   initial: () => ({ phase: 'deliver' }),
   phases: {
@@ -305,7 +311,7 @@ export function createSubagentExtension({
   });
 
   const extension = defineExtension({
-    name: 'pi-work-subagents',
+    name: EXT_SUBAGENTS,
     tasks: [Anchor, Reporter],
     tools: [delegate, subagent],
   });
