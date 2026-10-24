@@ -9,6 +9,7 @@ const CODER = 'run:sub:coder';
 const AUDITOR = 'run:sub:auditor';
 const NOTE_TEXT = '你对 测试 说：只跑 auth 相关的';
 const NUDGE_TEXT = '只跑 auth 相关的';
+const FROZEN_NOW = Date.parse('2026-10-24T12:00:00.000Z');
 
 const AGENTS = [
   {
@@ -39,8 +40,46 @@ const AGENTS = [
   },
 ];
 
-function agentMessages(aid, extras = {}) {
-  const known = AGENTS.find((item) => item.id === aid) || { id: aid };
+const RICH_AGENTS = [
+  {
+    id: TESTER,
+    roleId: 'tester',
+    name: '测试',
+    status: 'running',
+    brief: '写登录测试\n不要跑支付',
+    startedAt: FROZEN_NOW - 5_000,
+    lastActivityAt: FROZEN_NOW - 2_000,
+    currentAction: '正在读 auth.test.js',
+    lastText: '旧的 lastText 不应作为摘要',
+    mode: 'foreground',
+  },
+  {
+    id: CODER,
+    roleId: 'coder',
+    name: '编码',
+    status: 'done',
+    brief: '改完 auth 模块',
+    startedAt: FROZEN_NOW - 120_000,
+    endedAt: FROZEN_NOW - 3_000,
+    lastText: '改完了 auth',
+    mode: 'foreground',
+  },
+  {
+    id: AUDITOR,
+    roleId: 'auditor',
+    name: '审计',
+    status: 'running',
+    brief: '审查权限边界',
+    startedAt: FROZEN_NOW - 90_000,
+    lastActivityAt: FROZEN_NOW - 65_000,
+    currentAction: '等待模型返回',
+    lastText: 'auditor',
+    mode: 'foreground',
+  },
+];
+
+function agentMessages(aid, extras = {}, agents = AGENTS) {
+  const known = agents.find((item) => item.id === aid) || { id: aid };
   return {
     ...known,
     ...extras,
@@ -76,7 +115,7 @@ async function mockSubagentApi(page, bag) {
     if (msg) {
       const aid = decodeURIComponent(msg[2]);
       if (method === 'GET') {
-        await route.fulfill({ json: agentMessages(aid, bag.agentExtras[aid]) });
+        await route.fulfill({ json: agentMessages(aid, bag.agentExtras[aid], bag.agents) });
         return;
       }
       if (method === 'POST') {
@@ -106,7 +145,7 @@ async function dispatchAgentEvent(page, data) {
   }, data);
 }
 
-async function boot(page) {
+async function boot(page, { agents = AGENTS, now } = {}) {
   const prepared = await prepareWorkspaces(['repo']);
   const scriptPath = path.join(prepared.root, 'sidebar.json');
   await fs.writeFile(scriptPath, JSON.stringify({ turns: [{ text: '主对话已收到。' }] }));
@@ -117,12 +156,18 @@ async function boot(page) {
     },
   });
   const bag = {
-    agents: AGENTS.map((item) => ({ ...item })),
+    agents: agents.map((item) => ({ ...item })),
     extraMessages: [{ id: 'note-1', role: 'note', text: NOTE_TEXT }],
     posts: [],
     stops: [],
     agentExtras: {},
   };
+  if (now != null) {
+    await page.addInitScript((t0) => {
+      window.__PI_WORK_NOW = t0;
+      Date.now = () => window.__PI_WORK_NOW;
+    }, now);
+  }
   await page.addInitScript(() => {
     const Orig = window.EventSource;
     window.EventSource = class extends Orig {
@@ -142,34 +187,92 @@ async function boot(page) {
   return { srv, bag };
 }
 
+function rowOf(page, id) {
+  return page.locator(`[data-testid=subagent-tree-row][data-agent-id="${id}"]`);
+}
+
 test.use({ viewport: { width: 1440, height: 900 } });
 test.describe.configure({ timeout: 90_000 });
 
-test('sidebar tree, pane interrupt/stop, note, and narrow overflow', async ({ page }) => {
+test('sidebar tree, orbit, pane interrupt/stop, note, and narrow overflow', async ({ page }) => {
   const { srv, bag } = await boot(page);
   try {
     const rows = page.getByTestId('subagent-tree-row');
     await expect(rows).toHaveCount(3);
-    const testerRow = page.locator(`[data-testid=subagent-tree-row][data-agent-id="${TESTER}"]`);
-    const coderRow = page.locator(`[data-testid=subagent-tree-row][data-agent-id="${CODER}"]`);
-    const auditorRow = page.locator(`[data-testid=subagent-tree-row][data-agent-id="${AUDITOR}"]`);
+    const testerRow = rowOf(page, TESTER);
+    const coderRow = rowOf(page, CODER);
+    const auditorRow = rowOf(page, AUDITOR);
     await expect(testerRow).toHaveAttribute('data-status', 'running');
     await expect(testerRow).toHaveAttribute('data-depth', '0');
     await expect(coderRow).toHaveAttribute('data-depth', '0');
     await expect(auditorRow).toHaveAttribute('data-depth', '0');
-    await expect(testerRow).toContainText('2/5');
-    await expect(coderRow).toContainText('完成');
+    await expect(coderRow.getByTestId('subagent-tree-time')).toHaveText('完成');
+    await expect(testerRow.getByTestId('subagent-tree-summary')).toContainText('正在写登录测试');
+    await expect(testerRow.getByTestId('subagent-tree-action')).toHaveCount(0);
+    expect(await testerRow.getByTestId('subagent-tree-time').textContent()).toBe('');
+
     const pads = await page.evaluate(() => [...document.querySelectorAll('[data-testid=subagent-tree-row]')].map((el) => getComputedStyle(el).paddingLeft));
     expect(new Set(pads).size).toBe(1);
+    expect(pads[0]).toBe('32px');
+
+    const orbit = page.getByTestId('subagent-orbit');
+    await expect(orbit).toBeVisible();
+    const orbitBox = await orbit.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return { w: Math.round(box.width), h: Math.round(box.height), sats: el.querySelectorAll('.subagent-orbit-track').length };
+    });
+    expect(orbitBox.w).toBe(18);
+    expect(orbitBox.h).toBe(18);
+    expect(orbitBox.sats).toBe(3);
+    await expect(page.getByTestId('subagent-orbit-count')).toHaveText('2/3');
+    const orbitCursor = await page.getByTestId('subagent-orbit-cluster').evaluate((el) => getComputedStyle(el).cursor);
+    expect(orbitCursor).toBe('default');
 
     const toggle = page.getByTestId('subagent-tree-toggle');
     await expect(toggle).toBeVisible();
     await expect(toggle).toHaveAttribute('aria-label', /折叠/);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const toggleBox = await toggle.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return { w: Math.round(box.width), h: Math.round(box.height) };
+    });
+    expect(toggleBox.w).toBe(20);
+    expect(toggleBox.h).toBe(20);
+
+    await page.getByTestId('subagent-orbit-cluster').click();
+    await expect(page.getByTestId('subagent-pane')).toHaveCount(0);
+    await expect(rows).toHaveCount(3);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(rows.first()).toBeVisible();
+
+    const wrap = page.getByTestId('subagent-tree-wrap');
+    const wrapTransition = await wrap.evaluate((el) => getComputedStyle(el).transition);
+    expect(wrapTransition).toMatch(/grid-template-rows/);
+    const arcTransition = await testerRow.locator('.sa-arc').evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { transition: s.transition, animation: s.animationDuration, name: s.animationName };
+    });
+    expect(arcTransition.transition).toMatch(/stroke|opacity/);
+    expect(arcTransition.name).not.toBe('none');
+    const doneFill = await coderRow.locator('.sa-fill').evaluate((el) => getComputedStyle(el).transition);
+    expect(doneFill).toMatch(/transform|opacity/);
+    const actionSlot = await testerRow.locator('.subagent-tree-action-slot').evaluate((el) => getComputedStyle(el).transition);
+    expect(actionSlot).toMatch(/grid-template-rows/);
+
+    const rowText = await rows.allTextContents();
+    for (const text of rowText) {
+      expect(text).not.toMatch(/undefined|NaN/);
+    }
+
     await toggle.click();
-    await expect(rows).toHaveCount(0);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(toggle).toHaveAttribute('aria-label', /展开/);
+    await expect(wrap).not.toHaveClass(/is-open/);
+    await expect.poll(async () => wrap.evaluate((el) => el.getBoundingClientRect().height)).toBeLessThan(2);
     await toggle.click();
     await expect(rows).toHaveCount(3);
+    await expect(rows.first()).toBeVisible();
+    await expect.poll(async () => wrap.evaluate((el) => el.getBoundingClientRect().height)).toBeGreaterThan(20);
 
     await testerRow.click();
     await expect(page.getByTestId('subagent-pane')).toBeVisible();
@@ -198,6 +301,10 @@ test('sidebar tree, pane interrupt/stop, note, and narrow overflow', async ({ pa
     await expect(page.getByTestId('subagent-stopped-note')).toBeVisible();
     await expect(page.getByTestId('subagent-stopped-note')).toContainText('已被你停止');
     await expect(testerRow).toHaveAttribute('data-status', 'stopped');
+    await expect(testerRow).toHaveAttribute('data-visual', 'stopped');
+    await expect(testerRow.getByTestId('subagent-tree-time')).toHaveText('已停止');
+    const stopTrans = await testerRow.locator('.sa-stop').evaluate((el) => getComputedStyle(el).transition);
+    expect(stopTrans).toMatch(/opacity|transform/);
 
     await coderRow.click();
     await expect(page.getByTestId('subagent-banner-text')).toContainText('编码');
@@ -230,11 +337,15 @@ test('sidebar tree, pane interrupt/stop, note, and narrow overflow', async ({ pa
     const overflow = await page.evaluate(() => {
       const left = document.querySelector('.col-left');
       const leftBox = left.getBoundingClientRect();
-      const rows = [...document.querySelectorAll('[data-testid=subagent-tree-row]')];
-      return rows.map((row) => {
+      const nodes = [
+        ...document.querySelectorAll('[data-testid=subagent-tree-row]'),
+        ...document.querySelectorAll('.conv-node-header'),
+        ...document.querySelectorAll('[data-testid=subagent-orbit-cluster]'),
+      ];
+      return nodes.map((row) => {
         const box = row.getBoundingClientRect();
         return {
-          id: row.getAttribute('data-agent-id'),
+          id: row.getAttribute('data-agent-id') || row.className,
           right: box.right,
           leftRight: leftBox.right,
           scroll: row.scrollWidth,
@@ -245,6 +356,51 @@ test('sidebar tree, pane interrupt/stop, note, and narrow overflow', async ({ pa
     for (const row of overflow) {
       expect(row.right, row.id).toBeLessThanOrEqual(row.leftRight + 1);
       expect(row.scroll, row.id).toBeLessThanOrEqual(row.client + 1);
+    }
+  } finally {
+    await srv?.kill();
+  }
+});
+
+test('brief, elapsed mm:ss, idle, and currentAction', async ({ page }) => {
+  const { srv } = await boot(page, { agents: RICH_AGENTS, now: FROZEN_NOW });
+  try {
+    const testerRow = rowOf(page, TESTER);
+    const coderRow = rowOf(page, CODER);
+    const auditorRow = rowOf(page, AUDITOR);
+
+    await expect(testerRow.getByTestId('subagent-tree-summary')).toHaveText('写登录测试');
+    await expect(testerRow).toHaveAttribute('title', '写登录测试');
+    await expect(testerRow.getByTestId('subagent-tree-time')).toHaveText('00:05');
+    await expect(testerRow.getByTestId('subagent-tree-action')).toHaveText('正在读 auth.test.js');
+    await expect(testerRow).toHaveAttribute('data-visual', 'running');
+
+    await expect(coderRow.getByTestId('subagent-tree-summary')).toHaveText('改完 auth 模块');
+    await expect(coderRow.getByTestId('subagent-tree-time')).toHaveText('完成');
+    await expect(coderRow.getByTestId('subagent-tree-action')).toHaveCount(0);
+    await expect(coderRow).toHaveAttribute('data-visual', 'done');
+
+    await expect(auditorRow.getByTestId('subagent-tree-summary')).toHaveText('审查权限边界');
+    await expect(auditorRow.getByTestId('subagent-tree-time')).toHaveText('无动作 01:05');
+    await expect(auditorRow.getByTestId('subagent-tree-time')).toHaveClass(/is-idle/);
+    await expect(auditorRow).toHaveAttribute('data-visual', 'stuck');
+    await expect(auditorRow.getByTestId('subagent-tree-action')).toHaveText('等待模型返回');
+    const stuckArc = await auditorRow.locator('.sa-arc').evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { duration: s.animationDuration, transition: s.transition };
+    });
+    expect(Number.parseFloat(stuckArc.duration)).toBeGreaterThan(2);
+    expect(stuckArc.transition).toMatch(/stroke|opacity/);
+
+    await expect(page.getByTestId('subagent-orbit-count')).toHaveText('2/3');
+
+    await page.evaluate(() => { window.__PI_WORK_NOW += 1000; });
+    await expect.poll(async () => testerRow.getByTestId('subagent-tree-time').textContent(), { timeout: 2500 }).toBe('00:06');
+    await expect.poll(async () => auditorRow.getByTestId('subagent-tree-time').textContent(), { timeout: 2500 }).toBe('无动作 01:06');
+
+    const rowText = await page.getByTestId('subagent-tree-row').allTextContents();
+    for (const text of rowText) {
+      expect(text).not.toMatch(/undefined|NaN/);
     }
   } finally {
     await srv?.kill();

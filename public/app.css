@@ -102,6 +102,24 @@ a:hover {
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes tool-spin { to { transform: rotate(360deg); } }
 @keyframes blink { 50% { opacity: 0; } }
+@keyframes subagent-orbit-spin { to { transform: rotate(360deg); } }
+@keyframes sa-arc-spin { to { transform: rotate(360deg); } }
+@keyframes subagent-row-enter {
+  from { opacity: 0; transform: translateY(-6px); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes subagent-row-open {
+  from { grid-template-rows: 0fr; }
+  to { grid-template-rows: 1fr; }
+}
+@keyframes subagent-row-ended {
+  from { background: color-mix(in oklch, var(--ok) 18%, transparent); }
+  to { background: transparent; }
+}
+@keyframes sa-action-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
 
 body { font-family: var(--font); font-size: inherit; line-height: 1.6; background: var(--bg); color: var(--ink); }
 .app-shell { position: relative; background: var(--bg); min-height: 560px; }
@@ -195,34 +213,155 @@ body { font-family: var(--font); font-size: inherit; line-height: 1.6; backgroun
 .conv-node-meta.is-waiting { color: var(--wait-ink); }
 .conv-node-meta.is-failed { color: var(--fail); }
 .conv-tree-node { min-width: 0; overflow: hidden; }
+.subagent-orbit-cluster {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex-shrink: 0;
+  cursor: default; user-select: none;
+}
+.subagent-orbit-cluster:hover { background: transparent; }
+.subagent-orbit {
+  width: 18px; height: 18px; position: relative; flex-shrink: 0; pointer-events: none;
+}
+.subagent-orbit-core {
+  position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
+  border-radius: 50%; background: var(--run); z-index: 1;
+  transition: background-color .65s ease;
+}
+.subagent-orbit.is-done .subagent-orbit-core {
+  background: color-mix(in oklch, var(--ok) 58%, var(--bd3));
+}
+.subagent-orbit-track {
+  position: absolute; inset: 0;
+  animation: subagent-orbit-spin var(--sat-dur, 1.6s) linear infinite;
+  animation-delay: var(--sat-delay, 0s);
+}
+.subagent-orbit-sat {
+  position: absolute; left: 50%; top: 1px; width: 3px; height: 3px; margin-left: -1.5px;
+  border-radius: 50%; background: var(--run);
+  transition: background-color .65s ease, opacity .65s ease;
+}
+.subagent-orbit-track[data-sat="stuck"] .subagent-orbit-sat { background: var(--wait); }
+.subagent-orbit-track[data-sat="done"] .subagent-orbit-sat {
+  background: color-mix(in oklch, var(--ok) 58%, var(--bd3)); opacity: .55;
+}
+.subagent-orbit-track[data-sat="stopped"] .subagent-orbit-sat { background: var(--bd3); opacity: .55; }
+.subagent-orbit-track[data-sat="done"],
+.subagent-orbit-track[data-sat="stopped"] { animation-play-state: paused; }
+.subagent-orbit-count {
+  font-size: 11px; line-height: 1; white-space: nowrap; cursor: default; pointer-events: none;
+}
+.subagent-orbit-count.is-running { color: var(--run-ink); }
+.subagent-orbit-count.is-done { color: var(--faint); }
 .subagent-tree-toggle {
-  width: 18px; height: 18px; padding: 0; border: none; border-radius: 4px; background: transparent;
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 5px; background: transparent;
   color: var(--faint); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
 }
 .subagent-tree-toggle:hover { background: var(--bd2); color: var(--ink); }
-.subagent-tree-toggle .ws-chev { width: 10px; height: 10px; transition: transform .15s; }
+.subagent-tree-toggle .ws-chev { width: 11px; height: 11px; transition: transform .3s ease; }
 .subagent-tree-toggle.is-open .ws-chev { transform: rotate(90deg); }
-.subagent-tree { display: flex; flex-direction: column; gap: 0; min-width: 0; overflow: hidden; }
+.subagent-tree-wrap {
+  display: grid; grid-template-rows: 0fr; min-width: 0; overflow: hidden;
+  transition: grid-template-rows .45s ease;
+}
+.subagent-tree-wrap.is-open { grid-template-rows: 1fr; }
+.subagent-tree-clip { overflow: hidden; min-height: 0; min-width: 0; }
+.subagent-tree { position: relative; display: flex; flex-direction: column; gap: 0; min-width: 0; overflow: hidden; }
+.subagent-tree::before {
+  content: ''; position: absolute; left: 24px; top: 2px; bottom: 2px; width: 1px; background: var(--line); pointer-events: none;
+}
+.subagent-tree-row-shell { display: grid; grid-template-rows: 1fr; min-width: 0; }
+.subagent-tree-row-shell.is-entering { animation: subagent-row-open .6s ease; }
+.subagent-tree-row-shell-inner { overflow: hidden; min-height: 0; min-width: 0; }
 .subagent-tree-row {
-  position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; overflow: hidden;
+  position: relative; display: flex; align-items: flex-start; gap: 7px; min-width: 0; max-width: 100%; overflow: hidden;
   padding: 4px 8px 4px 32px; border-radius: 7px; font-size: 12.5px; line-height: 1.4; cursor: pointer;
+  transition: background-color .45s ease;
 }
-.subagent-tree-row::before {
-  content: ''; position: absolute; left: 22px; top: 4px; bottom: 4px; width: 1px; background: var(--bd2);
+.subagent-tree-row-shell.is-entering .subagent-tree-row {
+  animation: subagent-row-enter .6s ease;
 }
+.subagent-tree-row.is-just-ended { animation: subagent-row-ended 1.6s ease; }
 .subagent-tree-row:hover { background: var(--hover); }
-.subagent-tree-row.is-active { background: var(--sel); font-weight: 500; }
-.subagent-tree-row .status-dot { width: 6px; height: 6px; border: none; background: var(--bd3); }
-.subagent-tree-row .status-dot.dot-running, .subagent-tree-row .status-dot.dot-recovering {
-  background: var(--run); animation: pulse 1.6s ease-in-out infinite;
+.subagent-tree-row.is-active { background: var(--sel); }
+.subagent-status-icon {
+  width: 12px; height: 12px; flex-shrink: 0; margin-top: 3px; display: block; overflow: visible;
 }
-.subagent-tree-row .status-dot.dot-running::after, .subagent-tree-row .status-dot.dot-recovering::after { display: none; }
-.subagent-tree-row .status-dot.dot-waiting { background: var(--wait); }
-.subagent-tree-row .status-dot.dot-done { background: var(--bd3); }
-.subagent-tree-row .status-dot.dot-stopped { background: transparent; border: 1px solid var(--bd3); }
+.sa-ring {
+  stroke: var(--bd2); stroke-width: 1.25;
+  transition: opacity .5s ease, stroke .65s ease;
+}
+.sa-arc {
+  stroke: var(--run); stroke-width: 1.35; stroke-linecap: round;
+  stroke-dasharray: 9.6 21.8; transform-origin: 6px 6px; transform-box: fill-box;
+  animation: sa-arc-spin .9s linear infinite;
+  transition: stroke .65s ease, opacity .55s ease;
+}
+.subagent-tree-row[data-visual="stuck"] .sa-arc {
+  stroke: var(--wait); animation-duration: 2.8s;
+}
+.subagent-tree-row[data-visual="done"] .sa-arc,
+.subagent-tree-row[data-visual="stopped"] .sa-arc { opacity: 0; }
+.subagent-tree-row[data-visual="done"] .sa-ring,
+.subagent-tree-row[data-visual="stopped"] .sa-ring { opacity: 0; }
+.sa-fill {
+  fill: color-mix(in oklch, var(--ok) 58%, var(--bd3));
+  transform-origin: 6px 6px; transform-box: fill-box; transform: scale(0); opacity: 0;
+  transition: transform .6s cubic-bezier(.34, 1.56, .64, 1), opacity .45s ease;
+}
+.subagent-tree-row[data-visual="done"] .sa-fill { transform: scale(1); opacity: 1; }
+.sa-check {
+  stroke: var(--bg); stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 8; stroke-dashoffset: 8; opacity: 0;
+  transition: stroke-dashoffset .55s .15s ease, opacity .35s .1s ease;
+}
+.subagent-tree-row[data-visual="done"] .sa-check { stroke-dashoffset: 0; opacity: 1; }
+.sa-stop {
+  fill: var(--bd3); opacity: 0;
+  transform-origin: 6px 6px; transform-box: fill-box; transform: translateY(1.5px) scale(.75);
+  transition: opacity .5s ease, transform .55s ease;
+}
+.subagent-tree-row[data-visual="stopped"] .sa-stop { opacity: 1; transform: none; }
+.subagent-tree-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0; }
+.subagent-tree-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.subagent-tree-summary {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.subagent-tree-time {
+  flex-shrink: 0; font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap;
+  transition: color .6s ease;
+}
+.subagent-tree-time:empty { display: none; }
+.subagent-tree-time.is-idle { color: var(--wait-ink); }
+.subagent-tree-action-slot {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows .55s ease;
+}
+.subagent-tree-action-slot.is-open { grid-template-rows: 1fr; }
+.subagent-tree-action-clip { overflow: hidden; min-height: 0; }
+.subagent-tree-action {
+  font-size: 11px; color: var(--faint); line-height: 1.4; padding-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  animation: sa-action-in .4s ease;
+}
 .subagent-tree-name { flex: 0 1 auto; max-width: 42%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subagent-tree-last { flex: 1; min-width: 0; color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subagent-tree-status { flex-shrink: 0; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .subagent-orbit-track,
+  .sa-arc,
+  .subagent-tree-row-shell.is-entering,
+  .subagent-tree-row-shell.is-entering .subagent-tree-row,
+  .subagent-tree-row.is-just-ended,
+  .subagent-tree-action {
+    animation: none !important;
+  }
+  .subagent-tree-wrap,
+  .subagent-tree-action-slot,
+  .sa-fill,
+  .sa-check,
+  .sa-stop {
+    transition: color .65s ease, fill .65s ease, stroke .65s ease, background-color .65s ease, opacity .65s ease !important;
+  }
+}
 .draft-dot { width: 7px; height: 7px; border-radius: 50%; border: 1.5px dashed var(--faint); flex-shrink: 0; }
 .draft-row .conv-node-title { font-weight: 500; }
 .ws-empty-note { padding: 4px 8px 6px 24px; font-size: 12px; color: var(--faint); }
