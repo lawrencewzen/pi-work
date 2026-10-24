@@ -13,12 +13,6 @@ const {
   composerAgentPresentation,
 } = await load('public/agent-chip.js');
 
-const roles = [
-  { id: 'default', name: 'Default' },
-  { id: 'coder', name: 'Coder', model: 'role-model' },
-  { id: 'tester', name: 'Tester' },
-];
-
 const grok = {
   id: 'grok',
   kind: 'grok',
@@ -49,14 +43,13 @@ const offline = {
 
 test('chip stays empty when no usable source is configured', () => {
   assert.equal(resolveDispatchModel({}), '');
-  assert.equal(resolveDispatchModel({ models: { coder: 'grok-4' } }), '');
+  assert.equal(resolveDispatchModel({ models: { default: 'grok-4' } }), '');
   assert.equal(resolveDispatchModel({
     models: { default: { sourceId: 'missing', model: 'ghost' } },
     sources: [deepseek],
   }), 'deepseek-chat');
   const view = composerAgentPresentation({
     conv: null,
-    roles,
     models: {},
     sources: [],
   });
@@ -65,30 +58,24 @@ test('chip stays empty when no usable source is configured', () => {
   assert.equal(view.followingDefault, true);
 });
 
-test('role binding, then default, then the first model of the first usable source', () => {
+test('default binding, then the first model of the first usable source', () => {
   const sources = [grok, deepseek, offline];
   assert.equal(resolveDispatchModel({
     sources,
     grokSignedIn: true,
   }), 'grok-build');
   assert.equal(resolveDispatchModel({
-    roleId: 'tester',
     models: { default: { sourceId: 'ds', model: 'deepseek-chat' } },
     sources,
     grokSignedIn: true,
   }), 'deepseek-chat');
   assert.equal(resolveDispatchModel({
-    roleId: 'coder',
-    models: {
-      coder: { sourceId: 'ds', model: 'deepseek-reasoner' },
-      default: { sourceId: 'grok', model: 'grok-build' },
-    },
+    models: { default: { sourceId: 'ds', model: 'deepseek-reasoner' } },
     sources,
     grokSignedIn: true,
   }), 'deepseek-reasoner');
   assert.equal(resolveDispatchModel({
-    roleId: 'tester',
-    models: { tester: { sourceId: 'local', model: 'llama3.2' }, default: { sourceId: 'grok', model: 'grok-build' } },
+    models: { default: { sourceId: 'local', model: 'llama3.2' } },
     sources,
     grokSignedIn: true,
   }), 'grok-build');
@@ -110,28 +97,21 @@ test('unsigned grok, missing key, and a failed test are not usable', () => {
   }), 'deepseek-chat');
 });
 
-test('a role template model prefers a source that lists it', () => {
+test('resolveRoleTarget ignores per-agent keys and uses default', () => {
   const target = resolveRoleTarget({
-    role: roles[1],
-    roleId: 'coder',
-    models: { coder: { sourceId: 'ds', model: 'deepseek-chat' }, default: { sourceId: 'grok', model: 'grok-build' } },
-    sources: [grok, { ...deepseek, models: ['deepseek-chat', 'role-model'] }],
+    models: {
+      coder: { sourceId: 'ds', model: 'deepseek-chat' },
+      default: { sourceId: 'grok', model: 'grok-build' },
+    },
+    sources: [grok, deepseek],
     grokSignedIn: true,
   });
-  assert.equal(target.model, 'role-model');
-  assert.equal(target.source.id, 'ds');
-  assert.equal(resolveDispatchModel({
-    role: { id: 'coder', model: 'from-template' },
-    roleId: 'coder',
-    models: { default: { sourceId: 'grok', model: 'grok-build' } },
-    sources: [grok],
-    grokSignedIn: true,
-  }), 'from-template');
+  assert.equal(target.model, 'grok-build');
+  assert.equal(target.source.id, 'grok');
 });
 
 test('conversation model override wins when that source is usable', () => {
   const conv = {
-    roleId: 'tester',
     modelSourceId: 'ds',
     modelId: 'deepseek-reasoner',
   };
@@ -143,8 +123,7 @@ test('conversation model override wins when that source is usable', () => {
   assert.equal(pinned.model, 'deepseek-reasoner');
   const view = composerAgentPresentation({
     conv,
-    roles,
-    models: { tester: { sourceId: 'grok', model: 'grok-build' }, default: { sourceId: 'grok', model: 'grok-build' } },
+    models: { default: { sourceId: 'grok', model: 'grok-build' } },
     sources: [grok, deepseek],
     grokSignedIn: true,
   });
@@ -156,7 +135,6 @@ test('conversation model override wins when that source is usable', () => {
 test('conversation model falls back when that source is not usable', () => {
   const view = composerAgentPresentation({
     conv: { modelSourceId: 'local', modelId: 'llama3.2' },
-    roles,
     models: { default: { sourceId: 'grok', model: 'grok-build' } },
     sources: [grok, offline],
     grokSignedIn: true,

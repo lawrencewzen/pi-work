@@ -27,14 +27,9 @@ async function boot({ script, models } = {}) {
   const token = '';
   let sourceId = null;
   if (models) {
-    const names = [];
-    const bindings = {};
-    for (const [roleId, value] of Object.entries(models)) {
-      const model = value?.model;
-      if (!model) continue;
-      if (!names.includes(model)) names.push(model);
-      bindings[roleId] = { model };
-    }
+    const defaultModel = models.default?.model || models.default;
+    const listed = Array.isArray(models.listed) ? models.listed : [];
+    const names = [...new Set([defaultModel, ...listed].filter(Boolean))];
     const created = await api(srv.url, 'POST', '/sources', {
       vendor: 'openai',
       name: 'Chip',
@@ -43,8 +38,9 @@ async function boot({ script, models } = {}) {
     }, token);
     expect(created.status).toBe(201);
     sourceId = created.body.id;
-    for (const binding of Object.values(bindings)) binding.sourceId = sourceId;
-    const saved = await api(srv.url, 'PUT', '/settings', { models: bindings }, token);
+    const saved = await api(srv.url, 'PUT', '/settings', {
+      models: { default: { sourceId, model: defaultModel } },
+    }, token);
     expect(saved.status).toBe(200);
   }
   return { ws, token, sourceId };
@@ -125,7 +121,7 @@ test('context chip stays at 0% when the model reports no usage', async ({ page }
 test('agent chip lists models by source and switches the conversation model', async ({ page }) => {
   const { ws, token, sourceId } = await boot({
     script: 'no-usage.json',
-    models: { default: { model: 'grok-4.6' }, coder: { model: 'grok-4' } },
+    models: { default: { model: 'grok-4.6' }, listed: ['grok-4.6', 'grok-4'] },
   });
   await openApp(page, token);
   await expect(chip(page)).toHaveText('grok-4.6');
@@ -137,7 +133,7 @@ test('agent chip lists models by source and switches the conversation model', as
 
   await createWorkspace(page, 'dispatch', ws);
   await createConversation(page);
-  await expect(chip(page)).toHaveText('grok-4.6');
+  await expect(chip(page), 'chip shows the default model when the conversation has no override').toHaveText('grok-4.6');
   await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
 
   await page.getByTestId('composer-agent').click();
@@ -180,7 +176,7 @@ test('agent chip lists models by source and switches the conversation model', as
 test('draft model choice is saved on the conversation and can return to default', async ({ page }) => {
   const { ws, token, sourceId } = await boot({
     script: 'no-usage.json',
-    models: { default: { model: 'grok-4.6' }, coder: { model: 'grok-4' } },
+    models: { default: { model: 'grok-4.6' }, listed: ['grok-4.6', 'grok-4'] },
   });
   await openApp(page, token);
   await createWorkspace(page, 'draft-model', ws);
@@ -217,7 +213,7 @@ test('draft model choice is saved on the conversation and can return to default'
 test('agent chip stays usable while a run is busy', async ({ page }) => {
   const { ws, token } = await boot({
     script: 'slow.json',
-    models: { default: { model: 'grok-4.6' }, coder: { model: 'grok-4' } },
+    models: { default: { model: 'grok-4.6' }, listed: ['grok-4.6', 'grok-4'] },
   });
   await openApp(page, token);
   await createWorkspace(page, 'busy', ws);
