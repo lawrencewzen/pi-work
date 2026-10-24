@@ -332,12 +332,10 @@ test('foreground delegate returns the child answer and lists roles in its descri
     assert.ok(childHit, JSON.stringify(fake.seen));
     assert.equal(childHit.model, 'model-scout');
     assert.equal(childHit.keyTail, '1234');
+    assert.deepEqual(childHit.tools, ['read']);
     assert.match(childHit.system, /SCOUT PROMPT/);
     assert.match(childHit.system, /Commit messages/);
-    assert.equal(childHit.system.includes('Pick a subagent by id'), true);
-    assert.ok(childHit.tools.includes('read'));
-    assert.ok(childHit.tools.includes('delegate'));
-    assert.ok(childHit.tools.includes('subagent'));
+    assert.equal(childHit.system.includes('Pick a subagent by id'), false);
     const parentLines = (await readFile(record, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
     assert.match(parentLines[0].toolDescriptions?.delegate || '', /scout \(Scout\): when the tree needs reading/);
     assert.equal(parentLines[0].tools.includes('delegate'), true);
@@ -346,8 +344,6 @@ test('foreground delegate returns the child answer and lists roles in its descri
     assert.equal(scout.name, 'Scout');
     assert.equal(scout.status, 'done');
     assert.equal(scout.mode, 'foreground');
-    assert.equal(scout.parentId, null);
-    assert.equal(scout.depth, 0);
     assert.match(scout.lastText, /CHILD_MODEL_OK/);
     for (const chip of done.agents.filter((agent) => !String(agent.id).includes(':sub:'))) {
       assert.equal(chip.mode, undefined);
@@ -643,71 +639,6 @@ test('a killed foreground subagent writes the file once after restart', { timeou
   }
 });
 
-test('a nested foreground delegate returns the grandchild answer and lists the tree', { timeout: 60000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-nest-'));
-  const script = await writeScript(dataDir, 'nested.json', [
-    { tool: 'delegate', args: { agent: 'coder', task: 'NEST_MID' } },
-    { text: 'parent-done' },
-    { when: 'NEST_MID', tool: 'delegate', args: { agent: 'coder', task: 'NEST_LEAF' } },
-    { when: 'NEST_MID', text: 'mid-done' },
-    { when: 'NEST_LEAF', text: 'GRANDCHILD_OK' },
-  ]);
-  let proc = null;
-  try {
-    const srv = await startServer({
-      token: TOKEN,
-      dataDir,
-      env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-      },
-    });
-    proc = srv.proc;
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'nest' });
-    assert.equal(ws.status, 201);
-    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'nest' });
-    assert.equal(conv.status, 201);
-    const pendingEvents = collectSse(srv.base, conv.body.id, {
-      ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.depth === 1 && ev.data?.lastText?.includes('GRANDCHILD_OK')),
-      timeout: 30000,
-    });
-    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'dispatch nested' })).status, 202);
-    const done = await waitFor(srv.base, conv.body.id, (body) => (
-      body.status === 'done'
-      && toolTexts(body).some((text) => text.includes('mid-done'))
-      && assistantTexts(body).includes('parent-done')
-    ), 120);
-    assert.equal(done.status, 'done', srv.logs());
-    assert.match(toolTexts(done).join('\n'), /mid-done/);
-    assert.equal(assistantTexts(done).includes('GRANDCHILD_OK'), false);
-    const tree = subagentsOf(done);
-    assert.equal(tree.length, 2, JSON.stringify(done.agents));
-    assert.equal(tree[0].depth, 0);
-    assert.equal(tree[0].parentId, null);
-    assert.equal(tree[0].mode, 'foreground');
-    assert.equal(tree[1].depth, 1);
-    assert.equal(tree[1].parentId, tree[0].id);
-    assert.equal(tree[1].mode, 'foreground');
-    assert.match(tree[1].lastText, /GRANDCHILD_OK/);
-    const midMessages = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/${encodeURIComponent(tree[0].id)}/messages`);
-    assert.equal(midMessages.status, 200);
-    assert.match(toolTexts(midMessages.body).join('\n'), /GRANDCHILD_OK/);
-    const leafMessages = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/${encodeURIComponent(tree[1].id)}/messages`);
-    assert.equal(leafMessages.status, 200);
-    assert.ok(leafMessages.body.messages.some((message) => message.role === 'user' && String(message.text || '').includes('NEST_LEAF')));
-    assert.ok(leafMessages.body.messages.some((message) => message.role === 'assistant' && String(message.text || '').includes('GRANDCHILD_OK')));
-    const events = await pendingEvents;
-    const grandchildEvent = events.find((ev) => ev.event === 'agent' && ev.data?.id === tree[1].id && ev.data?.lastText?.includes('GRANDCHILD_OK'));
-    assert.ok(grandchildEvent, JSON.stringify(events.filter((ev) => ev.event === 'agent')));
-    assert.equal(grandchildEvent.data.depth, 1);
-    assert.equal(grandchildEvent.data.parentId, tree[0].id);
-  } finally {
-    await stopServer(proc);
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
-
 test('aborting a foreground child returns stopped-by-the-user and the parent continues', { timeout: 60000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-abort-child-'));
   const ready = path.join(dataDir, 'ready');
@@ -773,61 +704,6 @@ test('aborting a foreground child returns stopped-by-the-user and the parent con
   } finally {
     if (kernel) await kernel.close();
     store.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
-
-test('stopping the conversation stops a nested background grandchild', { timeout: 60000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-stop-tree-'));
-  const ready = path.join(dataDir, 'ready');
-  const script = await writeScript(dataDir, 'stop-tree.json', [
-    { tool: 'subagent', args: { action: 'spawn', name: 'mid', agent: 'coder', message: 'NEST_HOLD' } },
-    { text: 'spawned' },
-    { when: 'NEST_HOLD', tool: 'subagent', args: { action: 'spawn', name: 'leaf', agent: 'coder', message: 'LEAF_HOLD' } },
-    { when: 'NEST_HOLD', text: 'mid-spawned' },
-    { when: 'LEAF_HOLD', delayMs: 60000, text: 'SHOULD_NOT_FINISH' },
-  ]);
-  let proc = null;
-  try {
-    const srv = await startServer({
-      token: TOKEN,
-      dataDir,
-      env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_HOLD_READY: ready,
-      },
-    });
-    proc = srv.proc;
-    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'stop-tree' });
-    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'stop-tree' });
-    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'spawn tree' })).status, 202);
-    await waitForFile(ready);
-    const idle = await waitFor(srv.base, conv.body.id, (body) => {
-      const tree = subagentsOf(body);
-      return body.status === 'done'
-        && assistantTexts(body).includes('spawned')
-        && tree.some((agent) => agent.depth === 1);
-    }, 120);
-    assert.equal(idle.status, 'done', srv.logs());
-    const before = subagentsOf(idle);
-    assert.ok(before.some((agent) => agent.depth === 0 && agent.parentId == null), JSON.stringify(before));
-    assert.ok(before.some((agent) => agent.depth === 1 && agent.parentId === before.find((agent) => agent.depth === 0)?.id), JSON.stringify(before));
-    const stopped = await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/stop`);
-    assert.equal(stopped.status, 200);
-    assert.equal(stopped.body.status, 'stopped');
-    const after = await waitFor(srv.base, conv.body.id, (body) => {
-      const leaf = subagentsOf(body).find((agent) => agent.depth === 1);
-      return leaf?.status === 'stopped';
-    });
-    const leaf = subagentsOf(after).find((agent) => agent.depth === 1);
-    assert.equal(leaf?.status, 'stopped', JSON.stringify(subagentsOf(after)));
-    const messages = await request(srv.base, 'GET', `/api/conversations/${conv.body.id}/agents/${encodeURIComponent(leaf.id)}/messages`);
-    assert.equal(messages.status, 200);
-    assert.equal(messages.body.messages.some((message) => message.text === 'SHOULD_NOT_FINISH'), false);
-  } finally {
-    await stopServer(proc);
     await rm(dataDir, { recursive: true, force: true });
   }
 });

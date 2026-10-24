@@ -8,22 +8,20 @@ A conversation still has a role chip on `GET /api/conversations/:cid` (`agents` 
 
 ## Tools
 
-Every agent has the same two dispatch tools. Children keep this extension, so they can delegate or spawn further sub-agents with no depth limit.
+The main agent has two tools. Children are configured with this extension removed, so they cannot spawn further sub-agents.
 
-- **`delegate`** (example 22, `replay: 'safe'`): parameters `{ agent, task }`. Creates a child owned by `{ kind: 'task', taskId: api.taskId }`, reuses it on rerun with `tx.scanConversations({ ownerTaskId })`, publishes `api.details({ conversationId, roleId, name })`, submits with `requestId` `subagent:${api.taskId}`, and returns the child's answer. The tool `description` lists available roles (`id`, name, and the role's "when to use" description) so the caller can pick one. Aborting only that child returns `[subagent <name> was stopped by the user]` to the caller so the parent turn continues; aborting the caller itself still throws `AbortError`.
-- **`subagent`** (example 23, `replay: 'unsafe'`): `action` is `spawn` / `send` / `wait` / `stop` / `list`. Each named child is owned by a background anchor task, so the parent's Esc and idle waits do not stop it. A background reporter delivers the message and posts the answer back to this conversation as a follow-up. Request IDs keep a restart from sending a message or a report twice. The name → conversation map is the example 23 document, not a separate roster.
+- **`delegate`** (example 22, `replay: 'safe'`): parameters `{ agent, task }`. Creates a child owned by `{ kind: 'task', taskId: api.taskId }`, reuses it on rerun with `tx.scanConversations({ ownerTaskId })`, publishes `api.details({ conversationId, roleId, name })`, submits with `requestId` `subagent:${api.taskId}`, and returns the child's answer. The tool `description` lists available roles (`id`, name, and the role's "when to use" description) so the main agent can pick one. Aborting only that child returns `[subagent <name> was stopped by the user]` to the caller so the parent turn continues; aborting the caller itself still throws `AbortError`.
+- **`subagent`** (example 23, `replay: 'unsafe'`): `action` is `spawn` / `send` / `wait` / `stop` / `list`. Each named child is owned by a background anchor task, so the parent's Esc and idle waits do not stop it. A background reporter delivers the message and posts the answer back to the main conversation as a follow-up. Request IDs keep a restart from sending a message or a report twice. The name → conversation map is the example 23 document, not a separate roster.
 
-`POST /api/conversations/:cid/stop` calls `conversation.abort(context, { background: true })`, which stops the whole tree, including nested background sub-agents.
+`POST /api/conversations/:cid/stop` calls `conversation.abort(context, { background: true })`, which also stops background sub-agents.
 
 ## HTTP
 
 ```bash
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>
 # → agents: role chip, then
-#   {id, parentId, depth, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}
+#   {id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}
 #   id is <cid>:sub:<child conversation id>
-#   parentId is null for a direct child, otherwise the parent sub-agent's id
-#   depth is 0 for a direct child
 #   mode is foreground | background
 
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/messages
@@ -34,7 +32,7 @@ curl -sN -H 'Accept: text/event-stream' \
 # event: agent   data: same fields as the chip, including mode
 ```
 
-The list is the whole tree in depth-first order (parent then children). It is rebuilt from the Harness after a process restart: tool-result `details.conversationId`, the ownership index (`ConversationRecord.owner` / `scanConversations({ ownerConversationId })`), the background name document, and each child's `viewState`. Nested children attach to the root pi-work conversation's SSE. Child transcript events stay on the child conversation; the parent SSE does not mix in `message.delta` / `tool.*` from the child.
+The list is rebuilt from the Harness after a process restart: tool-result `details.conversationId`, the ownership index, the background name document, and each child's `viewState`. Child transcript events stay on the child conversation; the parent SSE does not mix in `message.delta` / `tool.*` from the child.
 
 ## Demo (faux)
 
