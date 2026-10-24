@@ -270,6 +270,7 @@ export function scriptedDemoStep(scriptPath, env = process.env, hooks = {}) {
         const slice = Math.min(50, end - Date.now());
         if (slice > 0) await new Promise((resolve) => setTimeout(resolve, slice));
       }
+      if (signal?.aborted) throw new Error('Request was aborted');
     }
     const chosen = scriptPool(turns, view)[used];
     // `{end:true}` is an empty assistant turn. Counting it keeps the next

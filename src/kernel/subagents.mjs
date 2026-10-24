@@ -155,8 +155,8 @@ async function latestAssistantText(api, conversationId, context) {
 }
 
 /**
- * Dispatch tools for the main agent. A child is configured with this extension
- * removed, so it cannot delegate or spawn. `prepareChild` supplies the role's
+ * Dispatch tools for every agent. Children keep this extension, so they can
+ * delegate or spawn further subagents. `prepareChild` supplies the role's
  * model, tool whitelist, and prompt.
  */
 export function createSubagentExtension({
@@ -166,8 +166,18 @@ export function createSubagentExtension({
 } = {}) {
   if (typeof listRoles !== 'function') throw new Error('listRoles is required');
   if (typeof prepareChild !== 'function') throw new Error('prepareChild is required');
-  const blocked = [];
   let rolesSnapshot = [];
+
+  function childConfigure(prepared) {
+    const tools = [...(prepared?.change?.tools || [])];
+    const have = new Set(tools.map((tool) => tool?.name).filter(Boolean));
+    for (const tool of [delegate, subagent]) {
+      if (!tool?.name || have.has(tool.name)) continue;
+      tools.push(tool);
+      have.add(tool.name);
+    }
+    return { ...prepared?.change, tools };
+  }
 
   const delegate = defineTool({
     name: 'delegate',
@@ -189,10 +199,7 @@ export function createSubagentExtension({
         const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
         if (existing) return existing.id;
         const created = await tx.createConversation({ ownership: { kind: 'task', taskId: api.taskId } });
-        await configure(tx, created.id, {
-          ...prepared.change,
-          extensions: { remove: blocked },
-        });
+        await configure(tx, created.id, childConfigure(prepared));
         return created.id;
       }, context);
       const details = { conversationId: child, roleId: role.id, name: role.name || role.id };
@@ -205,10 +212,15 @@ export function createSubagentExtension({
         content: args.task,
         requestId: `subagent:${api.taskId}`,
       }, context)).wait(context);
-      if (context.abortSignal?.aborted || settled.reason === 'aborted') {
+      if (context.abortSignal?.aborted) {
         const err = new Error('aborted');
         err.name = 'AbortError';
         throw err;
+      }
+      if (settled.reason === 'aborted') {
+        return reply(`[subagent ${details.name} was stopped by the user]`, {
+          details: { conversationId: child, roleId: role.id },
+        });
       }
       if (settled.status !== 'done' || settled.type !== 'input') {
         return reply(`subagent ${settled.status} ${settled.reason || ''}`, { isError: true });
@@ -282,10 +294,7 @@ export function createSubagentExtension({
           const background = { ownership: { kind: 'conversation' }, background: true };
           const anchor = await tx.createTask(Anchor, null, background);
           const child = await tx.createConversation({ ownership: { kind: 'task', taskId: anchor } });
-          await configure(tx, child.id, {
-            ...prepared.change,
-            extensions: { remove: blocked },
-          });
+          await configure(tx, child.id, childConfigure(prepared));
           state.agents[name] = { conversationId: child.id, reported: [], roleId: role.id };
           const input = { name, conversationId: child.id, message, followUp: false };
           state.reporters[api.taskId] = await tx.createTask(Reporter, input, background);
@@ -338,7 +347,6 @@ export function createSubagentExtension({
       }),
     ],
   });
-  blocked.push(extension);
   return extension;
 }
 
@@ -383,6 +391,26 @@ function toolChild(details, mode) {
   return { conversationId: details.conversationId, mode, roleId: details.roleId, name: details.name };
 }
 
+function agentId(cid, harnessId) {
+  return `${cid}:sub:${harnessId}`;
+}
+
+async function scanOwnedConversations(harness, context, parentHarnessId) {
+  const ids = [];
+  let cursor;
+  do {
+    const page = await harness.commit(
+      (tx) => tx.scanConversations({ ownerConversationId: parentHarnessId }, 100, cursor),
+      context,
+    );
+    for (const item of page.items || []) {
+      if (item?.id != null) ids.push(item.id);
+    }
+    cursor = page.next;
+  } while (cursor);
+  return ids;
+}
+
 /** Read subagents from tool details, the background name document, ownership, and child viewState. */
 export function createSubagentHost({
   store,
@@ -400,6 +428,7 @@ export function createSubagentHost({
   if (!context) throw new Error('context is required');
   if (typeof readTranscript !== 'function') throw new Error('readTranscript is required');
   const roleIds = new Map();
+  const parents = new Map();
   const childWatches = new Map();
   const lastAgent = new Map();
   let closed = false;
@@ -407,6 +436,25 @@ export function createSubagentHost({
   function remember(childId, roleId) {
     if (childId == null || !roleId) return;
     roleIds.set(Number(childId), roleId);
+  }
+
+  function rememberParent(parentHarnessId, childId) {
+    if (parentHarnessId == null || childId == null) return;
+    parents.set(Number(childId), Number(parentHarnessId));
+  }
+
+  function rootCid(harnessId) {
+    let current = Number(harnessId);
+    const seen = new Set();
+    while (Number.isFinite(current) && !seen.has(current)) {
+      seen.add(current);
+      const cid = typeof cidFor === 'function' ? cidFor(current) : null;
+      if (cid) return cid;
+      const parent = parents.get(current);
+      if (parent == null) return null;
+      current = parent;
+    }
+    return null;
   }
 
   async function roleFor(harnessId) {
@@ -425,60 +473,102 @@ export function createSubagentHost({
     return { change };
   }
 
-  async function listSubagents(conv) {
-    if (!conv?.id || conv.harnessId == null) return [];
+  async function collectDirect(harnessId) {
     const meta = new Map();
     const order = [];
-    const parent = await readTranscript(conv.harnessId);
+    const parent = await readTranscript(harnessId);
     for (const entry of parent.entries || []) {
       const result = entry?.model?.[0];
       const mode = result?.toolName === 'subagent' ? 'background' : result?.toolName === 'delegate' ? 'foreground' : null;
       const found = toolChild(result?.details, mode);
       if (found) takeChild(meta, order, found.conversationId, found);
     }
-    const live = await harness.snapshot(LiveDoc, conv.harnessId, context);
+    const live = await harness.snapshot(LiveDoc, harnessId, context);
     for (const slot of live?.tools || []) {
       const found = toolChild(slot.details, slot.name === 'subagent' ? 'background' : 'foreground');
       if (found) takeChild(meta, order, found.conversationId, found);
     }
-    const roster = await harness.snapshot(Subagents, conv.harnessId, context);
+    const roster = await harness.snapshot(Subagents, harnessId, context);
     for (const [name, entry] of Object.entries(roster?.agents || {})) {
       if (entry?.conversationId) takeChild(meta, order, entry.conversationId, { mode: 'background', roleId: entry.roleId, name });
     }
     const graph = await harness.taskGraph(context);
     try {
       for (const node of Object.values(graph.value?.tasks || {})) {
-        if (Number(node.conversationId) !== Number(conv.harnessId)) continue;
+        if (Number(node.conversationId) !== Number(harnessId)) continue;
         for (const id of node.conversations || []) takeChild(meta, order, id, {});
       }
     } finally {
       graph.dispose();
     }
-    const generations = order.length === 0 ? new Map() : await harness.commit(async (tx) => {
-      const found = new Map();
+    for (const id of await scanOwnedConversations(harness, context, harnessId)) {
+      takeChild(meta, order, id, {});
+    }
+    return { meta, order };
+  }
+
+  async function restoreOwners(rootHarnessId) {
+    const queue = [Number(rootHarnessId)];
+    const seen = new Set();
+    while (queue.length) {
+      const parent = queue.shift();
+      if (!Number.isFinite(parent) || seen.has(parent)) continue;
+      seen.add(parent);
+      for (const id of await scanOwnedConversations(harness, context, parent)) {
+        rememberParent(parent, id);
+        queue.push(Number(id));
+      }
+    }
+  }
+
+  async function listSubagents(conv) {
+    if (!conv?.id || conv.harnessId == null) return [];
+    const tree = [];
+    const seen = new Set();
+    async function visit(harnessId, parentId, depth) {
+      const { meta, order } = await collectDirect(harnessId);
       for (const key of order) {
-        const id = meta.get(key)?.conversationId;
-        const page = await tx.scanTasks({ conversationId: id, kind: 'pi.generation', order: 'descending' }, 1);
-        found.set(key, page.items[0]);
+        const entry = meta.get(key);
+        if (!entry?.conversationId) continue;
+        const childKey = Number(entry.conversationId);
+        if (seen.has(childKey)) continue;
+        seen.add(childKey);
+        rememberParent(harnessId, entry.conversationId);
+        const id = agentId(conv.id, entry.conversationId);
+        tree.push({
+          ...entry,
+          id,
+          parentId,
+          depth,
+        });
+        await visit(entry.conversationId, id, depth + 1);
+      }
+    }
+    await visit(conv.harnessId, null, 0);
+    const generations = tree.length === 0 ? new Map() : await harness.commit(async (tx) => {
+      const found = new Map();
+      for (const entry of tree) {
+        const page = await tx.scanTasks({ conversationId: entry.conversationId, kind: 'pi.generation', order: 'descending' }, 1);
+        found.set(Number(entry.conversationId), page.items[0]);
       }
       return found;
     }, context);
     const roles = await store.listRoles();
     const byId = new Map(roles.filter((role) => role?.id).map((role) => [role.id, role]));
     const out = [];
-    for (const key of order) {
-      const entry = meta.get(key);
-      if (!entry?.conversationId) continue;
+    for (const entry of tree) {
       remember(entry.conversationId, entry.roleId);
       const childLive = await harness.snapshot(LiveDoc, entry.conversationId, context);
       const stats = statsOf((await readTranscript(entry.conversationId)).messages);
-      const aborted = generations.get(key)?.state?.outcome?.status === 'aborted';
+      const aborted = generations.get(Number(entry.conversationId))?.state?.outcome?.status === 'aborted';
       const role = byId.get(entry.roleId);
       const name = entry.mode === 'background'
         ? (entry.name || role?.name || entry.roleId || String(entry.conversationId))
         : (role?.name || entry.name || entry.roleId || String(entry.conversationId));
       out.push({
-        id: `${conv.id}:sub:${entry.conversationId}`,
+        id: entry.id,
+        parentId: entry.parentId,
+        depth: entry.depth,
         roleId: entry.roleId || role?.id || '',
         name,
         status: childStatus(Boolean(childLive?.run), aborted, stats.lastText),
@@ -498,6 +588,8 @@ export function createSubagentHost({
     const data = agentEventData(agent);
     if (!data) return;
     data.mode = agent.mode === 'background' ? 'background' : 'foreground';
+    data.parentId = agent.parentId ?? null;
+    data.depth = Number.isFinite(agent.depth) ? agent.depth : 0;
     const key = JSON.stringify(data);
     if (lastAgent.get(data.id) === key) return;
     lastAgent.set(data.id, key);
@@ -525,7 +617,8 @@ export function createSubagentHost({
 
   function onChild(parentHarnessId, childId, roleId) {
     remember(childId, roleId);
-    const parentCid = typeof cidFor === 'function' ? cidFor(parentHarnessId) : null;
+    rememberParent(parentHarnessId, childId);
+    const parentCid = rootCid(parentHarnessId) || rootCid(childId);
     if (!parentCid) return;
     setImmediate(() => {
       attach(parentCid, childId).catch((err) => {
@@ -542,9 +635,16 @@ export function createSubagentHost({
     async seed(rows) {
       for (const row of rows || []) {
         if (!row?.harnessId) continue;
+        await restoreOwners(row.harnessId);
         const agents = await listSubagents(row);
         for (const agent of agents) {
           remember(agent.harnessId, agent.roleId);
+          if (agent.parentId) {
+            const parentHarnessId = String(agent.parentId).split(':sub:').pop();
+            if (parentHarnessId) rememberParent(parentHarnessId, agent.harnessId);
+          } else {
+            rememberParent(row.harnessId, agent.harnessId);
+          }
           if (row.id) await attach(row.id, agent.harnessId);
         }
       }
