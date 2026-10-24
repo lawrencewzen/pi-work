@@ -1072,6 +1072,23 @@ async function routeApi(req, res, url) {
     sendJson(res, result.status, result.body);
     return;
   }
+  if (match && m === 'POST') {
+    const cid = decodeURIComponent(match[1]);
+    const aid = decodeURIComponent(match[2]);
+    const body = await readBody(req);
+    const result = await kernelApi.sendToAgent(cid, aid, body.text);
+    sendJson(res, result.status, result.body);
+    return;
+  }
+
+  match = p.match(/^\/api\/conversations\/([^/]+)\/agents\/([^/]+)\/stop$/);
+  if (match && m === 'POST') {
+    const cid = decodeURIComponent(match[1]);
+    const aid = decodeURIComponent(match[2]);
+    const result = await kernelApi.stopAgent(cid, aid);
+    sendJson(res, result.status, result.body);
+    return;
+  }
 
   match = p.match(/^\/api\/conversations\/([^/]+)$/);
   if (match && m === 'GET') {

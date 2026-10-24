@@ -24,6 +24,7 @@ import { FAUX_MODEL, openKernel } from './index.mjs';
 import { createKernelModels, explicitDemo } from './models.mjs';
 import { installPluginReload } from './plugins.mjs';
 import { createRoleHost, installRoleExtensions } from './roles.mjs';
+import { createSubagentControl } from './subagent-control.mjs';
 import { createSubagentExtension, createSubagentHost } from './subagents.mjs';
 import { createWorkspaceExtension, toolsForRole } from './tools.mjs';
 import { installUsageExtension } from './usage.mjs';
@@ -276,6 +277,13 @@ export async function openConversationKernel({
   });
   subagentApi.prepareChild = subagents.prepareChild;
   subagentApi.onChild = subagents.onChild;
+  const control = createSubagentControl({
+    store,
+    harness,
+    context,
+    listSubagents: (conv) => subagents.listSubagents(conv),
+    emit: (cid, event, data) => deliver(cid, { event, data }),
+  });
   const resolveParentRole = roleBridge.resolveRole;
   roleBridge.resolveRole = async (harnessId) => (
     await subagents.roleFor(harnessId) || resolveParentRole(harnessId)
@@ -364,6 +372,12 @@ export async function openConversationKernel({
     },
     childMessages(cid, agentId) {
       return subagents.childMessages(cid, agentId);
+    },
+    sendToAgent(cid, agentId, text) {
+      return control.sendToAgent(cid, agentId, text);
+    },
+    stopAgent(cid, agentId) {
+      return control.stopAgent(cid, agentId);
     },
     stopConversation(cid) {
       return subagents.stopConversation(cid);
