@@ -205,10 +205,15 @@ export function createSubagentExtension({
         content: args.task,
         requestId: `subagent:${api.taskId}`,
       }, context)).wait(context);
-      if (context.abortSignal?.aborted || settled.reason === 'aborted') {
+      if (context.abortSignal?.aborted) {
         const err = new Error('aborted');
         err.name = 'AbortError';
         throw err;
+      }
+      if (settled.reason === 'aborted') {
+        return reply(`[subagent ${details.name} was stopped by the user]`, {
+          details: { conversationId: child, roleId: role.id },
+        });
       }
       if (settled.status !== 'done' || settled.type !== 'input') {
         return reply(`subagent ${settled.status} ${settled.reason || ''}`, { isError: true });

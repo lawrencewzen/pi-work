@@ -1,12 +1,17 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSSE } from '../../src/core/sse.mjs';
+import { createExtensionHost } from '../../src/core/extensions.mjs';
+import { loadRoleTemplates } from '../../src/core/roles-load.mjs';
+import { openConversationKernel } from '../../src/kernel/conversations.mjs';
+import { createSqliteStore } from '../../src/store/sqlite.mjs';
 import { killChild, request as serverRequest, startServer, stopServer } from './_server.mjs';
+import { ROOT } from './_root.mjs';
 
 const TOKEN = 'unit-kernel-subagents-token';
 const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
@@ -114,6 +119,13 @@ function assistantTexts(body) {
 
 function subagentsOf(body) {
   return (body?.agents || []).filter((agent) => String(agent.id || '').includes(':sub:'));
+}
+
+function childHarnessId(agent) {
+  const id = String(agent?.id || '');
+  const marker = ':sub:';
+  const at = id.lastIndexOf(marker);
+  return at >= 0 ? Number(id.slice(at + marker.length)) : NaN;
 }
 
 function systemText(payload) {
@@ -623,6 +635,114 @@ test('a killed foreground subagent writes the file once after restart', { timeou
     assert.equal(writes.length, 1, JSON.stringify(messages.body.messages));
   } finally {
     await stopServer(proc);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('aborting a foreground child returns stopped-by-the-user and the parent continues', { timeout: 60000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-abort-child-'));
+  const ready = path.join(dataDir, 'ready');
+  const script = await writeScript(dataDir, 'abort-child.json', [
+    { tool: 'delegate', args: { agent: 'coder', task: 'HOLD_CHILD' } },
+    { text: 'parent-continued' },
+    { when: 'HOLD_CHILD', delayMs: 60000, text: 'SHOULD_NOT_FINISH' },
+  ]);
+  const store = createSqliteStore(dataDir);
+  let kernel = null;
+  try {
+    await loadRoleTemplates(store, path.join(ROOT, 'roles'));
+    const wsPath = path.join(dataDir, 'ws');
+    await mkdir(wsPath, { recursive: true });
+    const ws = await store.createWorkspace({ name: 'abort-child', path: wsPath });
+    kernel = await openConversationKernel({
+      dataDir,
+      store,
+      demo: true,
+      extensions: createExtensionHost({ getSettings: () => store.getSettings() }),
+      getSettings: () => store.getSettings(),
+      env: {
+        PI_WORK_LLM: 'faux',
+        PI_WORK_FAUX_SCRIPT: script,
+        PI_WORK_FAUX_HOLD_READY: ready,
+        PI_WORK_RETRY_MAX: '2',
+        PI_WORK_RETRY_BASE_MS: '20',
+      },
+    });
+    const conv = await kernel.createConversation({
+      workspaceId: ws.id,
+      workspacePath: wsPath,
+      title: 'abort-child',
+    });
+    const posted = await kernel.postMessage(conv, 'delegate and continue');
+    assert.equal(posted.status, 202);
+    await waitForFile(ready);
+    let scout = null;
+    for (let i = 0; i < 80; i += 1) {
+      const live = await store.getConversation(conv.id);
+      const agents = await kernel.listSubagents(live);
+      scout = agents.find((agent) => agent.roleId === 'coder' || agent.mode === 'foreground');
+      if (scout) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(scout, 'foreground child never appeared');
+    const childId = childHarnessId(scout);
+    const handle = await kernel.harness.conversation(childId, kernel.context);
+    assert.ok(handle, `missing child conversation ${childId}`);
+    await handle.abort(kernel.context);
+    let done = null;
+    for (let i = 0; i < 120; i += 1) {
+      const live = await store.getConversation(conv.id);
+      done = await kernel.present(live, { includeMessages: true });
+      if (done.status === 'done' && assistantTexts(done).includes('parent-continued')) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(done.status, 'done', JSON.stringify(done));
+    assert.equal(done.status === 'stopped' || done.status === 'failed', false);
+    assert.match(toolTexts(done).join('\n'), /stopped by the user/);
+    assert.equal(assistantTexts(done).includes('parent-continued'), true);
+    assert.equal(assistantTexts(done).includes('SHOULD_NOT_FINISH'), false);
+  } finally {
+    if (kernel) await kernel.close();
+    store.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('stopping the main conversation while a foreground child is running still stops the parent', { timeout: 60000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-stop-parent-'));
+  const ready = path.join(dataDir, 'ready');
+  const release = path.join(dataDir, 'release');
+  const script = await writeScript(dataDir, 'stop-parent.json', [
+    { tool: 'delegate', args: { agent: 'scout', task: 'hold-parent-stop' } },
+    { text: 'parent-should-not-finish' },
+  ]);
+  const fake = await startScoutModel({ text: 'CHILD_SHOULD_NOT_FINISH', readyPath: ready, releasePath: release });
+  let proc = null;
+  try {
+    const srv = await startServer({
+      token: TOKEN,
+      dataDir,
+      env: {
+        PI_WORK_RETRY_MAX: '2',
+        PI_WORK_LLM: 'faux',
+        PI_WORK_FAUX_SCRIPT: script,
+      },
+    });
+    proc = srv.proc;
+    await bindScout(srv.base, fake);
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'stop-parent' });
+    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'stop-parent' });
+    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'delegate then stop' })).status, 202);
+    await waitForFile(ready);
+    const stopped = await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/stop`);
+    assert.equal(stopped.status, 200);
+    const after = await waitFor(srv.base, conv.body.id, (body) => body.status === 'stopped' || body.status === 'done');
+    assert.equal(after.status, 'stopped', srv.logs());
+    assert.equal(assistantTexts(after).includes('parent-should-not-finish'), false);
+    assert.equal(toolTexts(after).some((text) => text.includes('stopped by the user')), false);
+  } finally {
+    await stopServer(proc);
+    await fake.close();
     await rm(dataDir, { recursive: true, force: true });
   }
 });
