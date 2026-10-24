@@ -363,6 +363,147 @@ function statsOf(messages) {
   return { toolCalls, step, totalSteps: step, lastText };
 }
 
+const ACTION_CAP = 60;
+const PRIMARY_ARG_KEYS = ['command', 'cmd', 'path', 'query', 'pattern', 'url', 'message', 'task'];
+const TERMINAL_CHILD = new Set(['done', 'stopped', 'failed', 'error']);
+
+function clipAction(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return undefined;
+  return value.length <= ACTION_CAP ? value : value.slice(0, ACTION_CAP);
+}
+
+function asTimestamp(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function toolCallsFromContent(content) {
+  if (!Array.isArray(content)) return [];
+  return content.filter((block) => block && block.type === 'toolCall' && block.name);
+}
+
+function primaryArg(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return '';
+  for (const key of PRIMARY_ARG_KEYS) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  for (const [key, value] of Object.entries(args)) {
+    if (key === 'description') continue;
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+/** Last-tool label for a running child. Prefer `description`, else `name: primary`. */
+export function currentActionText(name, args) {
+  const description = typeof args?.description === 'string' ? args.description.trim() : '';
+  if (description) return clipAction(description);
+  const primary = primaryArg(args);
+  const label = String(name || '').trim();
+  if (!label && !primary) return undefined;
+  return clipAction(primary ? `${label}: ${primary}` : label);
+}
+
+function takeTool(call) {
+  if (!call?.name) return null;
+  const args = call.arguments && typeof call.arguments === 'object' && !Array.isArray(call.arguments)
+    ? call.arguments
+    : (call.input && typeof call.input === 'object' && !Array.isArray(call.input) ? call.input : {});
+  return { name: call.name, args };
+}
+
+/**
+ * Extra chip fields from a child transcript. Missing timestamps or text are omitted.
+ * `entries` are preferred (pi-ai `timestamp` lives on `entry.model[0]`); mapped
+ * `messages` are the fallback when entries are absent.
+ */
+export function activityFields(transcript, status) {
+  const messages = transcript?.messages || [];
+  const entries = transcript?.entries || [];
+  let brief;
+  let startedAt;
+  let lastActivityAt;
+  let lastTs;
+  let sawFirst = false;
+  let lastWasAssistantText = false;
+  let lastTool = null;
+
+  const noteFirst = (model) => {
+    const ts = asTimestamp(model?.timestamp);
+    if (!sawFirst) {
+      sawFirst = true;
+      if (ts != null) startedAt = ts;
+    }
+    if (ts != null) lastTs = ts;
+    return ts;
+  };
+
+  if (entries.length) {
+    for (const entry of entries) {
+      const model = entry?.model?.[0];
+      if (entry?.kind === 'pi.user') {
+        noteFirst(model);
+        lastWasAssistantText = false;
+        if (brief == null) {
+          const text = textOf(model?.content);
+          if (text) brief = text;
+        }
+      } else if (entry?.kind === 'pi.assistant') {
+        const ts = noteFirst(model);
+        if (ts != null) lastActivityAt = ts;
+        const calls = toolCallsFromContent(model?.content);
+        const text = textOf(model?.content);
+        if (calls.length) {
+          lastTool = takeTool(calls[calls.length - 1]);
+          lastWasAssistantText = false;
+        } else if (text) {
+          lastWasAssistantText = true;
+        }
+      } else if (entry?.kind === 'pi.tool-result') {
+        const ts = noteFirst(model);
+        if (ts != null) lastActivityAt = ts;
+        lastWasAssistantText = false;
+        if (!lastTool && model?.toolName) lastTool = takeTool({ name: model.toolName, arguments: {} });
+      }
+    }
+  } else {
+    for (const message of messages) {
+      if (message?.role === 'user') {
+        noteFirst(message);
+        lastWasAssistantText = false;
+        if (brief == null && message.text) brief = String(message.text);
+      } else if (message?.role === 'assistant') {
+        const ts = noteFirst(message);
+        if (ts != null) lastActivityAt = ts;
+        const tool = message.tool || (Array.isArray(message.toolCalls) ? message.toolCalls[message.toolCalls.length - 1] : null);
+        if (tool?.name) {
+          lastTool = takeTool({ name: tool.name, arguments: tool.arguments || tool.input || {} });
+          lastWasAssistantText = false;
+        } else if (message.text) {
+          lastWasAssistantText = true;
+        }
+      } else if (message?.role === 'tool' || message?.tool) {
+        const ts = noteFirst(message);
+        if (ts != null) lastActivityAt = ts;
+        lastWasAssistantText = false;
+        if (message.tool?.name) lastTool = takeTool({ name: message.tool.name, arguments: message.tool.input || {} });
+      }
+    }
+  }
+
+  const out = {};
+  if (brief) out.brief = brief;
+  if (startedAt != null) out.startedAt = startedAt;
+  if (lastActivityAt != null) out.lastActivityAt = lastActivityAt;
+  if (TERMINAL_CHILD.has(status) && lastTs != null) out.endedAt = lastTs;
+  if (status === 'running' && !lastWasAssistantText && lastTool) {
+    const action = currentActionText(lastTool.name, lastTool.args);
+    if (action) out.currentAction = action;
+  }
+  return out;
+}
+
 function childStatus(busy, aborted, lastText) {
   if (busy) return 'running';
   if (aborted) return 'stopped';
@@ -476,23 +617,26 @@ export function createSubagentHost({
       if (!entry?.conversationId) continue;
       remember(entry.conversationId, entry.roleId);
       const childLive = await harness.snapshot(LiveDoc, entry.conversationId, context);
-      const stats = statsOf((await readTranscript(entry.conversationId)).messages);
+      const transcript = await readTranscript(entry.conversationId);
+      const stats = statsOf(transcript.messages);
       const aborted = generations.get(key)?.state?.outcome?.status === 'aborted';
       const role = byId.get(entry.roleId);
       const name = entry.mode === 'background'
         ? (entry.name || role?.name || entry.roleId || String(entry.conversationId))
         : (role?.name || entry.name || entry.roleId || String(entry.conversationId));
+      const status = childStatus(Boolean(childLive?.run), aborted, stats.lastText);
       out.push({
         id: `${conv.id}:sub:${entry.conversationId}`,
         roleId: entry.roleId || role?.id || '',
         name,
-        status: childStatus(Boolean(childLive?.run), aborted, stats.lastText),
+        status,
         step: stats.step,
         totalSteps: stats.totalSteps,
         toolCalls: stats.toolCalls,
         lastText: stats.lastText,
         mode: entry.mode === 'background' ? 'background' : 'foreground',
         harnessId: entry.conversationId,
+        ...activityFields(transcript, status),
       });
     }
     return out;

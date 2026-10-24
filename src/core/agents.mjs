@@ -65,15 +65,33 @@ export function buildAgents({ conv, role, roles = [], messages = [] } = {}) {
   }];
 }
 
+const TERMINAL_STATUSES = new Set(['done', 'stopped', 'failed', 'error']);
+
+function copyOptional(data, agent, key) {
+  if (agent[key] !== undefined && agent[key] !== null && agent[key] !== '') data[key] = agent[key];
+}
+
+function copyTimestamp(data, agent, key) {
+  const value = agent[key];
+  if (typeof value === 'number' && Number.isFinite(value)) data[key] = value;
+}
+
 export function agentEventData(agent, status = agent?.status) {
   if (!agent) return null;
-  return {
+  const resolved = AGENT_STATUSES.has(status) ? status : agent.status;
+  const data = {
     id: agent.id,
     roleId: agent.roleId,
     name: agent.name,
-    status: AGENT_STATUSES.has(status) ? status : agent.status,
+    status: resolved,
     step: agent.step,
     totalSteps: agent.totalSteps,
     lastText: agent.lastText || '',
   };
+  copyOptional(data, agent, 'brief');
+  copyTimestamp(data, agent, 'startedAt');
+  copyTimestamp(data, agent, 'lastActivityAt');
+  if (TERMINAL_STATUSES.has(resolved)) copyTimestamp(data, agent, 'endedAt');
+  else if (resolved === 'running') copyOptional(data, agent, 'currentAction');
+  return data;
 }
