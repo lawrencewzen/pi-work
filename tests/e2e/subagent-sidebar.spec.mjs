@@ -7,7 +7,6 @@ import { createWorkspace, newConversation, send, openApp } from './helpers/ui.mj
 const TESTER = 'run:sub:tester';
 const CODER = 'run:sub:coder';
 const AUDITOR = 'run:sub:auditor';
-const SCOUT = 'run:sub:scout';
 const NOTE_TEXT = '你对 测试 说：只跑 auth 相关的';
 const NUDGE_TEXT = '只跑 auth 相关的';
 
@@ -17,11 +16,9 @@ const AGENTS = [
     roleId: 'tester',
     name: '测试',
     status: 'running',
-    parentId: null,
-    depth: 0,
     step: 2,
     totalSteps: 5,
-    lastText: '正在写登录测试',
+    lastText: '正在写登录测试，路径很长很长很长很长很长很长很长很长',
     mode: 'foreground',
   },
   {
@@ -29,8 +26,6 @@ const AGENTS = [
     roleId: 'coder',
     name: '编码',
     status: 'done',
-    parentId: null,
-    depth: 0,
     lastText: '改完了 auth',
     mode: 'foreground',
   },
@@ -39,19 +34,7 @@ const AGENTS = [
     roleId: 'auditor',
     name: '审计',
     status: 'waiting',
-    parentId: null,
-    depth: 0,
     lastText: 'auditor',
-    mode: 'foreground',
-  },
-  {
-    id: SCOUT,
-    roleId: 'scout',
-    name: '侦察',
-    status: 'running',
-    parentId: TESTER,
-    depth: 1,
-    lastText: '只看 auth 相关文件，路径很长很长很长很长很长很长很长很长',
     mode: 'foreground',
   },
 ];
@@ -155,7 +138,7 @@ async function boot(page) {
   await createWorkspace(page, 'demo', prepared.dirs[0]);
   await newConversation(page);
   await send(page, '请派子代理');
-  await expect(page.getByTestId('subagent-tree-row')).toHaveCount(4, { timeout: 20000 });
+  await expect(page.getByTestId('subagent-tree-row')).toHaveCount(3, { timeout: 20000 });
   return { srv, bag };
 }
 
@@ -166,28 +149,18 @@ test('sidebar tree, pane interrupt/stop, note, and narrow overflow', async ({ pa
   const { srv, bag } = await boot(page);
   try {
     const rows = page.getByTestId('subagent-tree-row');
-    await expect(rows).toHaveCount(4);
-    const grandchild = page.locator('[data-testid=subagent-tree-row][data-depth="1"]');
-    await expect(grandchild).toHaveCount(1);
-    await expect(grandchild).toHaveAttribute('data-agent-id', SCOUT);
+    await expect(rows).toHaveCount(3);
     const testerRow = page.locator(`[data-testid=subagent-tree-row][data-agent-id="${TESTER}"]`);
     const coderRow = page.locator(`[data-testid=subagent-tree-row][data-agent-id="${CODER}"]`);
+    const auditorRow = page.locator(`[data-testid=subagent-tree-row][data-agent-id="${AUDITOR}"]`);
     await expect(testerRow).toHaveAttribute('data-status', 'running');
     await expect(testerRow).toHaveAttribute('data-depth', '0');
+    await expect(coderRow).toHaveAttribute('data-depth', '0');
+    await expect(auditorRow).toHaveAttribute('data-depth', '0');
     await expect(testerRow).toContainText('2/5');
     await expect(coderRow).toContainText('完成');
-    const indent = await page.evaluate(() => {
-      const parent = document.querySelector('[data-testid=subagent-tree-row][data-depth="0"]');
-      const child = document.querySelector('[data-testid=subagent-tree-row][data-depth="1"]');
-      return {
-        parentPad: parseFloat(getComputedStyle(parent).paddingLeft),
-        childPad: parseFloat(getComputedStyle(child).paddingLeft),
-        parentDot: parent.querySelector('.status-dot').getBoundingClientRect().x,
-        childDot: child.querySelector('.status-dot').getBoundingClientRect().x,
-      };
-    });
-    expect(indent.childPad).toBe(indent.parentPad + 12);
-    expect(indent.childDot).toBeGreaterThan(indent.parentDot + 8);
+    const pads = await page.evaluate(() => [...document.querySelectorAll('[data-testid=subagent-tree-row]')].map((el) => getComputedStyle(el).paddingLeft));
+    expect(new Set(pads).size).toBe(1);
 
     const toggle = page.getByTestId('subagent-tree-toggle');
     await expect(toggle).toBeVisible();
@@ -196,7 +169,7 @@ test('sidebar tree, pane interrupt/stop, note, and narrow overflow', async ({ pa
     await expect(rows).toHaveCount(0);
     await expect(toggle).toHaveAttribute('aria-label', /展开/);
     await toggle.click();
-    await expect(rows).toHaveCount(4);
+    await expect(rows).toHaveCount(3);
 
     await testerRow.click();
     await expect(page.getByTestId('subagent-pane')).toBeVisible();
@@ -252,7 +225,7 @@ test('sidebar tree, pane interrupt/stop, note, and narrow overflow', async ({ pa
     await expect(page.locator('#app-shell')).toHaveClass(/left-closed/);
     await page.locator('.col-center [data-action="toggle-left"]').click();
     await expect(page.locator('#app-shell')).not.toHaveClass(/left-closed/);
-    await expect(page.getByTestId('subagent-tree-row')).toHaveCount(4);
+    await expect(page.getByTestId('subagent-tree-row')).toHaveCount(3);
     await expect(page.getByTestId('subagent-tree-row').first()).toBeVisible();
     const overflow = await page.evaluate(() => {
       const left = document.querySelector('.col-left');

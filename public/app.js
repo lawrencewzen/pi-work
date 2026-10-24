@@ -1412,28 +1412,8 @@ export function isRealSubagent(agent) {
   return String(agent?.id || '').includes(':sub:');
 }
 
-function orderedSubagentTree(agents) {
-  const list = (agents || []).filter(isRealSubagent);
-  if (!list.length) return [];
-  const byId = new Map(list.map((agent) => [agent.id, agent]));
-  const children = new Map();
-  for (const agent of list) {
-    const rawParent = agent.parentId ?? null;
-    const parentId = rawParent && byId.has(rawParent) ? rawParent : null;
-    if (!children.has(parentId)) children.set(parentId, []);
-    children.get(parentId).push(agent);
-  }
-  const out = [];
-  const walk = (parentId, depth) => {
-    for (const agent of children.get(parentId) || []) {
-      const parsed = Number(agent.depth);
-      const d = Number.isFinite(parsed) ? parsed : depth;
-      out.push({ ...agent, parentId: agent.parentId ?? null, depth: d });
-      walk(agent.id, d + 1);
-    }
-  };
-  walk(null, 0);
-  return out;
+function listedSubagents(agents) {
+  return (agents || []).filter(isRealSubagent);
 }
 
 function subagentTreeStatusText(agent) {
@@ -1444,13 +1424,12 @@ function subagentTreeStatusText(agent) {
 }
 
 function subagentTreeRowHtml(agent) {
-  const depth = Number.isFinite(Number(agent.depth)) ? Number(agent.depth) : 0;
   const st = agent.status || 'waiting';
   const name = realSubagentName(agent);
   const summary = oneLine(agent.lastText || agent.roleId || '');
   const open = state.viewingAgentId === agent.id;
   return (
-    `<div class="subagent-tree-row${open ? ' is-active' : ''}" style="--depth:${depth}" data-testid="subagent-tree-row" data-agent-id="${escapeHtml(agent.id || '')}" data-depth="${escapeHtml(String(depth))}" data-status="${escapeHtml(st)}" data-action="open-subagent" data-ctx="subagent" title="${escapeHtml(t('subagent_open_title'))}">` +
+    `<div class="subagent-tree-row${open ? ' is-active' : ''}" data-testid="subagent-tree-row" data-agent-id="${escapeHtml(agent.id || '')}" data-depth="0" data-status="${escapeHtml(st)}" data-action="open-subagent" data-ctx="subagent" title="${escapeHtml(t('subagent_open_title'))}">` +
     `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
     `<span class="subagent-tree-name">${escapeHtml(name)}</span>` +
     `<span class="subagent-tree-last">${escapeHtml(summary)}</span>` +
@@ -1460,7 +1439,7 @@ function subagentTreeRowHtml(agent) {
 }
 
 function subagentTreeHtml() {
-  const rows = orderedSubagentTree(state.activeConversationData?.agents || []);
+  const rows = listedSubagents(state.activeConversationData?.agents || []);
   if (!rows.length) return '';
   return `<div class="subagent-tree">${rows.map(subagentTreeRowHtml).join('')}</div>`;
 }

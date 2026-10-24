@@ -207,10 +207,10 @@ kbd, .kbd { font-family: var(--mono); font-size: 11px; color: var(--faint); back
 .subagent-tree { display: flex; flex-direction: column; gap: 0; min-width: 0; overflow: hidden; }
 .subagent-tree-row {
   position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; overflow: hidden;
-  padding: 4px 8px 4px calc(32px + (var(--depth, 0) * 12px)); border-radius: 7px; font-size: 12.5px; line-height: 1.4; cursor: pointer;
+  padding: 4px 8px 4px 32px; border-radius: 7px; font-size: 12.5px; line-height: 1.4; cursor: pointer;
 }
 .subagent-tree-row::before {
-  content: ''; position: absolute; left: calc(22px + (var(--depth, 0) * 12px)); top: 4px; bottom: 4px; width: 1px; background: var(--bd2);
+  content: ''; position: absolute; left: 22px; top: 4px; bottom: 4px; width: 1px; background: var(--bd2);
 }
 .subagent-tree-row:hover { background: var(--hover); }
 .subagent-tree-row.is-active { background: var(--sel); font-weight: 500; }
