@@ -335,6 +335,53 @@ test('migrateWeftIds rewrites identifier fields and leaves message bodies alone'
   }
 });
 
+test('migrateWeftIds rewrites bare pi-work. document kinds', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-weft-ids-bare-'));
+  try {
+    const storagePath = await initHarnessDb(dataDir);
+    const seed = openHarnessDb(storagePath);
+    try {
+      seed.prepare('INSERT INTO record_ids (id, record_type) VALUES (?, ?)').run(2, 'conversation');
+      seed.prepare('INSERT INTO conversations (id, record) VALUES (?, ?)').run(2, JSON.stringify({ id: 2 }));
+      seed.prepare('INSERT INTO record_ids (id, record_type) VALUES (?, ?)').run(21, 'document');
+      seed.prepare(`
+        INSERT INTO documents (id, kind, family, key_value, scope_kind, owner_id, created_at, retired_at, record)
+        VALUES (?, ?, 0, ?, 'conversation', 2, 1, NULL, ?)
+      `).run(21, indexed('pi-work.control'), indexed(''), JSON.stringify({
+        id: 21,
+        kind: 'pi-work.control',
+        scope: { kind: 'conversation', conversationId: 2 },
+        history: 'latest',
+        fork: 'initial',
+        createdAt: 1,
+      }));
+    } finally {
+      seed.close();
+    }
+
+    const first = await migrateWeftIds(dataDir);
+    assert.equal(first.status, 'migrated', JSON.stringify(first));
+    assert.ok(first.backupDir);
+    assert.equal(existsSync(path.join(first.backupDir, 'session.sqlite')), true);
+
+    const db = openHarnessDb(storagePath, true);
+    try {
+      assert.equal(documentKindColumns(db).includes('pi-work.control'), false);
+      assert.equal(documentKindColumns(db).includes('weft.control'), true);
+      const record = JSON.parse(db.prepare('SELECT record FROM documents WHERE id = 21').get().record);
+      assert.equal(record.kind, 'weft.control');
+    } finally {
+      db.close();
+    }
+
+    const second = await migrateWeftIds(dataDir);
+    assert.equal(second.status, 'skipped');
+    assert.equal((await listWeftBackupDirs(dataDir)).length, 1);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('migrateWeftIds rolls back on failure and keeps the backup', async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-weft-ids-fail-'));
   try {

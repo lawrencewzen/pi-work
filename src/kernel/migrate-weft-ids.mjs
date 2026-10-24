@@ -15,6 +15,8 @@ import {
 
 const LEGACY_BRAND = `pi${'-'}work`;
 const LEGACY_KIND_PREFIX = `app.${LEGACY_BRAND}.`;
+const LEGACY_BARE_KIND_PREFIX = `${LEGACY_BRAND}.`;
+const BARE_KIND_PREFIX = `${BRAND}.`;
 const LEGACY_EXT_PREFIX = `${LEGACY_BRAND}-`;
 const AGENT_DOC_KIND = 'pi.agent';
 const HARNESS_DB = 'session.sqlite';
@@ -54,11 +56,32 @@ function decodeIndexed(value) {
   }
 }
 
-function renameMappedString(value, map, fromPrefix, toPrefix) {
+function prefixPairs(from, to, extra) {
+  const pairs = [];
+  if (from && to) pairs.push([from, to]);
+  if (Array.isArray(extra)) {
+    for (const pair of extra) {
+      if (Array.isArray(pair) && pair[0] && pair[1]) pairs.push(pair);
+    }
+  }
+  return pairs;
+}
+
+function kindPrefixPairs(maps) {
+  return prefixPairs(maps.kindFrom, maps.kindTo, maps.kindPrefixes);
+}
+
+function extPrefixPairs(maps) {
+  return prefixPairs(maps.extFrom, maps.extTo);
+}
+
+function renameMappedString(value, map, prefixes) {
   if (typeof value !== 'string') return value;
   if (Object.hasOwn(map, value)) return map[value];
-  if (fromPrefix && toPrefix && value.startsWith(fromPrefix) && value !== fromPrefix) {
-    return toPrefix + value.slice(fromPrefix.length);
+  for (const [from, to] of prefixes || []) {
+    if (from && to && value.startsWith(from) && value !== from) {
+      return to + value.slice(from.length);
+    }
   }
   return value;
 }
@@ -139,21 +162,21 @@ function tableExists(db, name) {
   return Boolean(db.prepare('SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?').get('table', name));
 }
 
-function wouldRename(value, map, fromPrefix, toPrefix) {
-  return typeof value === 'string' && renameMappedString(value, map, fromPrefix, toPrefix) !== value;
+function wouldRename(value, map, prefixes) {
+  return typeof value === 'string' && renameMappedString(value, map, prefixes) !== value;
 }
 
 function scanNeedsRewrite(db, maps) {
-  const { kinds, extensions, kindFrom, kindTo, extFrom, extTo } = maps;
-  const renameKind = (value) => renameMappedString(value, kinds, kindFrom, kindTo);
-  const renameExt = (value) => renameMappedString(value, extensions, extFrom, extTo);
+  const { kinds, extensions } = maps;
+  const kindPrefixes = kindPrefixPairs(maps);
+  const renameExt = (value) => renameMappedString(value, extensions, extPrefixPairs(maps));
 
   if (tableExists(db, 'tasks')) {
     for (const row of db.prepare('SELECT kind, record FROM tasks').all()) {
-      if (wouldRename(decodeIndexed(row.kind), kinds, kindFrom, kindTo)) return true;
+      if (wouldRename(decodeIndexed(row.kind), kinds, kindPrefixes)) return true;
       try {
         const record = JSON.parse(row.record);
-        if (wouldRename(record?.kind, kinds, kindFrom, kindTo)) return true;
+        if (wouldRename(record?.kind, kinds, kindPrefixes)) return true;
       } catch {
         /* checked again during the rewrite */
       }
@@ -161,10 +184,10 @@ function scanNeedsRewrite(db, maps) {
   }
   if (tableExists(db, 'documents')) {
     for (const row of db.prepare('SELECT kind, record FROM documents').all()) {
-      if (wouldRename(decodeIndexed(row.kind), kinds, kindFrom, kindTo)) return true;
+      if (wouldRename(decodeIndexed(row.kind), kinds, kindPrefixes)) return true;
       try {
         const record = JSON.parse(row.record);
-        if (wouldRename(record?.kind, kinds, kindFrom, kindTo)) return true;
+        if (wouldRename(record?.kind, kinds, kindPrefixes)) return true;
       } catch {
         /* checked again during the rewrite */
       }
@@ -174,7 +197,7 @@ function scanNeedsRewrite(db, maps) {
     for (const row of db.prepare('SELECT record FROM entries').all()) {
       try {
         const record = JSON.parse(row.record);
-        if (wouldRename(record?.kind, kinds, kindFrom, kindTo)) return true;
+        if (wouldRename(record?.kind, kinds, kindPrefixes)) return true;
       } catch {
         /* checked again during the rewrite */
       }
@@ -213,7 +236,7 @@ function parseRecordObject(raw, label) {
 }
 
 function rewriteKindColumnAndRecord(db, table, maps) {
-  const renameKind = (value) => renameMappedString(value, maps.kinds, maps.kindFrom, maps.kindTo);
+  const renameKind = (value) => renameMappedString(value, maps.kinds, kindPrefixPairs(maps));
   const rows = db.prepare(`SELECT id, kind, record FROM ${table}`).all();
   const update = db.prepare(`UPDATE ${table} SET kind = ?, record = ? WHERE id = ?`);
   for (const row of rows) {
@@ -233,7 +256,7 @@ function rewriteKindColumnAndRecord(db, table, maps) {
 }
 
 function rewriteEntryKinds(db, maps) {
-  const renameKind = (value) => renameMappedString(value, maps.kinds, maps.kindFrom, maps.kindTo);
+  const renameKind = (value) => renameMappedString(value, maps.kinds, kindPrefixPairs(maps));
   const rows = db.prepare('SELECT id, record FROM entries').all();
   const update = db.prepare('UPDATE entries SET record = ? WHERE id = ?');
   for (const row of rows) {
@@ -246,7 +269,7 @@ function rewriteEntryKinds(db, maps) {
 }
 
 function rewriteAgentRevisions(db, maps) {
-  const renameExt = (value) => renameMappedString(value, maps.extensions, maps.extFrom, maps.extTo);
+  const renameExt = (value) => renameMappedString(value, maps.extensions, extPrefixPairs(maps));
   const rows = db.prepare(`
     SELECT r.document_id, r.seq, r.kind AS rev_kind, r.content, d.kind AS doc_kind
     FROM document_revisions r
@@ -276,10 +299,11 @@ export function rewriteStoredIds(db, {
   extensions = {},
   kindFrom,
   kindTo,
+  kindPrefixes,
   extFrom,
   extTo,
 } = {}) {
-  const maps = { kinds, extensions, kindFrom, kindTo, extFrom, extTo };
+  const maps = { kinds, extensions, kindFrom, kindTo, kindPrefixes, extFrom, extTo };
   if (tableExists(db, 'tasks')) rewriteKindColumnAndRecord(db, 'tasks', maps);
   if (tableExists(db, 'documents')) rewriteKindColumnAndRecord(db, 'documents', maps);
   if (tableExists(db, 'entries')) rewriteEntryKinds(db, maps);
@@ -288,15 +312,20 @@ export function rewriteStoredIds(db, {
   }
 }
 
-export function needsWeftIdMigration(db) {
-  return scanNeedsRewrite(db, {
+function forwardMaps() {
+  return {
     kinds: kindRenameMap(),
     extensions: extensionRenameMap(),
     kindFrom: LEGACY_KIND_PREFIX,
     kindTo: KIND_PREFIX,
+    kindPrefixes: [[LEGACY_BARE_KIND_PREFIX, BARE_KIND_PREFIX]],
     extFrom: LEGACY_EXT_PREFIX,
     extTo: `${BRAND}-`,
-  });
+  };
+}
+
+export function needsWeftIdMigration(db) {
+  return scanNeedsRewrite(db, forwardMaps());
 }
 
 function openDb(storagePath, readOnly = false) {
@@ -354,14 +383,7 @@ function formatError(error) {
 }
 
 function applyForwardRewrite(db) {
-  rewriteStoredIds(db, {
-    kinds: kindRenameMap(),
-    extensions: extensionRenameMap(),
-    kindFrom: LEGACY_KIND_PREFIX,
-    kindTo: KIND_PREFIX,
-    extFrom: LEGACY_EXT_PREFIX,
-    extTo: `${BRAND}-`,
-  });
+  rewriteStoredIds(db, forwardMaps());
 }
 
 /**
