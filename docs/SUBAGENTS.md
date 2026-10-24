@@ -20,9 +20,14 @@ The main agent has two tools. Children are configured with this extension remove
 ```bash
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>
 # → agents: role chip, then
-#   {id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode}
+#   {id, roleId, name, status, step, totalSteps, toolCalls, lastText, mode,
+#    brief?, startedAt?, lastActivityAt?, endedAt?, currentAction?}
 #   id is <cid>:sub:<child conversation id>
 #   mode is foreground | background
+#   brief is the first user message (the dispatched task)
+#   startedAt / lastActivityAt / endedAt are pi-ai timestamps in ms
+#   endedAt only when done / stopped / failed; currentAction only while running
+#   missing timestamps or text omit that field
 
 curl -sS http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/messages
 # → {id, roleId, name, status, mode, messages}
@@ -36,7 +41,8 @@ curl -sS -X POST http://127.0.0.1:3000/api/conversations/<cid>/agents/<aid>/stop
 
 curl -sN -H 'Accept: text/event-stream' \
   http://127.0.0.1:3000/api/conversations/<cid>/events
-# event: agent   data: same fields as the chip, including mode
+# event: agent   data: same fields as the chip, including mode and the optional
+#   brief / startedAt / lastActivityAt / endedAt / currentAction fields
 ```
 
 `POST .../agents/:aid/messages` 把用户的话 `steer` 进该子对话，并给主对话写一条 `app.pi-work.user-to-subagent`（带 model 的 write，不新开一轮）。主对话 GET 的 `messages` 把它映射成 `role:'note'`，文案是「你对 <名字> 说：<text>」。子 Agent 自己的记录里仍是普通 user 消息。子 Agent 只有一层，上级一律是主对话。

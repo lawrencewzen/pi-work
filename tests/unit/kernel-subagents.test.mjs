@@ -121,6 +121,34 @@ function subagentsOf(body) {
   return (body?.agents || []).filter((agent) => String(agent.id || '').includes(':sub:'));
 }
 
+function assertFiniteMs(value, label) {
+  assert.equal(typeof value, 'number', `${label} type=${typeof value} value=${value}`);
+  assert.equal(Number.isFinite(value), true, `${label} value=${value}`);
+}
+
+function assertRunningActivity(agent, { brief, currentAction, mode }) {
+  assert.ok(agent, 'missing subagent');
+  assert.equal(agent.status, 'running', JSON.stringify(agent));
+  if (mode) assert.equal(agent.mode, mode);
+  assert.equal(agent.brief, brief);
+  assertFiniteMs(agent.startedAt, 'startedAt');
+  assertFiniteMs(agent.lastActivityAt, 'lastActivityAt');
+  assert.ok(agent.lastActivityAt >= agent.startedAt, JSON.stringify(agent));
+  assert.equal(agent.currentAction, currentAction);
+  assert.equal(agent.endedAt, undefined);
+}
+
+function assertDoneActivity(agent, { brief, mode }) {
+  assert.ok(agent, 'missing subagent');
+  assert.equal(agent.status, 'done', JSON.stringify(agent));
+  if (mode) assert.equal(agent.mode, mode);
+  assert.equal(agent.brief, brief);
+  assertFiniteMs(agent.startedAt, 'startedAt');
+  assertFiniteMs(agent.lastActivityAt, 'lastActivityAt');
+  assertFiniteMs(agent.endedAt, 'endedAt');
+  assert.equal(agent.currentAction, undefined);
+}
+
 function childHarnessId(agent) {
   const id = String(agent?.id || '');
   const marker = ':sub:';
@@ -743,6 +771,158 @@ test('stopping the main conversation while a foreground child is running still s
   } finally {
     await stopServer(proc);
     await fake.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+const EVIDENCE_DIR = '/tmp/t25-2-evidence';
+
+async function writeEvidence(name, agent) {
+  await mkdir(EVIDENCE_DIR, { recursive: true });
+  await writeFile(path.join(EVIDENCE_DIR, name), `${JSON.stringify(agent, null, 2)}\n`);
+}
+
+test('foreground running agents[] has brief, timestamps, currentAction from description; done has endedAt', { timeout: 60000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-fields-fg-'));
+  const ready = path.join(dataDir, 'ready');
+  const task = 'Inspect auth.ts';
+  const script = await writeScript(dataDir, 'fields-fg.json', [
+    { tool: 'delegate', args: { agent: 'coder', task } },
+    { text: 'parent-done' },
+    { when: 'Inspect auth.ts', tool: 'read', args: { path: 'src/auth.ts', description: '看登录逻辑' } },
+    { when: 'Inspect auth.ts', delayMs: 8000, text: 'child-read-done' },
+  ]);
+  let proc = null;
+  try {
+    const srv = await startServer({
+      token: TOKEN,
+      dataDir,
+      env: {
+        PI_WORK_RETRY_MAX: '2',
+        PI_WORK_LLM: 'faux',
+        PI_WORK_FAUX_SCRIPT: script,
+        PI_WORK_FAUX_HOLD_READY: ready,
+      },
+    });
+    proc = srv.proc;
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'fields-fg' });
+    assert.equal(ws.status, 201);
+    await mkdir(path.join(ws.body.path, 'src'), { recursive: true });
+    await writeFile(path.join(ws.body.path, 'src/auth.ts'), 'export {}\n');
+    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'fields-fg' });
+    assert.equal(conv.status, 201);
+    const pendingEvents = collectSse(srv.base, conv.body.id, {
+      ready: (list) => {
+        const agents = list.filter((ev) => ev.event === 'agent' && String(ev.data?.id || '').includes(':sub:'));
+        return agents.some((ev) => ev.data?.currentAction === '看登录逻辑' && ev.data?.brief === task)
+          && agents.some((ev) => ev.data?.status === 'done' && ev.data?.endedAt != null && ev.data?.currentAction == null);
+      },
+      timeout: 45000,
+    });
+    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'dispatch coder' })).status, 202);
+    await waitForFile(ready);
+    const runningBody = await waitFor(srv.base, conv.body.id, (body) => {
+      const scout = subagentsOf(body)[0];
+      return scout?.status === 'running' && scout?.currentAction === '看登录逻辑';
+    });
+    const running = subagentsOf(runningBody)[0];
+    assertRunningActivity(running, { brief: task, currentAction: '看登录逻辑', mode: 'foreground' });
+    await writeEvidence('foreground-running.json', running);
+
+    const doneBody = await waitFor(srv.base, conv.body.id, (body) => {
+      const scout = subagentsOf(body)[0];
+      return body.status === 'done' && scout?.status === 'done' && assistantTexts(body).includes('parent-done');
+    }, 120);
+    const done = subagentsOf(doneBody)[0];
+    assertDoneActivity(done, { brief: task, mode: 'foreground' });
+    await writeEvidence('foreground-done.json', done);
+
+    const events = await pendingEvents;
+    const runningEvent = events.find((ev) => (
+      ev.event === 'agent' && ev.data?.currentAction === '看登录逻辑' && ev.data?.brief === task
+    ));
+    assert.ok(runningEvent, JSON.stringify(events.filter((ev) => ev.event === 'agent')));
+    assert.equal(runningEvent.data.mode, 'foreground');
+    assertFiniteMs(runningEvent.data.startedAt, 'sse startedAt');
+    assertFiniteMs(runningEvent.data.lastActivityAt, 'sse lastActivityAt');
+    assert.equal(runningEvent.data.endedAt, undefined);
+    const doneEvent = events.find((ev) => (
+      ev.event === 'agent' && String(ev.data?.id || '').includes(':sub:') && ev.data?.status === 'done' && ev.data?.endedAt != null
+    ));
+    assert.ok(doneEvent, JSON.stringify(events.filter((ev) => ev.event === 'agent')));
+    assert.equal(doneEvent.data.currentAction, undefined);
+    assert.equal(doneEvent.data.brief, task);
+  } finally {
+    await stopServer(proc);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('background running agents[] uses tool:param currentAction; SSE carries the same fields', { timeout: 60000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ksub-fields-bg-'));
+  const ready = path.join(dataDir, 'ready');
+  const task = 'RUN_TESTS please';
+  const script = await writeScript(dataDir, 'fields-bg.json', [
+    { tool: 'subagent', args: { action: 'spawn', name: 'worker', agent: 'coder', message: task } },
+    { text: 'spawned' },
+    { when: 'RUN_TESTS please', tool: 'bash', args: { command: 'npm test' } },
+    { when: 'RUN_TESTS please', delayMs: 8000, text: 'tested' },
+  ]);
+  let proc = null;
+  try {
+    const srv = await startServer({
+      token: TOKEN,
+      dataDir,
+      env: {
+        PI_WORK_RETRY_MAX: '2',
+        PI_WORK_LLM: 'faux',
+        PI_WORK_FAUX_SCRIPT: script,
+        PI_WORK_FAUX_HOLD_READY: ready,
+      },
+    });
+    proc = srv.proc;
+    const ws = await request(srv.base, 'POST', '/api/workspaces', { name: 'fields-bg' });
+    const conv = await request(srv.base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'fields-bg' });
+    const pendingEvents = collectSse(srv.base, conv.body.id, {
+      ready: (list) => {
+        const agents = list.filter((ev) => ev.event === 'agent' && ev.data?.mode === 'background');
+        return agents.some((ev) => ev.data?.currentAction === 'bash: npm test' && ev.data?.brief === task)
+          && agents.some((ev) => ev.data?.status === 'done' && ev.data?.endedAt != null && ev.data?.currentAction == null);
+      },
+      timeout: 45000,
+    });
+    assert.equal((await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'spawn worker' })).status, 202);
+    await waitForFile(ready);
+    const runningBody = await waitFor(srv.base, conv.body.id, (body) => {
+      const worker = subagentsOf(body).find((agent) => agent.name === 'worker');
+      return worker?.status === 'running' && worker?.currentAction === 'bash: npm test';
+    });
+    const running = subagentsOf(runningBody).find((agent) => agent.name === 'worker');
+    assertRunningActivity(running, { brief: task, currentAction: 'bash: npm test', mode: 'background' });
+    await writeEvidence('background-running.json', running);
+
+    const doneBody = await waitFor(srv.base, conv.body.id, (body) => {
+      const worker = subagentsOf(body).find((agent) => agent.name === 'worker');
+      return worker?.status === 'done' && worker?.endedAt != null;
+    }, 120);
+    const done = subagentsOf(doneBody).find((agent) => agent.name === 'worker');
+    assertDoneActivity(done, { brief: task, mode: 'background' });
+    await writeEvidence('background-done.json', done);
+
+    const events = await pendingEvents;
+    const runningEvent = events.find((ev) => (
+      ev.event === 'agent' && ev.data?.currentAction === 'bash: npm test' && ev.data?.brief === task
+    ));
+    assert.ok(runningEvent, JSON.stringify(events.filter((ev) => ev.event === 'agent')));
+    assert.equal(runningEvent.data.mode, 'background');
+    assertFiniteMs(runningEvent.data.startedAt, 'sse startedAt');
+    const doneEvent = events.find((ev) => (
+      ev.event === 'agent' && ev.data?.mode === 'background' && ev.data?.status === 'done' && ev.data?.endedAt != null
+    ));
+    assert.ok(doneEvent, JSON.stringify(events.filter((ev) => ev.event === 'agent')));
+    assert.equal(doneEvent.data.currentAction, undefined);
+  } finally {
+    await stopServer(proc);
     await rm(dataDir, { recursive: true, force: true });
   }
 });
