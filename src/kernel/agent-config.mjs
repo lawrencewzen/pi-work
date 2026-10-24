@@ -1,6 +1,6 @@
-// Role adapter for one Pi Durable conversation.
-// Idle role changes go through conversation.configure. Multi-role work is
-// dispatched with sub-agents; this host does not rotate roles.
+// Agent adapter for one Pi Durable conversation.
+// The main agent has empty instructions, every workspace tool, enabled plugin
+// tools, and delegate / subagent. Skills are every globally enabled skill.
 import { randomUUID } from 'node:crypto';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable';
@@ -9,14 +9,7 @@ import { TOOLS } from '../core/config.mjs';
 import { resolveConversationModelPatch } from '../core/model-sources.mjs';
 import { createPluginHost } from './plugins.mjs';
 import { isAutoContinueText } from './continuation.mjs';
-import { toolsForRole } from './tools.mjs';
-
-const FALLBACK_ROLE = {
-  id: 'default',
-  name: 'Default',
-  systemPrompt: 'You are a helpful coding assistant.',
-  tools: TOOLS.slice(),
-};
+import { workspaceTools } from './tools.mjs';
 
 const LOOSE_PARAMS = Type.Object({}, { additionalProperties: true });
 
@@ -33,21 +26,24 @@ export function autoTitleFromText(currentTitle, text) {
 /**
  * Install the skills section and any builtin tool names the registry does not
  * already provide. A later batch can register the real workspace tools first;
- * those names are left alone. Plugin tools are installed when a role is applied.
+ * those names are left alone. Plugin tools are installed when a conversation
+ * is configured.
  */
-export function installRoleExtensions(registry, bridge) {
+export function installAgentExtensions(registry, bridge) {
   if (!registry) throw new Error('registry is required');
   registry.install(defineExtension({
     name: 'pi-work-skills',
     sections: [
       section('skills', async (input) => {
         try {
-          const role = await bridge.resolveRole?.(input.conversationId);
-          if (!role || typeof bridge.skillPrompt !== 'function') return undefined;
-          const text = String((await bridge.skillPrompt(role)) || '').trim();
+          const names = new Set((input?.agent?.tools || []).map((tool) => tool.name));
+          // Children drop delegate / subagent; they stay self-contained (no skills).
+          if (!names.has('delegate') && !names.has('subagent')) return undefined;
+          if (typeof bridge.skillPrompt !== 'function') return undefined;
+          const text = String((await bridge.skillPrompt()) || '').trim();
           return text || undefined;
         } catch (err) {
-          console.error(`PI_WORK_KERNEL_ROLE ${err instanceof Error ? err.message : err}`);
+          console.error(`PI_WORK_KERNEL_AGENT ${err instanceof Error ? err.message : err}`);
           return undefined;
         }
       }),
@@ -78,10 +74,10 @@ function builtinTool(name) {
 
 /**
  * Host glue around configure / submit. `bridge` is the same object passed to
- * installRoleExtensions, so the skills section can see the current role.
+ * installAgentExtensions, so the skills section can list enabled skills.
  * `bridge.afterTools` reloads plugins at a generation boundary.
  */
-export function createRoleHost({
+export function createAgentHost({
   store,
   harness,
   context,
@@ -106,29 +102,14 @@ export function createRoleHost({
     if (conv?.harnessId != null) byHarness.set(conv.harnessId, conv.id);
   }
 
-  async function resolveRole(harnessId) {
-    const cid = byHarness.get(harnessId);
-    if (!cid) return null;
-    const conv = await store.getConversation(cid);
-    if (!conv) return null;
-    return loadEffectiveRole(conv);
-  }
-
   if (bridge) {
-    bridge.resolveRole = resolveRole;
-    bridge.skillPrompt = (role) => (
-      extensions && typeof extensions.skillPrompt === 'function' ? extensions.skillPrompt(role) : ''
+    bridge.skillPrompt = () => (
+      extensions && typeof extensions.skillPrompt === 'function' ? extensions.skillPrompt() : ''
     );
   }
 
-  async function loadEffectiveRole(conv) {
-    const roleId = conv?.roleId || null;
-    const role = (roleId && await store.getRole(roleId)) || await store.getRole('default') || FALLBACK_ROLE;
-    return role;
-  }
-
-  function toolsFor(role, { dispatch = true } = {}) {
-    const tools = plugins.toolsFor(role, toolsForRole(role));
+  function toolsFor({ dispatch = true } = {}) {
+    const tools = plugins.toolsFor(workspaceTools());
     if (!dispatch || typeof bridge?.extraTools !== 'function') return tools;
     const have = new Set(tools.map((tool) => tool.name));
     for (const tool of bridge.extraTools() || []) {
@@ -139,16 +120,16 @@ export function createRoleHost({
     return tools;
   }
 
-  async function configure(conv, role) {
+  async function configure(conv) {
     if (!conv?.harnessId) return;
     const conversation = await harness.conversation(conv.harnessId, context);
     if (!conversation) return;
     await plugins.refresh();
     await conversation.configure({
-      instructions: String(role?.systemPrompt || ''),
-      tools: toolsFor(role),
+      instructions: '',
+      tools: toolsFor(),
     }, context);
-    if (typeof resolveModel === 'function') await resolveModel(conv, role);
+    if (typeof resolveModel === 'function') await resolveModel(conv);
   }
 
   if (bridge) {
@@ -159,7 +140,7 @@ export function createRoleHost({
       if (!cid) return;
       const conv = await store.getConversation(cid);
       if (!conv) return;
-      await configure(conv, await loadEffectiveRole(conv));
+      await configure(conv);
     };
   }
 
@@ -171,7 +152,7 @@ export function createRoleHost({
       if (!conv?.harnessId) continue;
       remember(conv);
       try {
-        await configure(conv, await loadEffectiveRole(conv));
+        await configure(conv);
       } catch (err) {
         console.error(`PI_WORK_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
       }
@@ -198,7 +179,7 @@ export function createRoleHost({
     try {
       agents = await describeAgents({ ...conv, status: conv.status }, msgs || []);
     } catch (err) {
-      console.error(`PI_WORK_KERNEL_ROLE ${err instanceof Error ? err.message : err}`);
+      console.error(`PI_WORK_KERNEL_AGENT ${err instanceof Error ? err.message : err}`);
       return;
     }
     const agent = agents[0];
@@ -215,7 +196,6 @@ export function createRoleHost({
     const agents = typeof describeAgents === 'function' ? await describeAgents(next, transcript.messages || []) : [];
     return {
       id: next.id,
-      roleId: next.roleId || null,
       modelSourceId: next.modelSourceId || null,
       modelId: next.modelId || null,
       status: next.status,
@@ -229,18 +209,6 @@ export function createRoleHost({
     const status = await liveStatus(conv);
     const patch = {};
     const input = body && typeof body === 'object' ? body : {};
-    const wantsRole = Object.prototype.hasOwnProperty.call(input, 'roleId');
-    if (status === 'running' && wantsRole) {
-      return { status: 409, body: { error: 'err_role_busy', status } };
-    }
-    if (wantsRole) {
-      if (input.roleId == null || input.roleId === '' || input.roleId === 'default') patch.roleId = null;
-      else {
-        const role = await store.getRole(String(input.roleId));
-        if (!role) return { status: 400, body: { errors: ['unknown role'] } };
-        patch.roleId = role.id;
-      }
-    }
     const modelChoice = resolveConversationModelPatch(await store.getSettings(), input);
     if (modelChoice.present) {
       if (!modelChoice.ok) return { status: 400, body: { errors: modelChoice.errors } };
@@ -248,33 +216,31 @@ export function createRoleHost({
       patch.modelId = modelChoice.value.modelId;
     }
     if (!Object.keys(patch).length) {
-      // pipelineId is ignored if still sent.
-      if (Object.prototype.hasOwnProperty.call(input, 'pipelineId')) {
+      // Unknown keys (pipeline leftovers, retired fields) are ignored.
+      if (Object.keys(input).length) {
         return { status: 200, body: await patchBody(conv) };
       }
       return { status: 400, body: { error: 'empty patch' } };
     }
     const next = await store.updateConversation(cid, patch);
     remember(next);
-    // Role changes stay idle-only. A model change while running is stored and
-    // picked up on the next submit via modelFor.
-    if (status !== 'running') await configure(next, await loadEffectiveRole(next));
+    // A model change while running is stored and picked up on the next submit.
+    if (status !== 'running') await configure(next);
     return { status: 200, body: await patchBody(next) };
   }
 
   return {
     remember,
     reloadPlugins,
-    resolveRole,
-    async collectTools(role, options) {
+    async collectTools(options) {
       await plugins.refresh();
-      return toolsFor(role, options);
+      return toolsFor(options);
     },
     emitAgent,
     patchConversation,
     async afterCreate(conv) {
       remember(conv);
-      await configure(conv, await loadEffectiveRole(conv));
+      await configure(conv);
       return conv;
     },
     async prepareSend(conv, text) {
@@ -282,7 +248,7 @@ export function createRoleHost({
       const title = autoTitleFromText(next.title, text);
       if (title !== undefined) next = await store.updateConversation(next.id, { title });
       remember(next);
-      await configure(next, await loadEffectiveRole(next));
+      await configure(next);
       return { requestId: randomUUID(), conversation: next };
     },
     async seed(rows) {

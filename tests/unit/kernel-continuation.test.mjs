@@ -13,7 +13,7 @@ import {
   shouldContinueFromLength,
 } from '../../src/kernel/continuation.mjs';
 import { createKernelModels, DEFAULT_MAX_OUTPUT_TOKENS, maxOutputTokensFromEnv } from '../../src/kernel/models.mjs';
-import { autoTitleFromText } from '../../src/kernel/roles.mjs';
+import { autoTitleFromText } from '../../src/kernel/agent-config.mjs';
 import { applyMessageDone } from '../../public/stream.js';
 import { request as serverRequest, startServer, stopServer } from './_server.mjs';
 
@@ -71,7 +71,7 @@ test('maxTokens defaults to 32768 and PI_WORK_MAX_OUTPUT_TOKENS overrides', asyn
   async function tokensFor(env) {
     const models = createModels();
     const routes = createKernelModels({ models, getSettings: async () => settings, env });
-    const main = await routes.modelFor({ roleId: null });
+    const main = await routes.modelFor({});
     return models.getModel(main.provider, main.modelId).maxTokens;
   }
 

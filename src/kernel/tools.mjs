@@ -14,7 +14,6 @@ import {
 import { diffStats, splitLines } from '../core/diff.mjs';
 
 const DETAIL_CAP = 1024 * 1024;
-const WORKSPACE_TOOL_NAMES = ['read', 'write', 'edit', 'ls', 'grep', 'bash'];
 const SKIP_DIR_NAMES = new Set(['.git', 'node_modules']);
 
 function withReplay(tool, replay) {
@@ -224,15 +223,6 @@ const workspaceToolList = [
 
 export function workspaceTools() {
   return workspaceToolList;
-}
-
-/** Role whitelist. An empty list matches the orchestrator and offers every workspace tool. */
-export function toolsForRole(role) {
-  const allowed = Array.isArray(role?.tools) && role.tools.length
-    ? role.tools
-    : WORKSPACE_TOOL_NAMES;
-  const byName = new Map(workspaceToolList.map((tool) => [tool.name, tool]));
-  return allowed.map((name) => byName.get(name)).filter(Boolean);
 }
 
 function byteLength(text) {

@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateRole, allocateRoleId, TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
+import { TOOLS as BUILTIN_TOOLS } from './src/core/config.mjs';
 import { resolveInWorkspace } from './src/core/paths.mjs';
 import { listWorkspaceTree } from './src/core/workspace-tree.mjs';
 import { diffStats } from './src/core/diff.mjs';
@@ -12,10 +12,7 @@ import {
   VENDOR_PRESETS,
   publicSource,
   migrateLegacySettings,
-  resolveRoleTarget,
   resolveConversationModelPatch,
-  effectiveModelFor,
-  planRoleModelMigration,
   hasAvailableSource,
   validateRoleModels,
   createApiSource,
@@ -44,7 +41,6 @@ import { cloneUrlForProject, getGitlabProject, listGitlabBranches, listGitlabPro
 import { createExtensionHost } from './src/core/extensions.mjs';
 import { describePlugins, installPlugin, PLUGIN_ID } from './src/core/plugins.mjs';
 import { listSkills, listSkillRecords, createSkill, updateSkill, deleteSkill, SKILL_ID } from './src/core/skills.mjs';
-import { loadRoleTemplates, readRoleTemplateMap, attachBuiltinPrompts, BUILTIN_ROLE_IDS } from './src/core/roles-load.mjs';
 import { buildAgents } from './src/core/agents.mjs';
 import { createSqliteStore } from './src/store/sqlite.mjs';
 import {
@@ -254,9 +250,7 @@ function publicConversation(conv) {
 }
 
 async function agentsFor(conv, messages) {
-  const roles = await store.listRoles();
-  const role = (conv.roleId && await store.getRole(conv.roleId)) || await store.getRole('default');
-  return buildAgents({ conv, role, roles, messages });
+  return buildAgents({ conv, messages });
 }
 
 function serveStatic(req, res, url) {
@@ -293,14 +287,6 @@ function isSsePath(p) {
   return /^\/api\/conversations\/[^/]+\/events$/.test(p);
 }
 
-const CATALOG_ID = /^[a-z][a-z0-9-]{0,31}$/;
-
-function parseCatalogId(raw) {
-  let id = raw;
-  try { id = decodeURIComponent(raw); } catch { return null; }
-  return CATALOG_ID.test(id) ? id : null;
-}
-
 const store = createSqliteStore(DATA_DIR);
 let kernelApi = null;
 
@@ -328,8 +314,6 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, shutdown);
 }
 
-await loadRoleTemplates(store, path.join(ROOT, 'roles'));
-
 const grokAuth = createGrokAuth();
 
 await ensureSettings();
@@ -350,35 +334,6 @@ await ensureSettings();
       }
     }
   }
-}
-
-await migrateStoredRoleModels();
-
-async function migrateStoredRoleModels() {
-  const [grok, settings, roles] = await Promise.all([currentGrok(), ensureSettings(), store.listRoles()]);
-  const plan = planRoleModelMigration(roles, settings, { grokSignedIn: Boolean(grok?.signedIn) });
-  for (const line of plan.logs) console.warn(line);
-  if (plan.changed) await store.putSettings({ models: plan.models });
-  for (const id of plan.clearIds) {
-    const role = await store.getRole(id);
-    if (!role?.model) continue;
-    const next = { ...role };
-    delete next.model;
-    await store.updateRole(id, next);
-  }
-}
-
-async function presentRoles(roles) {
-  const templates = await readRoleTemplateMap(path.join(ROOT, 'roles'));
-  const [settings, grok] = await Promise.all([ensureSettings(), currentGrok()]);
-  const signedIn = Boolean(grok?.signedIn);
-  return attachBuiltinPrompts(roles, templates).map((role) => {
-    const out = { ...role };
-    delete out.model;
-    if (typeof out.description !== 'string') out.description = '';
-    out.effectiveModel = effectiveModelFor(settings, role.id, { grokSignedIn: signedIn });
-    return out;
-  });
 }
 
 const extensionHost = createExtensionHost({
@@ -597,9 +552,7 @@ async function handleSources(req, res, p, m) {
     }
     const sources = settings.sources.filter((source) => source.id !== current.id);
     const models = { ...(settings.models || {}) };
-    for (const [roleId, binding] of Object.entries(models)) {
-      if (binding?.sourceId === current.id) models[roleId] = null;
-    }
+    if (models.default?.sourceId === current.id) models.default = null;
     await store.putSettings({ sources, models });
     sendJson(res, 200, { ok: true, id: current.id });
     return true;
@@ -974,10 +927,6 @@ async function routeApi(req, res, url) {
     const ws = await store.getWorkspace(wid);
     if (!ws) { sendJson(res, 404, { error: 'workspace not found' }); return; }
     const body = await readBody(req);
-    if (body.roleId) {
-      const role = await store.getRole(body.roleId);
-      if (!role) { sendJson(res, 400, { errors: ['unknown role'] }); return; }
-    }
     const modelChoice = resolveConversationModelPatch(await store.getSettings(), body);
     if (modelChoice.present && !modelChoice.ok) {
       sendJson(res, 400, { errors: modelChoice.errors });
@@ -987,7 +936,6 @@ async function routeApi(req, res, url) {
       workspaceId: wid,
       workspacePath: ws.path,
       title: body.title || 'New conversation',
-      roleId: body.roleId,
       status: 'idle',
       ...(modelChoice.present ? modelChoice.value : {}),
     });
@@ -1111,7 +1059,6 @@ async function routeApi(req, res, url) {
       id: live.id,
       title: live.title,
       status: live.status,
-      roleId: live.roleId || null,
       modelSourceId: live.modelSourceId || null,
       modelId: live.modelId || null,
       messages,
@@ -1186,75 +1133,6 @@ async function routeApi(req, res, url) {
     const conv = await store.getConversation(cid);
     if (!conv) { sendJson(res, 404, { error: 'conversation not found' }); return; }
     await kernelApi.streamEvents(req, res, cid, { headers: SECURITY_HEADERS });
-    return;
-  }
-
-  if (p === '/api/roles' && m === 'GET') {
-    sendJson(res, 200, await presentRoles(await store.listRoles()));
-    return;
-  }
-  if (p === '/api/roles' && m === 'POST') {
-    const body = await readBody(req);
-    const draft = body && typeof body === 'object' && !Array.isArray(body) ? { ...body } : body;
-    if (draft && typeof draft === 'object' && !Array.isArray(draft) && (draft.id == null || draft.id === '')) {
-      draft.id = await allocateRoleId(store, draft.name);
-    }
-    const v = validateRole(draft);
-    if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
-    if (await store.getRole(v.value.id)) { sendJson(res, 409, { error: 'exists' }); return; }
-    await store.clearCatalogTombstone('role', v.value.id);
-    const role = await store.createRole(v.value);
-    const [presented] = await presentRoles([role]);
-    sendJson(res, 201, presented);
-    return;
-  }
-
-  match = p.match(/^\/api\/roles\/([^/]+)\/reset$/);
-  if (match && m === 'POST') {
-    const id = parseCatalogId(match[1]);
-    if (!id) { sendJson(res, 400, { errors: ['invalid id'] }); return; }
-    const existing = await store.getRole(id);
-    if (!existing) { sendJson(res, 404, { error: 'not_found' }); return; }
-    const templates = await readRoleTemplateMap(path.join(ROOT, 'roles'));
-    const tpl = templates.get(id);
-    if (!BUILTIN_ROLE_IDS.includes(id) || !tpl) { sendJson(res, 400, { error: 'not_builtin' }); return; }
-    const saved = await store.updateRole(id, {
-      id,
-      name: tpl.name,
-      systemPrompt: tpl.systemPrompt,
-      tools: tpl.tools.slice(),
-      description: tpl.description || '',
-    });
-    const [presented] = await presentRoles([saved]);
-    sendJson(res, 200, presented);
-    return;
-  }
-
-  match = p.match(/^\/api\/roles\/([^/]+)$/);
-  if (match && (m === 'PUT' || m === 'DELETE')) {
-    const id = parseCatalogId(match[1]);
-    if (!id) { sendJson(res, 400, { errors: ['invalid id'] }); return; }
-    if (m === 'DELETE') {
-      const existing = await store.getRole(id);
-      if (!existing) { sendJson(res, 404, { error: 'not_found' }); return; }
-      const conversations = await store.countConversationsReferencing({ roleId: id });
-      if (conversations > 0) { sendJson(res, 409, { error: 'role_in_conversations', conversations }); return; }
-      if (BUILTIN_ROLE_IDS.includes(id)) { sendJson(res, 409, { error: 'protected' }); return; }
-      await store.deleteRole(id);
-      await store.tombstoneCatalog('role', id);
-      await store.putSettings({ models: { [id]: null } });
-      sendJson(res, 200, { ok: true, id });
-      return;
-    }
-    const body = await readBody(req);
-    if (body?.id != null && body.id !== id) { sendJson(res, 400, { errors: ['id mismatch'] }); return; }
-    if (!(await store.getRole(id))) { sendJson(res, 404, { error: 'not_found' }); return; }
-    const v = validateRole({ ...body, id });
-    if (!v.ok) { sendJson(res, 400, { errors: v.errors }); return; }
-    await store.clearCatalogTombstone('role', id);
-    const saved = await store.updateRole(id, v.value);
-    const [presented] = await presentRoles([saved]);
-    sendJson(res, 200, presented);
     return;
   }
 

@@ -22,7 +22,7 @@
 | `PI_WORK_GIT_CA_FILE` | 设置后克隆命令增加 `-c http.sslCAInfo=<路径>`，用于自签或内网 CA | 不设 |
 启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。未设置 `PI_WORK_TOKEN` 时不再打印 `PI_WORK_LOGIN` 或 `PI_WORK_TOKEN`。`GET /api/health` → `{ok:true}`。服务只监听 `127.0.0.1`。`Host` 不在白名单为 400；写请求带非同源 `Origin` 为 403；写请求的 `Content-Type` 不是 `application/json` 为 415。这三项与是否设置 `PI_WORK_TOKEN` 无关。
 
-未设置 `PI_WORK_LLM=faux`、`LLM_API=faux`、`PI_WORK_FAUX_SCRIPT` 时，没有已登录的 Grok 来源，也没有可用的 API 来源，就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。模型来源与按角色绑定见 §8。
+未设置 `PI_WORK_LLM=faux`、`LLM_API=faux`、`PI_WORK_FAUX_SCRIPT` 时，没有已登录的 Grok 来源，也没有可用的 API 来源，就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。模型来源与默认绑定见 §8。
 
 ## 2. 纯函数模块（单元测试直接 import，均为 ESM，路径相对仓库根）
 - `src/core/paths.mjs`
@@ -35,8 +35,7 @@
   - `formatSSE({id, event, data})` → `id: <id>\nevent: <event>\ndata: <JSON 单行>\n\n`；data 为对象时 JSON.stringify；多行字符串按行拆成多个 `data:`；缺 id 则省略该行。
   - `parseSSE(text)` → 事件数组 `{id, event, data}`（data 为解析后的 JSON，若可解析）。往返一致。
 - `src/core/config.mjs`
-  - `validateRole(obj)` → `{ok:true, value}` 或 `{ok:false, errors:[string]}`。
-  - Role：`{id:/^[a-z][a-z0-9-]{0,31}$/, name, systemPrompt:string 非空, tools: 子集 of ['read','write','edit','ls','grep','bash'], description?: string, skills?: string[], pluginTools?: boolean}`。tools 缺省 `['read','ls','grep']`。`description` 最长 500，缺省空字符串。`skills` 缺省表示继承全部全局已启用的 Skill；`[]` 表示不用；非空数组只使用其中且全局已启用的那些。`pluginTools` 缺省或 `true` 表示这个角色可以使用已启用的插件工具；`false` 表示不并入、也不能调用。请求里的 `model` 和 `builtin` 一律忽略，不报错。
+  - `TOOLS`：内置工作区工具名 `['read','write','edit','ls','grep','bash']`。主 Agent 始终带上这份清单，再加上设置里启用的插件工具和 `delegate` / `subagent`。
 - `src/core/git-import.mjs`
   - `validateGitUrl(url, { httpHosts?, env? })`：允许 `https:`、`ssh:`、`git@host:path`。`http:` 仅当主机名（不含端口，大小写不敏感）在允许列表中。列表优先用 `httpHosts`，否则用 `env.PI_WORK_GIT_HTTP_HOSTS`（传了 `env` 时），再否则读进程环境。逗号分隔。`file:`、`git:`、`ftp:` 等拒绝。主机或路径段以 `-` 开头则拒绝。
   - `stripGitUrlCredentials(url)`：去掉 `scheme://user:pass@` 中的 `user:pass`。
@@ -49,20 +48,17 @@
 |---|---|---|
 | `POST /workspaces` | `{name, path}` | `201 {id,name,path}`；path 不存在 → 400 |
 | `GET /workspaces` | | `[{id,name,path}]` |
-| `POST /workspaces/:wid/conversations` | `{title?, roleId?, modelSourceId?, modelId?}` | `201 {id, workspaceId, title, status:'idle', modelSourceId, modelId}`。`modelSourceId`/`modelId` 成对可选；都缺或都为 `null` 表示跟随默认角色绑定。来源不存在、或该来源模型列表里没有这个模型 → 400 `{errors}`。若仍带 `pipelineId` 则忽略、不报错 |
+| `POST /workspaces/:wid/conversations` | `{title?, modelSourceId?, modelId?}` | `201 {id, workspaceId, title, status:'idle', modelSourceId, modelId}`。`modelSourceId`/`modelId` 成对可选；都缺或都为 `null` 表示跟随 `settings.models.default`。来源不存在、或该来源模型列表里没有这个模型 → 400 `{errors}`。若仍带 `pipelineId` 或其它未知字段则忽略、不报错 |
 | `GET /workspaces/:wid/conversations?q=` | | 列表，按更新时间倒序 |
-| `GET /conversations/:cid` | | `{id,title,status,roleId,modelSourceId,modelId,messages:[...],usage,contextWindow,contextLabel}`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 为该对话实际模型（与 `modelFor` 相同的源 + 模型名）的窗口：用户在来源 `contextWindows` 里的设置 > pi-ai 模型目录里该模型的 `contextWindow` > `LLM_CONTEXT_WINDOW` > 128000。用户设置优先于 usage 里报的窗口。对话没有可用模型时仍是 usage 窗口或环境默认值。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
+| `GET /conversations/:cid` | | `{id,title,status,modelSourceId,modelId,messages:[...],usage,contextWindow,contextLabel}`。不返回 `roleId`。`usage` 是最近一次模型调用上报的 token 计数（没有则为 `null`，不估算）。`contextWindow` 为该对话实际模型（与 `modelFor` 相同的源 + 模型名）的窗口：用户在来源 `contextWindows` 里的设置 > pi-ai 模型目录里该模型的 `contextWindow` > `LLM_CONTEXT_WINDOW` > 128000。用户设置优先于 usage 里报的窗口。对话没有可用模型时仍是 usage 窗口或环境默认值。`contextLabel` 为 `1.2k / 128k` 或 `—`。失败时带 `llmError`。不返回 `pipelineId` / `pipelineStep` |
 | `POST /conversations/:cid/messages` | `{text}` | `202 {runId, status:'running'}`。对话忙时用 `whenBusy:'steer'` 插入当前运行，不返回 409 |
-| `PATCH /conversations/:cid` | `{roleId?, modelSourceId?, modelId?}` | `200 {id, roleId, modelSourceId, modelId, status, agents}`。`agents` 是切换后的侧栏角色列表，客户端应立刻用它刷新，不必整页刷新。空 `roleId` 表示默认 Agent。`modelSourceId`/`modelId` 为 `null` 表示跟随默认绑定。来源不存在或模型不在该来源列表里 → 400 `{errors}`。若仍带 `pipelineId` 则忽略、不报错。改 `roleId` 且 `running` 时 409 `{error:'err_role_busy'}`。只改模型时运行中也可改，下一轮生效。未知角色 400 |
+| `PATCH /conversations/:cid` | `{modelSourceId?, modelId?}` | `200 {id, modelSourceId, modelId, status, agents}`。不返回 `roleId`。`modelSourceId`/`modelId` 为 `null` 表示跟随 `settings.models.default`。来源不存在或模型不在该来源列表里 → 400 `{errors}`。若仍带 `pipelineId` 或其它未知字段则忽略、不报错。运行中也可改模型，下一轮生效 |
 | `POST /conversations/:cid/stop` | | `200 {status:'stopped'}`。中止当前运行，并停掉后台子 Agent |
 | `GET /conversations/:cid/changes` | | `[{path, added, removed, toolCallId}]`（按文件聚合）。基线是该路径第一次 `write`/`edit` 的 `before`，对比工作区里该文件的当前内容。单份 before/after 或当前文件超过 1 MB 时该项带 `error:'文件过大'` |
 | `GET /workspaces/:wid/files?path=` | | `{path, content}`；越界 → 403 `{error:'E_SANDBOX'}` |
 | `PUT /workspaces/:wid/files` | `{path, content}` | `200 {path, added, removed}` |
 | `GET /conversations/:cid/diff?path=` | | `{path, before, after, unified, added, removed}`。`before` 是该文件第一次变更前的基线；`after` 与 `unified` 对的是工作区磁盘上的当前内容。文件已删除时 `after` 为空。没有这条路径 404 `{error:'no diff'}`。基线或当前文件超过 1 MB 时 `200 {path, error:'文件过大'}` |
-| `GET /roles` · `POST /roles` | Role | 校验失败 400 `{errors}`；id 已存在 409 `{error:'exists'}`。`POST` 可以不带 `id`：服务端用名称生成唯一 id（ASCII 小写、数字、横线；纯中文等无法生成合法 id 时用 `agent-` 加 6 位随机）。与已有角色或 tombstone 冲突时在后面加 `-2`、`-3`……。调用方仍然可以显式传合法 `id`。响应带生成的 `id`。`GET` 对预设 `default`、`planner`、`coder`、`tester`、`auditor` 带 `builtin:true`、`defaultPrompt`（`roles/<id>.json` 的出厂提示词）和 `defaultTools`。每个角色都带只读 `effectiveModel:{sourceId, model, follow}`。`follow:true` 表示这个角色没有自己的 `settings.models` 绑定，实际用的是默认角色的绑定，或再退到第一个可用来源的第一个模型；没有可用模型时 `sourceId` 和 `model` 为 `null`。响应不含 `model`。库里的 `systemPrompt` 可以和出厂提示词不同。启动时，预设提示词若仍是已知的旧出厂稿且用户没改过，会换成当前模板；改过的保持不动。预设的 `tools` 若仍等于旧模板值则升到新模板（审计从 `read,write,ls,grep` 改为只读 `read,ls,grep`），改过的保留。`description` 为空时补上模板里的说明 |
-| `PUT /roles/:id` | Role | 更新已有角色，按整份角色替换（没传的 `skills` / `pluginTools` 回到缺省）。不存在 404 `{error:'not_found'}`；路径与 body.id 不一致 400 `{errors:['id mismatch']}`。`model` 被忽略 |
-| `POST /roles/:id/reset` | | 把预设的名称、提示词、工具、`description`、`skills`、`pluginTools` 恢复成 `roles/<id>.json`。不改 `settings.models` 里的绑定。不是预设 400 `{error:'not_builtin'}`；角色不存在 404 `{error:'not_found'}` |
-| `DELETE /roles/:id` | | 200 `{ok:true,id}`。五个预设不可删。被对话 `roleId` 引用时 409 `{error:'role_in_conversations',conversations:n}`。没有这些引用时，预设返回 409 `{error:'protected'}`。成功删除会写入 catalog tombstone，下次启动不会从 `roles/*.json` 再种回该 id，并删掉 `settings.models` 里这个角色的绑定 |
+| `GET /roles` · `POST /roles` · `PUT /roles/:id` · `DELETE /roles/:id` · `POST /roles/:id/reset` | | 404 `{error:'not found'}`。角色系统已删除 |
 | `GET /pipelines` · `POST /pipelines` · `PUT /pipelines/:id` · `DELETE /pipelines/:id` | | 404 `{error:'not found'}`。流水线已删除 |
 status 取值：`idle | running | waiting | failed | done | stopped`。应用库只存最近一次 `submit` 的 `last_submission_id`。状态是 `harness.submission(id).status()`：`queued` / `placed` 为运行中，`done` 为完成，`unanswered` 且 `reason` 为 `aborted` 为已停止，其它 `unanswered` 为失败（`llmError` 来自这条记录的 `reason` / `detail`）。还没有这个指针的对话是空闲。指针指向的提交在 Harness 里找不到时，状态是 `failed`，`llmError` 为 `{code:'E_SUBMISSION_MISSING', message:'找不到这次运行的记录'}`，HTTP 仍是 200。没有 harness id 的旧行不出现在列表里。
 
@@ -138,9 +134,9 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 
 顶层不再返回 `provider`、`baseUrl`、`apiKey`、`hasApiKey`。密钥只出现在某条 `sources[]` 里，而且是掩码 `••••` 加原密钥最后 4 位，另有 `hasApiKey`。响应体不得含明文密钥。
 
-`models` 的值是 `{ sourceId, model }`。`PUT /api/settings` 只接受这一种；字符串会被 400。`null` 表示去掉该角色的绑定。`PUT` 忽略 `provider`、`baseUrl`、`apiKey`、`hasApiKey`、`sources`、`version`，这些都不能从这条接口写回去。
+`models` 的值是 `{ sourceId, model }`。`PUT /api/settings` 只接受这一种；字符串会被 400。只保留 `default` 一项，其它键读到时忽略、保存时不写。`null` 表示去掉默认绑定。`PUT` 忽略 `provider`、`baseUrl`、`apiKey`、`hasApiKey`、`sources`、`version`，这些都不能从这条接口写回去。
 
-旧的单行 `{ provider, baseUrl, apiKey, models:{ role: "模型名" } }` 在第一次读到时迁移到 version 2，并且只迁移一次（已经是 version 2 的记录按原样保留来源，读出时仍会去掉顶层那三个旧字段）：
+旧的单行 `{ provider, baseUrl, apiKey, models:{ default: "模型名" } }` 在第一次读到时迁移到 version 2，并且只迁移一次（已经是 version 2 的记录按原样保留来源，读出时仍会去掉顶层那三个旧字段）。只有 `default` 字符串会写成绑定，其它键丢掉：
 
 - 有非空 `apiKey`，或 `provider` 是 `ollama` 且有 `baseUrl`，或 `baseUrl` 非空且不等于该 provider 的预设地址，才建一条 API 来源。
 - 默认的 `{ provider:'openai', baseUrl:'', apiKey:'' }`、只选了预设厂商但没填地址和密钥、以及 `baseUrl` 恰好等于预设地址且没有密钥，都不建来源。
@@ -148,14 +144,14 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 - 已登录 Grok 时，字符串模型挂到 Grok 来源；否则挂到新建的那条 API 来源。
 - 迁移后顶层 `apiKey`、`baseUrl` 清空，`provider` 回到 `openai`，库里的 JSON 不再保留这三个字段。
 
-来源对象：`{ id, kind:'api'|'grok', vendor, name, baseUrl, apiKey, hasApiKey, models:string[], catalog?:string[], lastTest?:{ ok, at, error?, code?, status? }, contextWindows?:{ [模型名]: number }, defaultContextWindow: number, defaultContextWindows:{ [模型名]: number } }`。`models` 是已启用、会出现在角色下拉里的名字。`catalog` 只在来源行探测成功后出现，是这次拉到的完整列表；编辑抽屉用它把还没启用的新模型显示成未勾选。`contextWindows` 只含用户改过的模型上限（正整数 token 数）；没有改过则省略。`defaultContextWindow` 等于 `contextWindowFromEnv()`（`LLM_CONTEXT_WINDOW`，默认 128000），仍是整源回落。`defaultContextWindows` 给每个已启用模型一个默认上下文：pi-ai 目录里该模型的 `contextWindow`，查不到则用 `defaultContextWindow`。匹配规则：模型 id 相同且源 `baseUrl` 主机名相同；否则 id 相同且全目录唯一。前端输入框和「恢复默认」先看 `defaultContextWindows[模型]`。Grok 的 id 固定为 `grok`，并带 `session:{ signedIn, email, expiresAt }`。`lastTest.error` 与探测失败文本都要去掉密钥（`sk-***`、以及原文里的完整 key）。`lastTest.code` 与下面探测响应的 `code` 相同；`lastTest.status` 只在 HTTP 响应失败时出现。
+来源对象：`{ id, kind:'api'|'grok', vendor, name, baseUrl, apiKey, hasApiKey, models:string[], catalog?:string[], lastTest?:{ ok, at, error?, code?, status? }, contextWindows?:{ [模型名]: number }, defaultContextWindow: number, defaultContextWindows:{ [模型名]: number } }`。`models` 是已启用、会出现在模型下拉里的名字。`catalog` 只在来源行探测成功后出现，是这次拉到的完整列表；编辑抽屉用它把还没启用的新模型显示成未勾选。`contextWindows` 只含用户改过的模型上限（正整数 token 数）；没有改过则省略。`defaultContextWindow` 等于 `contextWindowFromEnv()`（`LLM_CONTEXT_WINDOW`，默认 128000），仍是整源回落。`defaultContextWindows` 给每个已启用模型一个默认上下文：pi-ai 目录里该模型的 `contextWindow`，查不到则用 `defaultContextWindow`。匹配规则：模型 id 相同且源 `baseUrl` 主机名相同；否则 id 相同且全目录唯一。前端输入框和「恢复默认」先看 `defaultContextWindows[模型]`。Grok 的 id 固定为 `grok`，并带 `session:{ signedIn, email, expiresAt }`。`lastTest.error` 与探测失败文本都要去掉密钥（`sk-***`、以及原文里的完整 key）。`lastTest.code` 与下面探测响应的 `code` 相同；`lastTest.status` 只在 HTTP 响应失败时出现。
 
 | 方法 路径 | 请求 | 响应 |
 |---|---|---|
 | `GET /api/sources` | 无单独列表接口 | 来源在 `GET /api/settings` 的 `sources` |
 | `POST /api/sources` | `{ vendor, name?, baseUrl?, apiKey?, models? }` | `201` 公开来源。`vendor` 必须是预设 id |
 | `PUT /api/sources/:id` | 局部更新 `name` / `vendor` / `baseUrl` / `apiKey` / `models` / `contextWindows` | `200` 公开来源。掩码或空的 `apiKey` 表示不改密钥。`contextWindows` 与已有值合并；某模型值为 `null` 表示删除该项（恢复默认）。Grok 来源也支持 |
-| `DELETE /api/sources/:id` | | `200 {ok:true,id}`。引用该来源的角色绑定被去掉。删除 Grok 来源会退出登录 |
+| `DELETE /api/sources/:id` | | `200 {ok:true,id}`。引用该来源的默认绑定被去掉。删除 Grok 来源会退出登录 |
 | `POST /api/sources/test` | `{ vendor, baseUrl?, apiKey? }` 或 `{ sourceId, vendor?, baseUrl?, apiKey? }` | `200 { ok, models?, error?, code?, status? }` |
 
 错误码：
@@ -167,8 +163,7 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 | 400 | `invalid context window` | `contextWindows` 不是对象，或某个值不是 `null` 且不是 1000–10000000 的整数 |
 | 400 | `base url required` | 没有可用的 base URL |
 | 400 | `api key required` | 该厂商需要密钥，但没有新密钥。改 `baseUrl` 时，新地址的 origin（协议 + 主机 + 端口）和旧地址不同，且这次没有带新密钥，也是这个错误：旧密钥先被丢掉。只改路径、origin 不变，旧密钥保留。Ollama 不需要密钥，换 origin 会清空旧密钥并成功 |
-| 400 | `invalid model binding` | `models` 不是对象，或某个值不是 `{ sourceId, model }` / `null` |
-| 400 | `invalid role id` | 角色 id 不合法 |
+| 400 | `invalid model binding` | `models` 不是对象，或 `default` 的值不是 `{ sourceId, model }` / `null` |
 | 400 | `unknown source` | `sourceId` 不存在 |
 | 400 | `model not in source` | `model` 不在该来源的 `models` 列表里 |
 | 404 | `not found` | 来源 id 不存在 |
@@ -189,13 +184,13 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 
 `POST /api/sources/test` 带 `sourceId` 时，把请求里的 `vendor` / `baseUrl` / `apiKey` 叠到已保存的来源上再探测，不写回这条来源。origin 变了又没带新密钥，同样 400 `api key required`，不探测。只有请求里完全没有这些覆盖字段时，才把结果写入该来源的 `lastTest`（含 `code` / `status`）。这次如果成功，还按下面的规则改 `models`，并把拉到的完整列表写入 `catalog`：刷新不删除已经启用的模型。当前没有启用任何模型时，`models` 变成拉到的全部；已经有启用模型时 `models` 保持不变，新出现的名字只进 `catalog`、不自动启用。失败不改 `models` 和 `catalog`。
 
-发消息时按角色选来源：该角色的 `{ sourceId, model }`，没有再用 `default`，再没有就用第一个可用的来源上的第一个模型。角色记录上不再有 `model`。启动时若库里的角色还留着旧的 `model` 字符串：这个角色还没有绑定时，在某个可用来源的模型列表里能找到同名模型，就写成 `settings.models[roleId]`；找不到就丢掉，并在服务器日志记一行 `PI_WORK_ROLE_MODEL dropped <roleId> model "<name>"`（不含密钥、不含 base URL）。无论找不找得到，这行 `model` 都会从角色记录里删掉。已有绑定不被覆盖。目标是 Grok 但拿不到 access token，并且没有别的可用目标时，本轮以 `E_NO_MODEL` / `err_no_model` 失败，而不是拿空的 base URL 去请求。
+发消息时按这条链选来源：对话自己的 `{ modelSourceId, modelId }`，没有再用 `settings.models.default`，再没有就用第一个可用的来源上的第一个模型。目标是 Grok 但拿不到 access token，并且没有别的可用目标时，本轮以 `E_NO_MODEL` / `err_no_model` 失败，而不是拿空的 base URL 去请求。
 
-## 9. Skills 与按角色生效
+## 9. Skills
 
-`GET /api/skills` 返回全部 Skill：`{id, name, description, version, source, enabled, deletable}`。Agent 页的复选列表用其中 `enabled === true` 的 `id`、`name`、`description`（`description` 是一句说明）。全局开关仍是 `settings.skills[id] === false` 表示关闭，缺省为开启。
+`GET /api/skills` 返回全部 Skill：`{id, name, description, version, source, enabled, deletable}`。全局开关仍是 `settings.skills[id] === false` 表示关闭，缺省为开启。
 
-运行时：当前角色的 `skills` 缺省时，系统提示词带上全部全局已启用的 Skill；是数组时只带这些 id 里全局仍启用的；`[]` 不带 Skill。主 Agent（`default`）也看它自己的 `skills`。`pluginTools === false` 的角色，工具列表里没有插件工具，模型若仍调用，结果是 `E_UNKNOWN_TOOL`。缺省与现在一样，已启用的插件工具会并进该角色的工具列表。
+运行时：主 Agent 的系统提示词 `instructions` 为空字符串。技能 section 列出设置里启用的全部 Skill（正文整段塞进提示词）。工具是全部内置工作区工具、已启用的插件工具，以及 `delegate` / `subagent`。模型若调用未启用的插件工具，结果是 `E_UNKNOWN_TOOL`。
 
 ## 10. 子 Agent
 
@@ -203,7 +198,7 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 
 主 Agent 多两个工具：`delegate`（前台，参数只有 `{task}`）和 `subagent`（后台，`action` 为 `spawn` / `send` / `wait` / `stop` / `list`；spawn 参数 `{name, message}`）。写法照 Pi Durable README「Abort and Subagents」与示例 22（前台）/ 23（后台）：前台子对话由工具任务拥有，重启时 `scanConversations({ ownerTaskId })` 复用，`requestId` 为 `subagent:<taskId>`；后台子对话由 background 锚点任务拥有，答案由 reporter 以 follow-up 送回主对话。没有自写花名册、并发上限或暂停同步。两个工具的 `description` 都说明子 Agent 看不到本对话和主 Agent 的提示词，需要的内容全部写进 `task` / `message`。子 Agent 是自包含派活：`instructions` 为空字符串，不带角色文字、不带 Skills，工具是主 Agent 的工作区工具和插件工具（没有 `delegate` / `subagent`），模型与 `cwd` 沿用父对话。不能再派子 Agent。前台 `name` 取 `task` 第一行（压成一行，最多 30 字）；后台用 spawn 的 `name`。单独中止一个前台子对话时，调用方收到 `[subagent <name> was stopped by the user]`（不是错误），本轮继续；中止主 Agent 仍会停掉这一轮。
 
-`GET /api/conversations/:cid` 的 `agents` 在当前角色芯片之后追加真实子 Agent 实例：`{id, name, status, step, totalSteps, toolCalls, lastText, mode}`，以及拿得到才返回的 `brief`、`startedAt`、`lastActivityAt`、`endedAt`、`currentAction`。不返回 `roleId`。名单从 Harness 读：工具调用的 `details.conversationId`、所有权索引、后台名称文档、子对话 `viewState`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。角色芯片没有 `mode`，也没有下面这些可选字段。没有子 Agent 时，`agents` 只有当前角色那一项。
+`GET /api/conversations/:cid` 的 `agents` 第一项是主 Agent：`{id, name:'Agent', status, step, totalSteps, toolCalls, lastText}`，不带 `roleId` / `mode`。其后追加真实子 Agent 实例：`{id, name, status, step, totalSteps, toolCalls, lastText, mode}`，以及拿得到才返回的 `brief`、`startedAt`、`lastActivityAt`、`endedAt`、`currentAction`。不返回 `roleId`。名单从 Harness 读：工具调用的 `details.conversationId`、所有权索引、后台名称文档、子对话 `viewState`。`id` 形如 `<cid>:sub:<子对话 id>`。`status` 取 `waiting | running | done | stopped`。`mode` 取 `foreground | background`：前台 `delegate` 是 `foreground`，后台 `subagent` spawn 是 `background`。主 Agent 那一项没有 `mode`，也没有下面这些可选字段。没有子 Agent 时，`agents` 只有主 Agent 那一项。
 
 可选字段都来自子对话 transcript，缺数据就不返回，不编造：
 
@@ -213,7 +208,7 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 - `endedAt`：`status` 为 `done` / `stopped` / `failed` 时最后一条消息的 `timestamp`；运行中不返回
 - `currentAction`：仅 `running` 时返回。最后一个工具调用：有参数 `description` 就用它，否则是「工具名: 主要参数」短文本（如 `bash: npm test`），截断到 60 字；最后一条是 assistant 纯文本则不返回
 
-父对话 SSE 不混入子对话的 `message.delta` / `tool.*`。子 Agent 状态变化时，父对话收到 `agent` 事件，字段与芯片相同，包含 `mode` 和上述可选字段。角色的 `agent` 事件仍然不带 `mode`。
+父对话 SSE 不混入子对话的 `message.delta` / `tool.*`。子 Agent 状态变化时，父对话收到 `agent` 事件，字段与芯片相同，包含 `mode` 和上述可选字段。主 Agent 的 `agent` 事件不带 `mode`。
 
 | 方法 路径 | 响应 |
 |---|---|

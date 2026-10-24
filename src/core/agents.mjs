@@ -16,14 +16,6 @@ export function mapConvStatusToAgent(status) {
   }
 }
 
-function roleName(roleId, role, byId) {
-  if (role?.id === roleId && role.name) return role.name;
-  const found = byId.get(roleId);
-  if (found?.name) return found.name;
-  if (roleId === 'default') return 'Default';
-  return roleId || 'Agent';
-}
-
 function statsFromMessages(msgs) {
   let toolCalls = 0;
   let step = 0;
@@ -41,22 +33,17 @@ function statsFromMessages(msgs) {
 }
 
 /**
- * Derive the conversation's main agent from the persisted role and messages.
+ * Derive the conversation's main agent from persisted messages.
  * Extra agents on the conversation are sub-agent instances.
  */
-export function buildAgents({ conv, role, roles = [], messages = [] } = {}) {
+export function buildAgents({ conv, messages = [] } = {}) {
   const cid = conv?.id || 'conv';
-  const byId = new Map((roles || []).filter((r) => r?.id).map((r) => [r.id, r]));
-  if (role?.id) byId.set(role.id, { ...(byId.get(role.id) || {}), ...role });
-
-  const roleId = role?.id || conv?.roleId || 'default';
   const { toolCalls, step, lastText } = statsFromMessages(messages);
   let status = mapConvStatusToAgent(conv?.status || 'idle');
   if (!AGENT_STATUSES.has(status)) status = 'waiting';
   return [{
     id: `${cid}:agent:0`,
-    roleId,
-    name: roleName(roleId, role, byId),
+    name: 'Agent',
     status,
     step,
     totalSteps: step,
@@ -81,7 +68,6 @@ export function agentEventData(agent, status = agent?.status) {
   const resolved = AGENT_STATUSES.has(status) ? status : agent.status;
   const data = {
     id: agent.id,
-    roleId: agent.roleId,
     name: agent.name,
     status: resolved,
     step: agent.step,

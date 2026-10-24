@@ -378,10 +378,9 @@ export function createKernelModels({ models, getSettings, grokAuth, env = proces
       if (typeof getSettings !== 'function') return null;
       const settings = await getSettings();
       const grokSignedIn = await signedIn();
-      const roleId = conv?.roleId || undefined;
       let target = resolveConversationTarget(settings, conv, { grokSignedIn });
       if (target?.source?.kind === 'grok' && !(await tokenReady())) {
-        target = resolveRoleTarget(settings, { roleId, grokSignedIn: false });
+        target = resolveRoleTarget(settings, { grokSignedIn: false });
         if (target?.source?.kind === 'grok') target = null;
       }
       sync(settings, { grokSignedIn, target });

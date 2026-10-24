@@ -31,7 +31,7 @@ test('explicit demo is only the three switches', () => {
   assert.equal(explicitDemo({ LLM_API_KEY: KEY_DEFAULT }), false);
 });
 
-test('role routing follows bindings and refreshes providers when a source changes', async () => {
+test('model routing follows conversation, then default, then first usable source', async () => {
   const models = createModels();
   let settings = {
     version: 2,
@@ -65,13 +65,24 @@ test('role routing follows bindings and refreshes providers when a source change
     getSettings: async () => settings,
     env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
   });
-  const main = await routes.modelFor({ roleId: null });
-  const coder = await routes.modelFor({ roleId: 'coder' });
+  const main = await routes.modelFor({});
+  const pinned = await routes.modelFor({ modelSourceId: 'srccoder', modelId: 'model-coder' });
   assert.equal(main.modelId, 'model-default');
-  assert.equal(coder.modelId, 'model-coder');
-  assert.notEqual(main.provider, coder.provider);
+  assert.equal(pinned.modelId, 'model-coder');
+  assert.notEqual(main.provider, pinned.provider);
   assert.equal(models.getModel(main.provider, main.modelId).baseUrl, 'http://127.0.0.1:4101/v1');
-  assert.equal(models.getModel(coder.provider, coder.modelId).baseUrl, 'http://127.0.0.1:4102/v1');
+  assert.equal(models.getModel(pinned.provider, pinned.modelId).baseUrl, 'http://127.0.0.1:4102/v1');
+
+  settings = { ...settings, models: {} };
+  const first = await routes.modelFor({});
+  assert.equal(first.modelId, 'model-default');
+  settings = {
+    ...settings,
+    models: {
+      default: { sourceId: 'srcdefault', model: 'model-default' },
+      coder: { sourceId: 'srccoder', model: 'model-coder' },
+    },
+  };
 
   settings = {
     ...settings,
@@ -89,7 +100,7 @@ test('role routing follows bindings and refreshes providers when a source change
     sources: settings.sources.filter((source) => source.id !== 'srccoder'),
     models: { default: settings.models.default },
   };
-  await routes.modelFor({ roleId: 'coder' });
+  await routes.modelFor({});
   assert.equal(models.getProvider(providerIdForSource({ id: 'srccoder', kind: 'api' })), undefined);
 
   settings = { version: 2, sources: [], models: {} };
@@ -118,7 +129,7 @@ test('chatModel uses a source context window and re-registers when it changes', 
     getSettings: async () => settings,
     env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
   });
-  const main = await routes.modelFor({ roleId: null });
+  const main = await routes.modelFor({});
   assert.equal(models.getModel(main.provider, 'model-default').contextWindow, 128000);
   assert.equal(models.getModel(main.provider, 'model-wide').contextWindow, 256000);
 
@@ -147,7 +158,7 @@ test('chatModel reads pi-ai catalog metadata and keeps user/env overrides', asyn
       getSettings: async () => settings,
       env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50', ...env },
     });
-    const ref = await routes.modelFor({ roleId: null });
+    const ref = await routes.modelFor({});
     return models.getModel(ref.provider, ref.modelId);
   }
 
@@ -261,7 +272,7 @@ test('deepseek-flash request body matches the pre-catalog shape except max_token
       getSettings: async () => settings,
       env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
     });
-    const ref = await routes.modelFor({ roleId: null });
+    const ref = await routes.modelFor({});
     const catalogModel = models.getModel(ref.provider, ref.modelId);
     const legacyModel = {
       id: 'deepseek-flash',
@@ -293,7 +304,7 @@ test('deepseek-flash request body matches the pre-catalog shape except max_token
   }
 });
 
-test('modelFor prefers a conversation model, falls back when that source is down, and leaves subagents on the role binding', async () => {
+test('modelFor prefers a conversation model and falls back when that source is down', async () => {
   const models = createModels();
   let settings = {
     version: 2,
@@ -329,24 +340,18 @@ test('modelFor prefers a conversation model, falls back when that source is down
   });
 
   const pinned = await routes.modelFor({
-    roleId: 'coder',
     modelSourceId: 'srcdefault',
     modelId: 'model-default',
   });
   assert.equal(pinned.modelId, 'model-default');
-  const main = await routes.modelFor({ roleId: null });
+  const main = await routes.modelFor({});
   assert.equal(pinned.provider, main.provider);
 
-  const child = await routes.modelFor({ roleId: 'coder' });
-  assert.equal(child.modelId, 'model-coder');
-  assert.notEqual(child.provider, pinned.provider);
-
   const missing = await routes.modelFor({
-    roleId: 'coder',
     modelSourceId: 'missing',
     modelId: 'ghost',
   });
-  assert.equal(missing.modelId, 'model-coder');
+  assert.equal(missing.modelId, 'model-default');
 
   settings = {
     ...settings,
@@ -355,7 +360,6 @@ test('modelFor prefers a conversation model, falls back when that source is down
     )),
   };
   const fallback = await routes.modelFor({
-    roleId: null,
     modelSourceId: 'srcdefault',
     modelId: 'model-default',
   });
@@ -479,6 +483,9 @@ test('kernel models call each source, refresh Grok once, and hide keys', { timeo
       },
     });
     assert.equal(bound.status, 200);
+    assert.deepEqual(bound.body.models.default, { sourceId: createdDefault.body.id, model: 'model-default' });
+    assert.equal(bound.body.models.coder, undefined);
+    assert.equal(bound.body.models.tester, undefined);
     const settingsText = JSON.stringify(bound.body);
     assertClean(settingsText, 'settings');
     const listedDefault = bound.body.sources.find((source) => source.id === createdDefault.body.id);
@@ -490,11 +497,12 @@ test('kernel models call each source, refresh Grok once, and hide keys', { timeo
 
     const ws = await request(base, 'POST', '/api/workspaces', { name: 'kernel-models' });
     assert.equal(ws.status, 201);
-    const mainConv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'default-role' });
+    const mainConv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title: 'default-model' });
     assert.equal(mainConv.status, 201);
     const coderConv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, {
-      title: 'coder-role',
-      roleId: 'coder',
+      title: 'coder-pinned',
+      modelSourceId: createdCoder.body.id,
+      modelId: 'model-coder',
     });
     assert.equal(coderConv.status, 201);
 
@@ -528,8 +536,9 @@ test('kernel models call each source, refresh Grok once, and hide keys', { timeo
     assert.deepEqual(defaultFake.seen.map((hit) => hit.keyTail), [KEY_DEFAULT.slice(-4), KEY_DEFAULT_NEXT.slice(-4)]);
 
     const testerConv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, {
-      title: 'tester-role',
-      roleId: 'tester',
+      title: 'grok-pinned',
+      modelSourceId: 'grok',
+      modelId: 'grok-build',
     });
     assert.equal(testerConv.status, 201);
     const sentGrok = await request(base, 'POST', `/api/conversations/${testerConv.body.id}/messages`, { text: 'ping-grok' });

@@ -130,6 +130,8 @@ test('default and coder turns hit their own sources with their own keys', async 
     assert.equal(saved.body.baseUrl, undefined);
     assert.equal(saved.body.apiKey, undefined);
     assert.equal(saved.body.hasApiKey, undefined);
+    assert.deepEqual(saved.body.models.default, { sourceId: sourceA.body.id, model: 'alpha' });
+    assert.equal(saved.body.models.coder, undefined);
 
     const id = await openConversation(srv.base);
     const first = await request(srv.base, 'POST', `/api/conversations/${id}/messages`, { text: 'default turn' });
@@ -142,9 +144,14 @@ test('default and coder turns hit their own sources with their own keys', async 
     assert.equal(chatHits(alpha)[0].authorization, 'Bearer key-alpha-secret');
     assert.equal(JSON.parse(chatHits(alpha)[0].body).model, 'alpha');
 
-    const switched = await request(srv.base, 'PATCH', `/api/conversations/${id}`, { roleId: 'coder' });
+    const switched = await request(srv.base, 'PATCH', `/api/conversations/${id}`, {
+      modelSourceId: sourceB.body.id,
+      modelId: 'beta',
+    });
     assert.equal(switched.status, 200);
-    assert.equal(switched.body.roleId, 'coder');
+    assert.equal(switched.body.modelSourceId, sourceB.body.id);
+    assert.equal(switched.body.modelId, 'beta');
+    assert.equal(Object.hasOwn(switched.body, 'roleId'), false);
     const second = await request(srv.base, 'POST', `/api/conversations/${id}/messages`, { text: 'coder turn' });
     assert.equal(second.status, 202);
     const coderDone = await waitFinished(srv.base, id);
@@ -347,8 +354,8 @@ test('a legacy settings row is migrated once and the old key is not kept at the 
     assert.equal(settings.body.hasApiKey, undefined);
     assert.equal(JSON.stringify(settings.body).includes('sk-legacy-secret-value'), false);
     assert.equal(settings.body.sources.length, 1);
-    assert.equal(settings.body.models.coder.model, 'gpt-4o');
-    assert.equal(settings.body.models.coder.sourceId, settings.body.sources[0].id);
+    assert.equal(settings.body.models.coder, undefined);
+    assert.equal(settings.body.models.default, undefined);
     assert.equal(settings.body.language, 'en');
 
     const row = readSettings(srv.dataDir);

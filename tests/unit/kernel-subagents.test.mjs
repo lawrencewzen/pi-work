@@ -6,12 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSSE } from '../../src/core/sse.mjs';
 import { createExtensionHost } from '../../src/core/extensions.mjs';
-import { loadRoleTemplates } from '../../src/core/roles-load.mjs';
 import { openConversationKernel } from '../../src/kernel/conversations.mjs';
 import { DELEGATE_DESCRIPTION, nameFromTask, SUBAGENT_DESCRIPTION } from '../../src/kernel/subagents.mjs';
 import { createSqliteStore } from '../../src/store/sqlite.mjs';
 import { killChild, request as serverRequest, startServer, stopServer } from './_server.mjs';
-import { ROOT } from './_root.mjs';
 
 const TOKEN = 'unit-kernel-subagents-token';
 const request = (base, method, apiPath, body) => serverRequest(base, method, apiPath, body, TOKEN);
@@ -67,7 +65,7 @@ async function collectSse(base, cid, { ready, quietMs = 400, timeout = 12000 } =
       arm();
     }
   } catch (err) {
-    if (err?.name !== 'AbortError') throw err;
+    if (err?.name !== 'AbortError' && err?.message !== 'terminated') throw err;
   } finally {
     clearTimeout(timer);
     if (quiet) clearTimeout(quiet);
@@ -221,7 +219,7 @@ test('foreground delegate returns the child answer; tools and name are self-cont
       ready: (list) => list.some((ev) => ev.event === 'agent' && ev.data?.name === nameFromTask(task) && ev.data?.lastText?.includes('CHILD_MODEL_OK')),
       timeout: 30000,
     }).catch((err) => {
-      if (err?.name === 'AbortError') return [];
+      if (err?.name === 'AbortError' || err?.message === 'terminated') return [];
       throw err;
     });
     const sent = await request(srv.base, 'POST', `/api/conversations/${conv.body.id}/messages`, { text: 'dispatch child' });
@@ -293,7 +291,6 @@ test('child resolved agent is self-contained: empty instructions, parent model a
   const store = createSqliteStore(dataDir);
   let kernel = null;
   try {
-    await loadRoleTemplates(store, path.join(ROOT, 'roles'));
     const wsPath = path.join(dataDir, 'ws');
     await mkdir(wsPath, { recursive: true });
     const ws = await store.createWorkspace({ name: 'self', path: wsPath });
@@ -639,7 +636,6 @@ test('aborting a foreground child returns stopped-by-the-user and the parent con
   const store = createSqliteStore(dataDir);
   let kernel = null;
   try {
-    await loadRoleTemplates(store, path.join(ROOT, 'roles'));
     const wsPath = path.join(dataDir, 'ws');
     await mkdir(wsPath, { recursive: true });
     const ws = await store.createWorkspace({ name: 'abort-child', path: wsPath });

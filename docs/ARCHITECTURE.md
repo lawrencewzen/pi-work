@@ -17,9 +17,9 @@ flowchart LR
   subgraph Node["Node 单进程（server.mjs）"]
     API[REST + 可选鉴权]
     SSE[SSE]
-    K[src/kernel 门面<br/>对话 · 角色 · 子 Agent]
+    K[src/kernel 门面<br/>对话 · 子 Agent]
     H[Pi Durable Harness<br/>任务 · resume · 中止]
-    APP[(pi-work.sqlite<br/>工作区 · 角色 · 对话索引)]
+    APP[(pi-work.sqlite<br/>工作区 · 设置 · 对话索引)]
     T[工作区工具<br/>read / write / edit / ls / grep / bash]
   end
 
@@ -38,9 +38,9 @@ flowchart LR
 ```
 
 ## 关键概念
-- **Agent** = 一条 Harness 对话上的运行（角色 + 检查点），可多个并行。
-- **Role**：系统提示词、工具白名单、模型。未知工具名在执行前被拒绝（`E_UNKNOWN_TOOL`），不会发出 `tool.start`。
-- **多角色协作**：主 Agent 用 `delegate` / `subagent` 按角色模板派子 Agent，另开 Harness 对话。宿主不按步轮换角色。`GET /api/conversations/:cid` 的 `agents[]` 是当前角色芯片加上子 Agent 实例。演示见 [SUBAGENTS.md](SUBAGENTS.md)。
+- **Agent** = 一条 Harness 对话上的运行（配置 + 检查点），可多个并行。主 Agent 的 `instructions` 为空字符串；工具是全部内置工作区工具、已启用的插件工具和 `delegate` / `subagent`；技能是设置里启用的全部技能。未知工具名在执行前被拒绝（`E_UNKNOWN_TOOL`），不会发出 `tool.start`。
+- **多 Agent 协作**：主 Agent 用 `delegate` / `subagent` 派子 Agent，另开 Harness 对话。子 Agent 是自包含派活，不套角色模板。宿主不轮换 Agent。`GET /api/conversations/:cid` 的 `agents[]` 是主 Agent（`name: 'Agent'`）加上子 Agent 实例。演示见 [SUBAGENTS.md](SUBAGENTS.md)。
+- **模型**：对话自己选的 `{ modelSourceId, modelId }`，否则 `settings.models.default`，再否则第一个可用源上的第一个模型。
 - **卡住与重试**：只使用 Pi Durable 的 `stream.timeoutMs` 和 `retry`。不另写看门狗，也不在卡住时自动提交下一句。停止是 `conversation.abort(context, { background: true })`，进行中的运行和后台子 Agent 一起停。
 - **工具沙箱**：所有路径解析后必须位于工作区根目录内。`write` / `edit` 的工具结果保留 `details`（path、before、after、行数），右栏 diff 从这些条目汇总：同一路径以本对话第一次改动的 before 为基线，和磁盘当前内容比较。`bash` 使用环境变量白名单、进程组 SIGKILL、1 MiB 输出上限；完整 OS 沙箱（bubblewrap）为 v1 之后的工作。
 - **Skills**：`skills/<id>/SKILL.md`（前言里的 `id` / `name` / `description` + 正文）。仓库自带的 Skill 与 `$PI_WORK_DATA_DIR/skills` 中用户新建的 Skill 合并，同名时用户副本优先。`settings.skills[id] === false` 表示关闭，缺省为开启。内核在请求模型前，把已开启 Skill 的正文放进系统提示 section。
@@ -53,7 +53,7 @@ flowchart LR
 - `PRAGMA journal_mode=WAL`
 - `PRAGMA busy_timeout=5000`
 - `PRAGMA synchronous=NORMAL`
-- `schema_version` 表 + `PRAGMA user_version`（当前为 2；迁移时递增）
+- `schema_version` 表 + `PRAGMA user_version`（当前为 7；迁移时递增）。启动时 `DROP TABLE IF EXISTS roles`；`conversations.role_id` 能删列就删，否则保留列但不再读写
 - 数据库文件权限 `0600`。不设置 `PI_WORK_TOKEN` 时不写 `auth.token`
 - 启动时在 `$PI_WORK_DATA_DIR/.lock` 上用 `O_EXCL` 抢单实例锁；若锁文件中的 pid 在 `/proc` 中仍存活则拒绝启动；进程退出时删除锁
 
@@ -61,7 +61,7 @@ flowchart LR
 
 ## 恢复不变量
 
-对话状态、消息和 diff 都从 Harness 读。应用库只保留对话索引（工作区、标题、角色、时间、harness id），外加一列 `last_submission_id`：每次 `submit` 返回的提交 id。读状态时用 `harness.submission(id).status()`。`queued` / `placed` 是运行中，`done` 是完成，`unanswered` 且 `reason` 为 `aborted` 是已停止，其它 `unanswered` 是失败（错误文案用这条记录的 `reason` / `detail`）。没有这个指针的对话是空闲。启动时丢掉 `events`、`messages`、`tool_calls`、`changes`、`pipelines` 表。`conversations` 上的 `pipeline_id` / `pipeline_step` 列还在，但不再读写。
+对话状态、消息和 diff 都从 Harness 读。应用库只保留对话索引（工作区、标题、时间、harness id、可选的对话模型），外加一列 `last_submission_id`：每次 `submit` 返回的提交 id。读状态时用 `harness.submission(id).status()`。`queued` / `placed` 是运行中，`done` 是完成，`unanswered` 且 `reason` 为 `aborted` 是已停止，其它 `unanswered` 是失败（错误文案用这条记录的 `reason` / `detail`）。没有这个指针的对话是空闲。启动时丢掉 `events`、`messages`、`tool_calls`、`changes`、`pipelines`、`roles` 表。`conversations` 上的 `pipeline_id` / `pipeline_step` 列还在，但不再读写。
 
 - `read` / `ls` / `grep` 可以安全重放。`write` / `edit` / `bash` 标成 unsafe：中断后不重放，模型看到 interrupted。
 - 进程重启时，带 harness id 且未结束的对话由 `harness.resume()` 接着跑。状态仍是该提交重新取回的记录：还在 `placed` 就是运行中。没有 harness id 的旧行不列出、不恢复。

@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { Type } from '@earendil-works/pi-ai';
 import { parseSSE } from '../../src/core/sse.mjs';
 import { fauxTurnFromScript, offeredToolNames } from '../../src/kernel/faux-script.mjs';
-import { toolsForRole, withIntent, workspaceTools } from '../../src/kernel/tools.mjs';
+import { withIntent, workspaceTools } from '../../src/kernel/tools.mjs';
 import { createWorkspaceEnv } from '../../src/kernel/workspace-env.mjs';
 import { ROOT } from './_root.mjs';
 import { killChild, request as serverRequest, startServer, stopServer } from './_server.mjs';
@@ -63,12 +63,10 @@ async function collectSse(base, cid, { ready, quietMs = 400, timeout = 20000 } =
   return events;
 }
 
-async function openConversation(base, { title = 'kernel', roleId, name = 'kernel-ws' } = {}) {
+async function openConversation(base, { title = 'kernel', name = 'kernel-ws' } = {}) {
   const ws = await request(base, 'POST', '/api/workspaces', { name });
   assert.equal(ws.status, 201, JSON.stringify(ws.body));
-  const body = { title };
-  if (roleId) body.roleId = roleId;
-  const conv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, body);
+  const conv = await request(base, 'POST', `/api/workspaces/${ws.body.id}/conversations`, { title });
   assert.equal(conv.status, 201, JSON.stringify(conv.body));
   return { ws: ws.body, conv: conv.body };
 }
@@ -126,9 +124,8 @@ test('read, ls, and grep replay safely; write, edit, and bash do not', () => {
   });
 });
 
-test('a role tool list is the offered set, in that order', () => {
-  assert.deepEqual(toolsForRole({ tools: ['grep', 'read'] }).map((tool) => tool.name), ['grep', 'read']);
-  assert.deepEqual(toolsForRole({ tools: [] }).map((tool) => tool.name), ['read', 'write', 'edit', 'ls', 'grep', 'bash']);
+test('workspaceTools lists every builtin tool in order', () => {
+  assert.deepEqual(workspaceTools().map((tool) => tool.name), ['read', 'write', 'edit', 'ls', 'grep', 'bash']);
   assert.deepEqual(
     offeredToolNames({
       messages: [
@@ -190,12 +187,6 @@ test('withIntent: bash with description runs; the original tool does not see it'
     await env.cleanup(BACKGROUND_CONTEXT).catch(() => {});
     await rm(dir, { recursive: true, force: true });
   }
-
-  assert.deepEqual(toolsForRole({ tools: ['grep', 'read'] }).map((tool) => tool.name), ['grep', 'read']);
-  assert.deepEqual(
-    toolsForRole({ tools: ['bash'] }).map((tool) => tool.name),
-    ['bash'],
-  );
 });
 
 test('a scripted demo turn follows committed assistant messages', () => {
@@ -379,29 +370,23 @@ test('kernel path: write plus edit records the diff and tool events', { timeout:
   }
 });
 
-test('kernel path: a role without a tool does not offer it and rejects the call', { timeout: 40_000 }, async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-krole-'));
+test('kernel path: the main agent offers every workspace tool plus plugins and dispatch', { timeout: 40_000 }, async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-ktools-'));
   const toolLog = path.join(dataDir, 'tools.log');
-  const script = await writeScript(dataDir, 'role.json', [
-    { tool: 'write', args: { path: 'secret.txt', content: 'no' }, id: 'denied-write' },
-    { tool: 'bash', args: { command: 'echo no' }, id: 'denied-bash' },
-    { text: 'role-done' },
+  const script = await writeScript(dataDir, 'tools.json', [
+    { text: 'all-tools' },
   ]);
   const srv = await startServer({ token: TOKEN, env: durableEnv(script, { PI_WORK_FAUX_TOOL_LOG: toolLog }), dataDir });
   try {
-    const { ws, conv } = await openConversation(srv.base, { title: 'audit', roleId: 'auditor' });
-    const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'review' });
+    const { conv } = await openConversation(srv.base, { title: 'tools' });
+    const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'go' });
     assert.equal(sent.status, 202);
     const done = await waitFinished(srv.base, conv.id);
     assert.equal(done.status, 'done', JSON.stringify(done.messages));
-    const denied = done.messages.filter((message) => message.role === 'tool').map((message) => message.text || '');
-    assert.equal(denied.length, 2, JSON.stringify(denied));
-    assert.equal(denied.every((text) => text === 'E_UNKNOWN_TOOL'), true, JSON.stringify(denied));
-    await assert.rejects(readFile(path.join(ws.path, 'secret.txt'), 'utf8'));
     const offered = (await readFile(toolLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-    assert.deepEqual(offered[0], ['read', 'ls', 'grep', 'echo', 'delegate', 'subagent']);
-    assert.equal(offered[0].includes('write'), false);
-    assert.equal(offered[0].includes('bash'), false);
+    for (const name of ['read', 'write', 'edit', 'ls', 'grep', 'bash', 'echo', 'delegate', 'subagent']) {
+      assert.equal(offered[0].includes(name), true, name);
+    }
   } finally {
     await stopServer(srv);
     await rm(dataDir, { recursive: true, force: true });
