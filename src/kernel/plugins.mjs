@@ -5,9 +5,10 @@
 // request, or call resolves the registry again. This module does not schedule.
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, GenerationTask, hook } from '@earendil-works/pi-durable';
+import { EXT_PLUGIN_RELOAD, EXT_PLUGIN_TOOLS } from './ids.mjs';
 
 const LOOSE_PARAMS = Type.Object({}, { additionalProperties: true });
-const EXTENSION = 'pi-work-plugin-tools';
+const EXTENSION = EXT_PLUGIN_TOOLS;
 
 function pluginTool(spec, store, byHarness) {
   const handler = spec.handler;
@@ -68,7 +69,7 @@ function specKey(list) {
 export function installPluginReload(registry, bridge) {
   if (!registry) throw new Error('registry is required');
   registry.install(defineExtension({
-    name: 'pi-work-plugin-reload',
+    name: EXT_PLUGIN_RELOAD,
     hooks: [
       hook(GenerationTask, {
         async afterTools(_assistant, _results, api) {

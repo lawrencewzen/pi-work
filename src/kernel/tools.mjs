@@ -12,6 +12,7 @@ import {
   createWriteTool,
 } from '@earendil-works/pi-durable/tools';
 import { diffStats, splitLines } from '../core/diff.mjs';
+import { EXT_WORKSPACE } from './ids.mjs';
 
 const DETAIL_CAP = 1024 * 1024;
 const SKIP_DIR_NAMES = new Set(['.git', 'node_modules']);
@@ -253,7 +254,7 @@ export function fileChangeDetails({ path: filePath, before, after }) {
  */
 export function createWorkspaceExtension() {
   return defineExtension({
-    name: 'pi-work-workspace',
+    name: EXT_WORKSPACE,
     tools: workspaceToolList,
     hooks: [
       hook(ToolTask, {

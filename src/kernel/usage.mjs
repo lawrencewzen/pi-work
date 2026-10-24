@@ -5,6 +5,7 @@
 // Faux estimates are replaced in `afterResponse`, before the entry is committed,
 // and only when a script turn named its own usage. This hook does not schedule.
 import { defineExtension, GenerationTask, hook } from '@earendil-works/pi-durable';
+import { EXT_USAGE } from './ids.mjs';
 import { normalizeUsage } from '../core/usage.mjs';
 
 const MARK = 'piWorkScriptUsage';
@@ -95,7 +96,7 @@ export function latestCallUsage(entries) {
 export function installUsageExtension(registry) {
   if (!registry) throw new Error('registry is required');
   registry.install(defineExtension({
-    name: 'pi-work-usage',
+    name: EXT_USAGE,
     hooks: [
       hook(GenerationTask, {
         afterResponse(message) {

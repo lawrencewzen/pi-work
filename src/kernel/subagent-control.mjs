@@ -2,8 +2,9 @@
 // Does not spawn, list, or schedule children; those stay in subagents.mjs.
 import { randomUUID } from 'node:crypto';
 import { agentEventData } from '../core/agents.mjs';
+import { USER_TO_SUBAGENT_KIND } from './ids.mjs';
 
-export const USER_TO_SUBAGENT_KIND = 'app.pi-work.user-to-subagent';
+export { USER_TO_SUBAGENT_KIND };
 
 export function parentNoteText(name, text) {
   return `你对 ${name} 说：${text}`;
