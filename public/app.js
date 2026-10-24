@@ -4237,11 +4237,10 @@ export async function switchWorkspaceAndConv(wid, cid) {
 
 
 // ============================================================================
-// Layout: side panels, resizing, shortcuts, context menus
+// Layout: side panels, resizing, context menus
 // ============================================================================
 const LEFT_OVERLAY_BELOW = 860;
 const RIGHT_OVERLAY_BELOW = 1180;
-const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 
 function persistOpenProjects() {
   localStorage.setItem('piwork_open_projects', JSON.stringify([...state.openProjects]));
@@ -4359,13 +4358,6 @@ function toggleMode() {
   switchAppearance(dark ? 'light' : 'dark');
 }
 
-function applyShortcutLabels() {
-  const mod = IS_MAC ? '⌘' : 'Ctrl+';
-  document.querySelectorAll('[data-shortcut]').forEach((el) => {
-    el.textContent = `${mod}${el.getAttribute('data-shortcut')}`;
-  });
-}
-
 // ---- Context menu ----------------------------------------------------------
 let ctxItems = [];
 
@@ -4389,7 +4381,7 @@ function openCtxMenu(e, items, title = '') {
     items.map((item, i) => (item.sep
       ? '<div class="ctx-menu-sep"></div>'
       : `<button type="button" class="ctx-menu-item${item.danger ? ' is-danger' : ''}" data-ctx-index="${i}" role="menuitem"${item.disabled ? ' disabled' : ''}>` +
-        `<span>${escapeHtml(item.label)}</span>${item.key ? `<span class="ctx-menu-key">${escapeHtml(item.key)}</span>` : ''}</button>`)).join('');
+        `<span>${escapeHtml(item.label)}</span></button>`)).join('');
   menu.hidden = false;
   const w = menu.offsetWidth || 220;
   const h = menu.offsetHeight || 120;
@@ -4417,7 +4409,7 @@ function projectMenuItems(wid) {
   const ws = state.workspaces.find((w) => w.id === wid);
   if (!ws) return [];
   return [
-    { label: t('new_conversation'), key: IS_MAC ? '⌘N' : 'Ctrl+N', run: () => startNewConversation(wid) },
+    { label: t('new_conversation'), run: () => startNewConversation(wid) },
     { label: t('copy_path'), run: () => copyText(ws.path || '') },
     { label: t('show_files'), run: async () => { if (state.activeWorkspaceId !== wid) await selectWorkspace(wid); switchRightTab('file'); } },
     { sep: true },
@@ -4517,8 +4509,7 @@ function handleContextMenu(e) {
 
 function openDraftProjectMenu(e) {
   const items = state.workspaces.map((ws) => ({
-    label: ws.name,
-    key: ws.id === state.activeWorkspaceId ? '✓' : '',
+    label: (ws.id === state.activeWorkspaceId ? '✓ ' : '') + ws.name,
     run: () => startNewConversation(ws.id),
   }));
   items.push({ sep: true }, { label: t('new_workspace'), run: () => openNewWorkspaceModal() });
@@ -4954,14 +4945,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   window.addEventListener('keydown', (e) => {
-    const mod = e.metaKey || e.ctrlKey;
-    if (mod && !e.shiftKey && !e.altKey) {
-      const k = e.key.toLowerCase();
-      if (k === 'b') { e.preventDefault(); setLeftOpen(!state.leftOpen); return; }
-      if (k === 'j') { e.preventDefault(); setRightOpen(!state.rightOpen); if (state.rightOpen) renderRightPanel(); return; }
-      if (k === ',') { e.preventDefault(); openSettings(); return; }
-      if (k === 'n') { e.preventDefault(); newChatFromTop(); return; }
-    }
     if (e.key === 'Enter' && e.target?.id === 'plug-path-input') {
       e.preventDefault();
       submitImportPlugin();
@@ -4985,7 +4968,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   applyLayout();
-  applyShortcutLabels();
   applyI18n();
   await loadInitialData();
   applyChromeLabels();

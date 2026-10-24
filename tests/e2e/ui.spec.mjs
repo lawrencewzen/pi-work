@@ -199,3 +199,50 @@ test('left top row is new chat plus collapse, 52px, aligned with center bar', as
   await expect(page.locator('#col-left')).toBeVisible();
   await expect(page.getByTestId('new-chat-top')).toBeVisible();
 });
+
+test('no modifier shortcuts or hints; new-chat label is centered', async ({ page }) => {
+  await openApp(page, srv);
+  await createWorkspace(page, 'demo', ws);
+
+  const bodyText = await page.locator('body').innerText();
+  expect(bodyText).not.toContain('⌘');
+  const titles = await page.evaluate(() =>
+    [...document.querySelectorAll('[title]')].map((el) => el.getAttribute('title') || '').join('\n'));
+  expect(titles).not.toContain('⌘');
+
+  const snapshot = async () => page.evaluate(() => ({
+    leftClosed: document.getElementById('app-shell')?.classList.contains('left-closed') || false,
+    rightClosed: document.getElementById('app-shell')?.classList.contains('right-closed') || false,
+    settings: document.getElementById('settings-overlay')?.style.display || '',
+    drafts: document.querySelectorAll('[data-testid=draft-row]').length,
+  }));
+  const before = await snapshot();
+  await page.locator('.left-section-label').click();
+  await page.keyboard.press('ControlOrMeta+B');
+  await page.keyboard.press('ControlOrMeta+J');
+  await page.keyboard.press('ControlOrMeta+Comma');
+  await page.keyboard.press('ControlOrMeta+N');
+  expect(await snapshot()).toEqual(before);
+  await expect(page.locator('#col-left')).toBeVisible();
+
+  const newChat = page.getByTestId('new-chat-top');
+  await waitForStableLayout(page, newChat);
+  const offset = await newChat.evaluate((btn) => {
+    const text = btn.querySelector('span') || btn;
+    const box = btn.getBoundingClientRect();
+    const label = text.getBoundingClientRect();
+    return Math.abs((label.left + label.width / 2) - (box.left + box.width / 2));
+  });
+  console.log(`new-chat label horizontal offset=${offset.toFixed(3)}px`);
+  expect(offset).toBeLessThanOrEqual(2);
+
+  const item = page.getByTestId('workspace-item').filter({ hasText: 'demo' });
+  await item.hover();
+  await item.locator('[data-action=project-menu]').click();
+  const menu = page.locator('#ctx-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText('新对话');
+  await expect(menu).not.toContainText('⌘');
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+});
