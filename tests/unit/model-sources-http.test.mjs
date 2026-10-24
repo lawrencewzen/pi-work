@@ -514,6 +514,7 @@ test('PUT contextWindows merges, deletes with null, rejects invalid values, and 
     assert.equal(sourceA.status, 201);
     assert.equal(sourceA.body.contextWindows, undefined);
     assert.equal(sourceA.body.defaultContextWindow, 128000);
+    assert.deepEqual(sourceA.body.defaultContextWindows, { alpha: 128000, beta: 128000 });
     const sourceId = sourceA.body.id;
 
     const bound = await request(srv.base, 'PUT', '/api/settings', {
@@ -590,5 +591,27 @@ test('PUT contextWindows merges, deletes with null, rejects invalid values, and 
   } finally {
     await stopServer(srv);
     await fake.close();
+  }
+});
+
+test('settings sources expose per-model defaultContextWindows from the catalog', async () => {
+  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_RETRY_MAX: '2' } });
+  try {
+    const created = await request(srv.base, 'POST', '/api/sources', {
+      vendor: 'deepseek',
+      name: 'DeepSeek',
+      apiKey: 'key-flash-secret',
+      models: ['deepseek-flash', 'ghost-model'],
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.defaultContextWindow, 128000);
+    assert.equal(created.body.defaultContextWindows['deepseek-flash'], 1_000_000);
+    assert.equal(created.body.defaultContextWindows['ghost-model'], 128000);
+
+    const listed = await request(srv.base, 'GET', '/api/settings');
+    const source = listed.body.sources.find((item) => item.id === created.body.id);
+    assert.equal(source.defaultContextWindows['deepseek-flash'], 1_000_000);
+  } finally {
+    await stopServer(srv);
   }
 });

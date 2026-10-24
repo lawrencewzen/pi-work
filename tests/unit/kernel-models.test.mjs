@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { GROK_AUTH_SCOPE, GROK_CLIENT_ID } from '../../src/core/grok-auth.mjs';
 import { createSqliteStore } from '../../src/store/sqlite.mjs';
+import { streamSimple as completionsStreamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import { createKernelModels, explicitDemo, providerIdForSource } from '../../src/kernel/models.mjs';
 import { startFakeModel } from './kernel-models-fake.mjs';
 import { ROOT } from './_root.mjs';
@@ -131,6 +132,165 @@ test('chatModel uses a source context window and re-registers when it changes', 
   const refreshed = await routes.modelFor({});
   assert.equal(models.getModel(refreshed.provider, 'model-default').contextWindow, 512000);
   assert.equal(models.getModel(refreshed.provider, 'model-wide').contextWindow, 256000);
+});
+
+test('chatModel reads pi-ai catalog metadata and keeps user/env overrides', async () => {
+  async function modelFor(source, env = {}) {
+    const models = createModels();
+    const settings = {
+      version: 2,
+      sources: [source],
+      models: { default: { sourceId: source.id, model: source.models[0] } },
+    };
+    const routes = createKernelModels({
+      models,
+      getSettings: async () => settings,
+      env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50', ...env },
+    });
+    const ref = await routes.modelFor({ roleId: null });
+    return models.getModel(ref.provider, ref.modelId);
+  }
+
+  const flash = await modelFor({
+    id: 'srcflash',
+    kind: 'api',
+    vendor: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    apiKey: KEY_DEFAULT,
+    models: ['deepseek-flash'],
+  }, { LLM_CONTEXT_WINDOW: '200000' });
+  assert.equal(flash.contextWindow, 1_000_000);
+  assert.equal(flash.maxTokens, 384000);
+  assert.equal(flash.reasoning, false);
+  assert.equal(flash.thinkingLevelMap, undefined);
+  assert.deepEqual(flash.input, ['text', 'image']);
+  assert.equal(flash.cost.input, 0.3);
+  assert.equal(flash.compat?.maxTokensField, 'max_tokens');
+
+  const unknown = await modelFor({
+    id: 'srcunknown',
+    kind: 'api',
+    vendor: 'custom',
+    name: 'Custom',
+    baseUrl: 'http://127.0.0.1:4101/v1',
+    apiKey: KEY_DEFAULT,
+    models: ['not-a-real-model'],
+  });
+  assert.equal(unknown.contextWindow, 128000);
+  assert.equal(unknown.maxTokens, 32768);
+  assert.equal(unknown.reasoning, false);
+  assert.deepEqual(unknown.input, ['text']);
+  assert.deepEqual(unknown.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.equal(unknown.compat, undefined);
+
+  const userWindow = await modelFor({
+    id: 'srcflash',
+    kind: 'api',
+    vendor: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    apiKey: KEY_DEFAULT,
+    models: ['deepseek-flash'],
+    contextWindows: { 'deepseek-flash': 256000 },
+  });
+  assert.equal(userWindow.contextWindow, 256000);
+  assert.equal(userWindow.maxTokens, 256000);
+
+  const envMax = await modelFor({
+    id: 'srcflash',
+    kind: 'api',
+    vendor: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    apiKey: KEY_DEFAULT,
+    models: ['deepseek-flash'],
+  }, { PI_WORK_MAX_OUTPUT_TOKENS: '2048' });
+  assert.equal(envMax.contextWindow, 1_000_000);
+  assert.equal(envMax.maxTokens, 2048);
+});
+
+function rewriteDeepseekFetch(fakeBaseUrl) {
+  const fake = new URL(fakeBaseUrl);
+  return async (input, init) => {
+    const href = typeof input === 'string'
+      ? input
+      : (input instanceof URL ? input.href : (input && typeof input.url === 'string' ? input.url : ''));
+    const url = new URL(href);
+    if (url.hostname !== 'api.deepseek.com') return fetch(input, init);
+    url.protocol = fake.protocol;
+    url.host = fake.host;
+    if (input instanceof Request) return fetch(new Request(url, input), init);
+    return fetch(url, init);
+  };
+}
+
+function withoutTokenLimitValue(body) {
+  const copy = JSON.parse(JSON.stringify(body));
+  if (Object.prototype.hasOwnProperty.call(copy, 'max_tokens')) copy.max_tokens = '<limit>';
+  if (Object.prototype.hasOwnProperty.call(copy, 'max_completion_tokens')) copy.max_completion_tokens = '<limit>';
+  return copy;
+}
+
+async function drainCompletions(model, fetchImpl) {
+  const stream = completionsStreamSimple(model, {
+    messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }],
+  }, { apiKey: KEY_DEFAULT, fetch: fetchImpl, maxRetries: 0 });
+  await stream.result();
+}
+
+test('deepseek-flash request body matches the pre-catalog shape except max_tokens', async () => {
+  const fake = await startFakeModel({ mode: 'openai', text: 'from-catalog' });
+  try {
+    const models = createModels();
+    const settings = {
+      version: 2,
+      sources: [{
+        id: 'srcflash',
+        kind: 'api',
+        vendor: 'deepseek',
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: KEY_DEFAULT,
+        models: ['deepseek-flash'],
+      }],
+      models: { default: { sourceId: 'srcflash', model: 'deepseek-flash' } },
+    };
+    const routes = createKernelModels({
+      models,
+      getSettings: async () => settings,
+      env: { PI_WORK_GROK_CLIENT_VERSION: '1.0.50' },
+    });
+    const ref = await routes.modelFor({ roleId: null });
+    const catalogModel = models.getModel(ref.provider, ref.modelId);
+    const legacyModel = {
+      id: 'deepseek-flash',
+      name: 'deepseek-flash',
+      api: 'openai-completions',
+      provider: catalogModel.provider,
+      baseUrl: 'https://api.deepseek.com/v1',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 32768,
+    };
+    const fetchImpl = rewriteDeepseekFetch(fake.baseUrl);
+    await drainCompletions(legacyModel, fetchImpl);
+    await drainCompletions(catalogModel, fetchImpl);
+    const [legacyHit, catalogHit] = fake.seen.filter((hit) => hit.path.endsWith('/chat/completions'));
+    assert.ok(legacyHit?.body, 'legacy request was recorded');
+    assert.ok(catalogHit?.body, 'catalog request was recorded');
+    assert.equal(legacyHit.body.max_tokens, 32768);
+    assert.equal(catalogHit.body.max_tokens, 384000);
+    assert.deepEqual(withoutTokenLimitValue(catalogHit.body), withoutTokenLimitValue(legacyHit.body));
+    assert.equal(Object.prototype.hasOwnProperty.call(catalogHit.body, 'thinking'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(catalogHit.body, 'reasoning'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(catalogHit.body, 'reasoning_effort'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(catalogHit.body, 'enable_thinking'), false);
+  } finally {
+    await fake.close();
+  }
 });
 
 test('modelFor prefers a conversation model, falls back when that source is down, and leaves subagents on the role binding', async () => {

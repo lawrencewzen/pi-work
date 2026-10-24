@@ -1747,6 +1747,9 @@ function applyReturnedContextWindows(sourceId, res) {
     delete live.contextWindows;
   }
   if (src.defaultContextWindow != null) live.defaultContextWindow = src.defaultContextWindow;
+  if (src.defaultContextWindows && typeof src.defaultContextWindows === 'object' && !Array.isArray(src.defaultContextWindows)) {
+    live.defaultContextWindows = { ...src.defaultContextWindows };
+  }
   return true;
 }
 
@@ -1783,7 +1786,7 @@ export async function setSourceContextWindow(sourceId, model, tokens) {
       const conv = state.activeConversationData;
       const target = resolveComposerTarget();
       if (conv && target?.source?.id === sourceId && target?.model === name) {
-        conv.contextWindow = nextTokens ?? sourceDefaultContextWindow(source);
+        conv.contextWindow = nextTokens ?? sourceDefaultContextWindow(source, name);
         conv.contextWindowModel = name;
       }
       renderStatusBar();

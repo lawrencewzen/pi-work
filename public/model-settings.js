@@ -700,7 +700,7 @@ function renderContextWindowRows(ctx) {
       ? overrides[overrideKey] != null
       : hasCustomContextWindow(source, model);
     const note = custom
-      ? t('ctx_custom', { window: formatTokenCount(sourceDefaultContextWindow(source)) })
+      ? t('ctx_custom', { window: formatTokenCount(sourceDefaultContextWindow(source, model)) })
       : t('ctx_default');
     return (
       `<div class="ms-ctx-row" data-testid="context-window-row" data-source-id="${escapeHtml(source.id)}" data-model="${escapeHtml(model)}">` +

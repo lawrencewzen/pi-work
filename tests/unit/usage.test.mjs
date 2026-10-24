@@ -16,6 +16,7 @@ const {
   contextPercents,
   composerContextChip,
   resolveContextWindow,
+  sourceDefaultContextWindow,
   sourceModelContextWindow,
   hasCustomContextWindow,
   contextOverrideKey,
@@ -129,6 +130,16 @@ test('window priority is override, then conversation for that model, then settin
   };
   assert.equal(sourceModelContextWindow(source, 'grok-4.6'), 64000);
   assert.equal(sourceModelContextWindow(source, 'other'), 128000);
+  const catalogSource = {
+    id: 'src-ds',
+    defaultContextWindow: 128000,
+    defaultContextWindows: { 'deepseek-flash': 1_000_000 },
+    contextWindows: {},
+  };
+  assert.equal(sourceDefaultContextWindow(catalogSource, 'deepseek-flash'), 1_000_000);
+  assert.equal(sourceDefaultContextWindow(catalogSource, 'other'), 128000);
+  assert.equal(sourceModelContextWindow(catalogSource, 'deepseek-flash'), 1_000_000);
+  assert.equal(sourceDefaultContextWindow(catalogSource), 128000);
   assert.equal(hasCustomContextWindow(source, 'grok-4.6'), true);
   assert.equal(hasCustomContextWindow(source, 'other'), false);
   assert.equal(DEFAULT_CONTEXT_WINDOW, 128000);
