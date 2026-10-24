@@ -1,4 +1,4 @@
-# pi-work 设计稿（已确认）
+# Weft 设计稿（已确认）
 
 - 默认主题：**white**（纯白，中性灰，状态色只用很淡的小圆点）。主稿：`mockup-v2-white.png`
 - 主题：white / claude / codex / grok / cursor，每个都有 light 和 dark。变量在 `themes/themes.css`，切换方式是 `<html data-theme="white-light">`；色值在 `themes/palettes.json`；所有主题对比见 `themes/mockup-themes-contact-sheet.png`

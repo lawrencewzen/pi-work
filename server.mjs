@@ -74,13 +74,13 @@ import fs from 'node:fs/promises';
 const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'].some((k) => String(process.env[k] || '').trim());
 if (PROXY_ENV && process.env.NODE_USE_ENV_PROXY !== '1') {
   if (typeof http.setGlobalProxyFromEnv === 'function') http.setGlobalProxyFromEnv();
-  else console.warn('PI_WORK_WARN 检测到代理环境变量，但当前 Node 不支持 http.setGlobalProxyFromEnv，请以 NODE_USE_ENV_PROXY=1 启动');
+  else console.warn('WEFT_WARN 检测到代理环境变量，但当前 Node 不支持 http.setGlobalProxyFromEnv，请以 NODE_USE_ENV_PROXY=1 启动');
 }
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const PORT = process.env.PORT !== undefined && process.env.PORT !== '' ? Number(process.env.PORT) : 3000;
-const DATA_DIR = process.env.PI_WORK_DATA_DIR || path.join(ROOT, 'data');
+const DATA_DIR = process.env.WEFT_DATA_DIR || path.join(ROOT, 'data');
 const SKILL_DIRS = [path.join(ROOT, 'skills'), path.join(DATA_DIR, 'skills')];
 const PLUGIN_DIRS = [path.join(ROOT, 'plugins'), path.join(DATA_DIR, 'plugins')];
 const USER_SKILLS = path.join(DATA_DIR, 'skills');
@@ -91,7 +91,7 @@ let dataLock;
 try {
   dataLock = await acquireDataDirLock(DATA_DIR);
 } catch (err) {
-  console.error(`PI_WORK_ERROR ${err.message || err}`);
+  console.error(`WEFT_ERROR ${err.message || err}`);
   process.exit(1);
 }
 
@@ -157,9 +157,9 @@ async function readBody(req, limit = 2_000_000) {
 }
 
 function envRequestsFaux() {
-  return selectChatRuntime(process.env.PI_WORK_LLM, {
+  return selectChatRuntime(process.env.WEFT_LLM, {
     llmApi: process.env.LLM_API,
-    fauxScript: Boolean(String(process.env.PI_WORK_FAUX_SCRIPT || '').trim()),
+    fauxScript: Boolean(String(process.env.WEFT_FAUX_SCRIPT || '').trim()),
   }) === 'faux';
 }
 
@@ -197,7 +197,7 @@ async function ensureSettings() {
 
 async function resolveChatKind() {
   if (envRequestsFaux()) return 'faux';
-  if (String(process.env.PI_WORK_LLM || '').trim().toLowerCase() === 'openai') return 'openai';
+  if (String(process.env.WEFT_LLM || '').trim().toLowerCase() === 'openai') return 'openai';
   const [grok, settings] = await Promise.all([currentGrok(), ensureSettings()]);
   const available = hasAvailableSource(settings, { grokSignedIn: Boolean(grok?.signedIn) });
   return selectChatRuntime('', { hasApiKey: available });
@@ -295,7 +295,7 @@ async function reloadKernelPlugins() {
   try {
     await kernelApi.reloadPlugins();
   } catch (err) {
-    console.error(`PI_WORK_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
+    console.error(`WEFT_KERNEL_PLUGIN ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -353,7 +353,7 @@ try {
     grokAuth,
   });
 } catch (err) {
-  console.error(`PI_WORK_KERNEL_OPEN_FAILED ${err instanceof Error ? err.message : err}`);
+  console.error(`WEFT_KERNEL_OPEN_FAILED ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 }
 
@@ -1206,7 +1206,7 @@ async function routeApi(req, res, url) {
   }
 
   if (p === '/api/about' && m === 'GET') {
-    let pkg = { name: 'pi-work', version: '0.0.0', description: '' };
+    let pkg = { name: 'weft', version: '0.0.0', description: '' };
     try {
       pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
     } catch { /* ignore */ }
@@ -1335,5 +1335,5 @@ server.listen(PORT, '127.0.0.1', () => {
   const port = typeof addr === 'object' && addr ? addr.port : PORT;
   const hostWarning = unauthenticatedHostsWarning();
   if (hostWarning) console.warn(hostWarning);
-  console.log(`PI_WORK_READY http://127.0.0.1:${port}`);
+  console.log(`WEFT_READY http://127.0.0.1:${port}`);
 });

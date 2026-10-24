@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const executablePath = process.env.PI_WORK_CHROME || undefined;
+const executablePath = process.env.WEFT_CHROME || undefined;
 const ci = !!process.env.CI;
 const args = ['--no-sandbox', '--disable-dev-shm-usage'];
 

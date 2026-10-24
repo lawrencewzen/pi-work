@@ -166,7 +166,7 @@ async function writeScript(dataDir, name, turns) {
 test('subagent messages 404 for an unknown conversation or agent', { timeout: 30000 }, async () => {
   const srv = await startServer({
     token: TOKEN,
-    env: { PI_WORK_RETRY_MAX: '2', PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'still-here' },
+    env: { WEFT_RETRY_MAX: '2', WEFT_LLM: 'faux', WEFT_FAUX_TEXT: 'still-here' },
   });
   try {
     const missing = await request(srv.base, 'GET', '/api/conversations/none/agents/none/messages');
@@ -205,10 +205,10 @@ test('foreground delegate returns the child answer; tools and name are self-cont
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_RECORD: record,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
+        WEFT_FAUX_RECORD: record,
       },
     });
     proc = srv.proc;
@@ -306,11 +306,11 @@ test('child resolved agent is self-contained: empty instructions, parent model a
       extensions: createExtensionHost({ getSettings: () => store.getSettings() }),
       getSettings: () => store.getSettings(),
       env: {
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_RECORD: record,
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_RETRY_BASE_MS: '20',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
+        WEFT_FAUX_RECORD: record,
+        WEFT_RETRY_MAX: '2',
+        WEFT_RETRY_BASE_MS: '20',
       },
     });
     const conv = await kernel.createConversation({
@@ -393,9 +393,9 @@ test('background spawn reports the answer back to the main conversation', { time
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
       },
     });
     proc = srv.proc;
@@ -445,10 +445,10 @@ test('stopping the conversation stops a background subagent', { timeout: 60000 }
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_HOLD_READY: ready,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
+        WEFT_FAUX_HOLD_READY: ready,
       },
     });
     proc = srv.proc;
@@ -487,10 +487,10 @@ test('a killed foreground subagent resumes the same child without a second submi
     { when: 'resume-task', delayMs: 2500, text: 'RESUMED_CHILD' },
   ]);
   const env = {
-    PI_WORK_RETRY_MAX: '2',
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
-    PI_WORK_FAUX_HOLD_READY: ready,
+    WEFT_RETRY_MAX: '2',
+    WEFT_LLM: 'faux',
+    WEFT_FAUX_SCRIPT: script,
+    WEFT_FAUX_HOLD_READY: ready,
   };
   let proc = null;
   try {
@@ -537,10 +537,10 @@ test('a background subagent continues after restart and reports once', { timeout
     { when: 'hold-bg', delayMs: 2500, text: 'BG_ANSWER' },
   ]);
   const env = {
-    PI_WORK_RETRY_MAX: '2',
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
-    PI_WORK_FAUX_HOLD_READY: ready,
+    WEFT_RETRY_MAX: '2',
+    WEFT_LLM: 'faux',
+    WEFT_FAUX_SCRIPT: script,
+    WEFT_FAUX_HOLD_READY: ready,
   };
   let proc = null;
   try {
@@ -591,10 +591,10 @@ test('a killed foreground subagent writes the file once after restart', { timeou
     { when: 'WRITE_ONCE', text: 'child-wrote' },
   ]);
   const env = {
-    PI_WORK_RETRY_MAX: '2',
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
-    PI_WORK_FAUX_HOLD_READY: ready,
+    WEFT_RETRY_MAX: '2',
+    WEFT_LLM: 'faux',
+    WEFT_FAUX_SCRIPT: script,
+    WEFT_FAUX_HOLD_READY: ready,
   };
   let proc = null;
   let wsPath;
@@ -655,11 +655,11 @@ test('aborting a foreground child returns stopped-by-the-user and the parent con
       extensions: createExtensionHost({ getSettings: () => store.getSettings() }),
       getSettings: () => store.getSettings(),
       env: {
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_HOLD_READY: ready,
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_RETRY_BASE_MS: '20',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
+        WEFT_FAUX_HOLD_READY: ready,
+        WEFT_RETRY_MAX: '2',
+        WEFT_RETRY_BASE_MS: '20',
       },
     });
     const conv = await kernel.createConversation({
@@ -716,10 +716,10 @@ test('stopping the main conversation while a foreground child is running still s
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_HOLD_READY: ready,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
+        WEFT_FAUX_HOLD_READY: ready,
       },
     });
     proc = srv.proc;
@@ -762,10 +762,10 @@ test('foreground running agents[] has brief, timestamps, currentAction from desc
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_HOLD_READY: ready,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
+        WEFT_FAUX_HOLD_READY: ready,
       },
     });
     proc = srv.proc;
@@ -838,10 +838,10 @@ test('background running agents[] uses tool:param currentAction; SSE carries the
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_HOLD_READY: ready,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
+        WEFT_FAUX_HOLD_READY: ready,
       },
     });
     proc = srv.proc;

@@ -20,7 +20,7 @@ async function boot({ script, models } = {}) {
   srv = await startServer({
     script: script || 'basic.json',
     extraEnv: {
-      PI_WORK_WORKSPACE_ROOT: root,
+      WEFT_WORKSPACE_ROOT: root,
       LLM_CONTEXT_WINDOW: '200000',
     },
   });

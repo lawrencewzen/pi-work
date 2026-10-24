@@ -258,7 +258,7 @@ test('the first write of a path is the diff baseline', () => {
 });
 
 test('kernel path: faux turn pushes live events, and a new connection starts at the current status', { timeout: 30000 }, async () => {
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'kernel-ok' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_LLM: 'faux', WEFT_FAUX_TEXT: 'kernel-ok' } });
   try {
     const { ws, conv } = await openConversation(srv.base);
     const listed = await request(srv.base, 'GET', `/api/workspaces/${ws.id}/conversations`);
@@ -312,9 +312,9 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_HOLD: '1',
-      PI_WORK_FAUX_HOLD_READY: ready,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_HOLD: '1',
+      WEFT_FAUX_HOLD_READY: ready,
     },
   });
   let convId;
@@ -344,8 +344,8 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_TEXT: 'resumed-ok',
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_TEXT: 'resumed-ok',
     },
   });
   try {
@@ -372,14 +372,14 @@ test('kernel path: a killed run resumes to done', { timeout: 60000 }, async () =
   }
 });
 
-test('a harness that cannot open does not print PI_WORK_READY', async () => {
+test('a harness that cannot open does not print WEFT_READY', async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kfail-'));
   await writeFile(path.join(dataDir, 'harness'), 'not-a-directory\n');
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux' }, dataDir, expectReady: false });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_LLM: 'faux' }, dataDir, expectReady: false });
   try {
     assert.equal(srv.base, null);
-    assert.equal(srv.logs().includes('PI_WORK_READY'), false);
-    assert.match(srv.logs(), /PI_WORK_KERNEL_OPEN_FAILED/);
+    assert.equal(srv.logs().includes('WEFT_READY'), false);
+    assert.match(srv.logs(), /WEFT_KERNEL_OPEN_FAILED/);
   } finally {
     await stopServer(srv);
     await rm(dataDir, { recursive: true, force: true });
@@ -400,9 +400,9 @@ test('kernel path: a message sent while busy is steered into the run', { timeout
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-      PI_WORK_FAUX_RECORD: record,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_SCRIPT: script,
+      WEFT_FAUX_RECORD: record,
     },
   });
   try {
@@ -441,11 +441,11 @@ test('kernel path: stream timeout retries a held faux call', { timeout: 20000 },
   const srv = await startServer({
     token: TOKEN,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_HOLD: '1',
-      PI_WORK_STREAM_TIMEOUT_MS: '150',
-      PI_WORK_RETRY_BASE_MS: '20',
-      PI_WORK_RETRY_MAX: '3',
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_HOLD: '1',
+      WEFT_STREAM_TIMEOUT_MS: '150',
+      WEFT_RETRY_BASE_MS: '20',
+      WEFT_RETRY_MAX: '3',
     },
   });
   try {
@@ -470,7 +470,7 @@ test('kernel path: stream timeout retries a held faux call', { timeout: 20000 },
 });
 
 function appPointer(dataDir, convId) {
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'), { readOnly: true });
+  const db = new DatabaseSync(path.join(dataDir, 'weft.sqlite'), { readOnly: true });
   try {
     const row = db.prepare('SELECT last_submission_id FROM conversations WHERE id = ?').get(convId);
     return row?.last_submission_id == null ? null : Number(row.last_submission_id);
@@ -492,7 +492,7 @@ async function waitForStatus(base, id, accept) {
 
 test('last submission: done stays done after restart', { timeout: 40000 }, async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kdone-'));
-  const env = { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'done-ok' };
+  const env = { WEFT_LLM: 'faux', WEFT_FAUX_TEXT: 'done-ok' };
   const first = await startServer({ token: TOKEN, env, dataDir });
   let convId;
   let pointer;
@@ -530,7 +530,7 @@ test('last submission: a faux error stays failed after restart', { timeout: 4000
   const dataDir = await mkdtemp(path.join(tmpdir(), 'piw-kfail-sub-'));
   const script = path.join(dataDir, 'fail.json');
   await writeFile(script, JSON.stringify({ turns: [{ error: 'provider exploded' }] }));
-  const env = { PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script };
+  const env = { WEFT_LLM: 'faux', WEFT_FAUX_SCRIPT: script };
   const first = await startServer({ token: TOKEN, env, dataDir });
   let convId;
   let pointer;
@@ -570,9 +570,9 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_HOLD: '1',
-      PI_WORK_FAUX_HOLD_READY: ready,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_HOLD: '1',
+      WEFT_FAUX_HOLD_READY: ready,
     },
   });
   let convId;
@@ -609,8 +609,8 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_TEXT: 'should-not-resume',
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_TEXT: 'should-not-resume',
     },
   });
   try {
@@ -625,10 +625,10 @@ test('last submission: stop stays stopped after restart', { timeout: 40000 }, as
 });
 
 test('a missing submission is failed, not 500', { timeout: 20000 }, async () => {
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'ok' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_LLM: 'faux', WEFT_FAUX_TEXT: 'ok' } });
   try {
     const { conv } = await openConversation(srv.base, 'missing');
-    const db = new DatabaseSync(path.join(srv.dataDir, 'pi-work.sqlite'));
+    const db = new DatabaseSync(path.join(srv.dataDir, 'weft.sqlite'));
     db.prepare('UPDATE conversations SET last_submission_id = ? WHERE id = ?').run(999999, conv.id);
     db.close();
     const got = await request(srv.base, 'GET', `/api/conversations/${conv.id}`);
@@ -636,7 +636,7 @@ test('a missing submission is failed, not 500', { timeout: 20000 }, async () => 
     assert.equal(got.body.status, 'failed');
     assert.equal(got.body.llmError?.code, 'E_SUBMISSION_MISSING');
     assert.equal(got.body.llmError?.message, '找不到这次运行的记录');
-    assert.match(srv.logs(), /PI_WORK_SUBMISSION_MISSING/);
+    assert.match(srv.logs(), /WEFT_SUBMISSION_MISSING/);
     const events = await collectSse(srv.base, conv.id, {
       ready: (list) => list.some((ev) => ev.event === 'status'),
       quietMs: 200,

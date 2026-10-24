@@ -233,12 +233,12 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
     env: {
       ...process.env,
       PORT: '0',
-      PI_WORK_DATA_DIR: dataDir,
-      PI_WORK_TOKEN: token,
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: scriptPath,
-      PI_WORK_FAUX_RECORD: record,
-      PI_WORK_RETRY_BASE_MS: '20',
+      WEFT_DATA_DIR: dataDir,
+      WEFT_TOKEN: token,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_SCRIPT: scriptPath,
+      WEFT_FAUX_RECORD: record,
+      WEFT_RETRY_BASE_MS: '20',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -247,7 +247,7 @@ test('http api creates skills, rejects dead plugin metadata, and runs echo', asy
     const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 15000);
     const onData = (buf) => {
       log += buf;
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
+      const match = log.match(/WEFT_READY (http:\/\/\S+)/);
       if (match) {
         clearTimeout(timer);
         resolve(match[1]);

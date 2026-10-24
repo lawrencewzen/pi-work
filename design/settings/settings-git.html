@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pi-work · 设置 Git 与导入仓库</title>
+<title>Weft · 设置 Git 与导入仓库</title>
 <link rel="stylesheet" href="../themes/themes.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -221,7 +221,7 @@ body.shot .notes{display:none}
         <div class="field">
           <label>个人访问令牌</label>
           <input class="in mono" id="f-token" type="password" spellcheck="false" autocomplete="off">
-          <div class="hint">需要 <span class="mono">read_repository</span> 和 <span class="mono">read_api</span>。令牌只由 pi-work 保存在本机；克隆时交给 git，不写进仓库地址，也不写入 <span class="mono">.git/config</span>。</div>
+          <div class="hint">需要 <span class="mono">read_repository</span> 和 <span class="mono">read_api</span>。令牌只由 Weft 保存在本机；克隆时交给 git，不写进仓库地址，也不写入 <span class="mono">.git/config</span>。</div>
           <div class="hint" id="token-hint"></div>
           <div class="hint"><a id="token-link" href="#" target="_blank" rel="noreferrer">去 GitLab 创建令牌</a></div>
           <div class="hint mono" id="token-url"></div>
@@ -284,7 +284,7 @@ const SERVICES = [
 ];
 const PROJECTS = {
   corp: [
-    { id: 'pi', path: 'platform/pi-work', desc: '内网编码工作台', branch: 'main', branches: ['main', 'develop', 'release/1.2'], updated: '10 月 14 日' },
+    { id: 'pi', path: 'platform/Weft', desc: '内网编码工作台', branch: 'main', branches: ['main', 'develop', 'release/1.2'], updated: '10 月 14 日' },
     { id: 'runner', path: 'platform/runner', desc: 'CI 执行器', branch: 'main', branches: ['main', 'dev'], updated: '10 月 12 日' },
     { id: 'charts', path: 'infra/charts', desc: '部署清单', branch: 'master', branches: ['master', 'main'], updated: '10 月 8 日' },
     { id: 'book', path: 'docs/handbook', desc: '内部手册', branch: 'main', branches: ['main'], updated: '9 月 30 日' },
@@ -331,7 +331,7 @@ const ui = {
   branchOpen: false,
   connOpen: false,
   branch: 'main',
-  name: 'pi-work',
+  name: 'Weft',
   nameTouched: false,
   phase: 'idle',
   err: q.get('err') || 'auth',
@@ -360,7 +360,7 @@ function applySceneFromQuery() {
     ui.source = 'pick';
     ui.project = 'pi';
     ui.branch = 'main';
-    ui.name = 'pi-work';
+    ui.name = 'Weft';
     ui.phase = 'idle';
     if (state === 'address') ui.source = 'address';
     if (state === 'branch') ui.branchOpen = true;
@@ -422,7 +422,7 @@ function renderList() {
   $('settings-body').innerHTML = `
     <div class="section-title"><b>已连接的服务</b><span>${ok} 个可用 · ${SERVICES.length - ok} 个需要处理</span></div>
     <div class="src">${rows}</div>
-    <p class="muted" style="font-size:12px;margin-top:10px;line-height:1.55">测试只检查令牌能不能访问 API。克隆时 pi-work 把令牌交给 git，不放进地址，也不留在 <span class="mono">.git/config</span>。GitHub、Gitea 预留，项目列表目前只支持 GitLab。</p>`;
+    <p class="muted" style="font-size:12px;margin-top:10px;line-height:1.55">测试只检查令牌能不能访问 API。克隆时 Weft 把令牌交给 git，不放进地址，也不留在 <span class="mono">.git/config</span>。GitHub、Gitea 预留，项目列表目前只支持 GitLab。</p>`;
 }
 
 function formUrl() {
@@ -569,11 +569,11 @@ function renderWs() {
         <button type="button" data-source="pick">从 GitLab 选择</button>
         <button type="button" data-source="address" class="on">填写地址</button>
       </div>
-      <div><label class="flabel">工作区名称</label><input class="in" id="addr-name" value="pi-work"></div>
-      <div><label class="flabel">Git 仓库地址</label><input class="in mono" id="addr-url" value="https://gitlab.corp.example/platform/pi-work.git" spellcheck="false"></div>
+      <div><label class="flabel">工作区名称</label><input class="in" id="addr-name" value="Weft"></div>
+      <div><label class="flabel">Git 仓库地址</label><input class="in mono" id="addr-url" value="https://gitlab.corp.example/platform/Weft.git" spellcheck="false"></div>
       <div><label class="flabel">分支 (可选)</label><input class="in mono" id="addr-branch" value="main" spellcheck="false"></div>
       <p class="hint">如果地址属于已连接的服务，克隆时用该服务的令牌；否则用本机 git 凭证。令牌不会出现在地址里，也不会写入 <span class="mono">.git/config</span>。</p>`;
-    if (busy) $('ws-progress-text').textContent = '正在克隆 pi-work（main）…';
+    if (busy) $('ws-progress-text').textContent = '正在克隆 Weft（main）…';
     return;
   }
   const usable = ui.list === 'empty' ? [] : SERVICES.filter((s) => s.status === 'ok');

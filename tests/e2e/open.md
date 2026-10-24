@@ -1,15 +1,15 @@
 # 直接打开工作台
 
-服务只监听 `127.0.0.1`。不设置 `PI_WORK_TOKEN` 时，不需要登录链接。
+服务只监听 `127.0.0.1`。不设置 `WEFT_TOKEN` 时，不需要登录链接。
 
 ## OP-1 打开首页
 
 ### 步骤
 
-1. 用一个新的数据目录启动 `node server.mjs`，不要设置 `PI_WORK_TOKEN`。
+1. 用一个新的数据目录启动 `node server.mjs`，不要设置 `WEFT_TOKEN`。
 2. 浏览器打开启动日志里的 `http://127.0.0.1:<端口>/`。
 
 ### 预期
 
-- 日志里有 `PI_WORK_READY`，没有 `PI_WORK_LOGIN` 或 `PI_WORK_TOKEN`。
+- 日志里有 `WEFT_READY`，没有 `WEFT_LOGIN` 或 `WEFT_TOKEN`。
 - 页面直接是工作台（左栏工作区、中间对话、右栏文件），不是登录页，也没有未授权提示。

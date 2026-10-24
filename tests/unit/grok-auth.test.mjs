@@ -42,7 +42,7 @@ function jwt(payload) {
 }
 
 async function tempAuth() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-work-grok-'));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'Weft-grok-'));
   return path.join(dir, 'auth.json');
 }
 
@@ -308,10 +308,10 @@ test('client version prefers grok --version, else a current default, and keeps t
   assert.equal(grokVersionAtLeast('1.0.12', GROK_CLIENT_VERSION_MIN), false);
   assert.equal(grokVersionAtLeast('1.0.13', GROK_CLIENT_VERSION_MIN), true);
 
-  assert.equal(grokClientVersion({ PI_WORK_GROK_CLIENT_VERSION: '9.9.9' }, () => {
+  assert.equal(grokClientVersion({ WEFT_GROK_CLIENT_VERSION: '9.9.9' }, () => {
     throw new Error('cli should not be consulted when the env override is set');
   }), '9.9.9');
-  assert.equal(grokClientVersion({ PI_WORK_GROK_CLIENT_VERSION: '   ' }, () => 'grok 1.2.3'), '1.2.3');
+  assert.equal(grokClientVersion({ WEFT_GROK_CLIENT_VERSION: '   ' }, () => 'grok 1.2.3'), '1.2.3');
   assert.equal(grokClientVersion({}, () => 'grok 1.0.50'), '1.0.50');
   assert.equal(grokClientVersion({}, () => '0.1.220'), GROK_CLIENT_VERSION_DEFAULT);
   assert.equal(grokClientVersion({}, () => { throw new Error('grok missing'); }), GROK_CLIENT_VERSION_DEFAULT);

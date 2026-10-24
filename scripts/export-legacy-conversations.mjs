@@ -40,7 +40,7 @@ function markdown(row, messages) {
  * Does not modify the database.
  */
 export function exportLegacyConversations(dataDir, outDir) {
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'), { readOnly: true });
+  const db = new DatabaseSync(path.join(dataDir, 'weft.sqlite'), { readOnly: true });
   try {
     const rows = db.prepare(`
       SELECT id, title, created_at, updated_at

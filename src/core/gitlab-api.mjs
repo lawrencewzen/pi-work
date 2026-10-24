@@ -63,7 +63,7 @@ export async function gitlabRequest({ baseUrl, token, caFile, pathname, query, t
       headers: {
         'PRIVATE-TOKEN': token,
         Accept: 'application/json',
-        'User-Agent': 'pi-work',
+        'User-Agent': 'weft',
       },
       ca,
       servername: url.hostname,

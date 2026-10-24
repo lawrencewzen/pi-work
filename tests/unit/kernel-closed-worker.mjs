@@ -5,7 +5,7 @@
  */
 import { watchHarnessClosed } from '../../src/kernel/index.mjs';
 
-const mode = process.env.PI_WORK_KERNEL_MODE;
+const mode = process.env.WEFT_KERNEL_MODE;
 
 if (mode === 'fail') {
   watchHarnessClosed({
@@ -18,6 +18,6 @@ if (mode === 'fail') {
   });
   setTimeout(() => process.exit(0), 100);
 } else {
-  console.error(`unknown PI_WORK_KERNEL_MODE ${mode}`);
+  console.error(`unknown WEFT_KERNEL_MODE ${mode}`);
   process.exit(1);
 }

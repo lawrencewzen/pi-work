@@ -206,9 +206,9 @@ test('faux two turns: folded events match the transcript and leave no stream', {
   const srv = await startServer({
     token: TOKEN,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-      PI_WORK_FAUX_TPS: '4',
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_SCRIPT: script,
+      WEFT_FAUX_TPS: '4',
     },
   });
   try {

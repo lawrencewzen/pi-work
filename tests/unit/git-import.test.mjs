@@ -32,16 +32,16 @@ test('validateGitUrl allows https, ssh, and git@, rejects file and plain http', 
   assert.equal(validateBranch('feature/one'), true);
 });
 
-test('http:// is allowed only for PI_WORK_GIT_HTTP_HOSTS', () => {
+test('http:// is allowed only for WEFT_GIT_HTTP_HOSTS', () => {
   const url = 'http://gitlab.corp.local/group/repo.git';
   assert.equal(validateGitUrl(url, { httpHosts: ['gitlab.corp.local'] }), true);
   assert.equal(validateGitUrl('http://other.corp.local/group/repo.git', { httpHosts: ['gitlab.corp.local'] }), false);
   assert.equal(validateGitUrl('http://GitLab.Corp.Local/group/repo.git', {
-    env: { PI_WORK_GIT_HTTP_HOSTS: ' gitlab.corp.local , other.example ' },
+    env: { WEFT_GIT_HTTP_HOSTS: ' gitlab.corp.local , other.example ' },
   }), true);
   assert.equal(validateGitUrl('http://127.0.0.1:9/repo.git', { httpHosts: ['127.0.0.1'] }), true);
   assert.equal(validateGitUrl('http://u:p@gitlab.corp.local/a.git', { httpHosts: ['gitlab.corp.local'] }), true);
-  assert.equal(validateGitUrl(url, { env: { PI_WORK_GIT_HTTP_HOSTS: '' } }), false);
+  assert.equal(validateGitUrl(url, { env: { WEFT_GIT_HTTP_HOSTS: '' } }), false);
 });
 
 test('prepareGitClone keeps the process environment and does not disable system git config', () => {
@@ -63,8 +63,8 @@ test('prepareGitClone keeps the process environment and does not disable system 
       COMSPEC: 'C:\\Windows\\System32\\cmd.exe',
       HOME: 'C:\\Users\\me',
       SSH_AUTH_SOCK: '\\\\.\\pipe\\ssh-agent',
-      PI_WORK_GIT_BIN: 'D:\\Git\\cmd\\git.exe',
-      PI_WORK_GIT_CA_FILE: 'D:\\certs\\corp.pem',
+      WEFT_GIT_BIN: 'D:\\Git\\cmd\\git.exe',
+      WEFT_GIT_CA_FILE: 'D:\\certs\\corp.pem',
       GIT_CONFIG_NOSYSTEM: '1',
       GIT_ASKPASS: 'echo',
       SSH_ASKPASS: 'C:\\askpass.exe',
@@ -104,13 +104,13 @@ test('prepareGitClone keeps the process environment and does not disable system 
   assert.equal(plan.env.LANGUAGE, 'C');
 });
 
-test('PI_WORK_GIT_CA_FILE is omitted when empty, and an inherited GIT_SSH_COMMAND is left alone', () => {
+test('WEFT_GIT_CA_FILE is omitted when empty, and an inherited GIT_SSH_COMMAND is left alone', () => {
   const plan = prepareGitClone({
     url: 'https://example.com/a.git',
     dest: 'repo',
     env: {
       PATH: '/usr/bin',
-      PI_WORK_GIT_CA_FILE: '   ',
+      WEFT_GIT_CA_FILE: '   ',
       GIT_SSH_COMMAND: 'ssh -i /keys/id_ed25519',
     },
   });
@@ -124,7 +124,7 @@ test('prepareGitClone disables credential helpers only when the URL embeds crede
   const withCreds = prepareGitClone({
     url: 'https://importer:s3cr3t-token-value@example.com/a.git',
     dest: 'repo',
-    env: { PATH: '/usr/bin', PI_WORK_GIT_CA_FILE: '/certs/ca.pem' },
+    env: { PATH: '/usr/bin', WEFT_GIT_CA_FILE: '/certs/ca.pem' },
   });
   const helperAt = withCreds.args.indexOf('credential.helper=');
   assert.equal(withCreds.args[helperAt - 1], '-c');
@@ -170,7 +170,7 @@ test('redactGitOutput removes user:token and classifyCloneFailure maps git stder
 });
 
 function cloneEnv(extra = {}) {
-  return { ...process.env, PI_WORK_GIT_HTTP_HOSTS: '127.0.0.1', ...extra };
+  return { ...process.env, WEFT_GIT_HTTP_HOSTS: '127.0.0.1', ...extra };
 }
 
 async function findHttpBackend() {
@@ -220,16 +220,16 @@ async function startSmartGit() {
   await fs.mkdir(src);
   const gitEnv = {
     ...process.env,
-    GIT_AUTHOR_NAME: 'pi-work',
-    GIT_AUTHOR_EMAIL: 'pi-work@example.com',
-    GIT_COMMITTER_NAME: 'pi-work',
-    GIT_COMMITTER_EMAIL: 'pi-work@example.com',
+    GIT_AUTHOR_NAME: 'Weft',
+    GIT_AUTHOR_EMAIL: 'Weft@example.com',
+    GIT_COMMITTER_NAME: 'Weft',
+    GIT_COMMITTER_EMAIL: 'Weft@example.com',
   };
   const git = (args, cwd) => execFileP('git', args, { cwd, windowsHide: true, timeout: 20_000, env: gitEnv });
   await git(['init', '-b', 'main'], src);
   await fs.writeFile(path.join(src, 'README.md'), 'hello\n');
   await git(['add', 'README.md'], src);
-  await git(['-c', 'commit.gpgsign=false', '-c', 'user.name=pi-work', '-c', 'user.email=pi-work@example.com', 'commit', '-m', 'init'], src);
+  await git(['-c', 'commit.gpgsign=false', '-c', 'user.name=Weft', '-c', 'user.email=Weft@example.com', 'commit', '-m', 'init'], src);
   await git(['clone', '--bare', src, bare]);
 
   function runCgi(req, pathInfo) {
@@ -512,14 +512,14 @@ test('cloneGitRepo: a failed clone does not leave user:token on disk', { timeout
   await assert.rejects(() => fs.access(dest));
 });
 
-test('cloneGitRepo: git_not_found when PI_WORK_GIT_BIN is missing', async () => {
+test('cloneGitRepo: git_not_found when WEFT_GIT_BIN is missing', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'piw-gitbin-'));
   try {
     await assert.rejects(
       () => cloneGitRepo({
         url: 'https://example.com/repo.git',
         dest: path.join(dir, 'out'),
-        env: cloneEnv({ PI_WORK_GIT_BIN: path.join(dir, 'missing-git') }),
+        env: cloneEnv({ WEFT_GIT_BIN: path.join(dir, 'missing-git') }),
       }),
       (err) => err.gitCode === 'git_not_found' && err.message === 'git clone failed',
     );
@@ -528,12 +528,12 @@ test('cloneGitRepo: git_not_found when PI_WORK_GIT_BIN is missing', async () => 
   }
 });
 
-test('cloneGitRepo rejects http hosts outside PI_WORK_GIT_HTTP_HOSTS before calling git', async () => {
+test('cloneGitRepo rejects http hosts outside WEFT_GIT_HTTP_HOSTS before calling git', async () => {
   await assert.rejects(
     () => cloneGitRepo({
       url: 'http://gitlab.corp.local/group/repo.git',
       dest: path.join(os.tmpdir(), 'piw-should-not-clone'),
-      env: { PI_WORK_GIT_HTTP_HOSTS: 'other.example' },
+      env: { WEFT_GIT_HTTP_HOSTS: 'other.example' },
     }),
     (err) => err.message === 'invalid gitUrl' && err.gitCode == null,
   );
@@ -587,9 +587,9 @@ test('POST /api/workspaces returns git import error codes and stores a stripped 
     env: {
       ...process.env,
       PORT: '0',
-      PI_WORK_DATA_DIR: dataDir,
-      PI_WORK_GIT_HTTP_HOSTS: '127.0.0.1',
-      PI_WORK_GROK_AUTH: path.join(dataDir, 'grok-auth.json'),
+      WEFT_DATA_DIR: dataDir,
+      WEFT_GIT_HTTP_HOSTS: '127.0.0.1',
+      WEFT_GROK_AUTH: path.join(dataDir, 'grok-auth.json'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -604,7 +604,7 @@ test('POST /api/workspaces returns git import error codes and stores a stripped 
   const base = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`server not ready:\n${log}`)), 20_000);
     const timerCheck = setInterval(() => {
-      const match = log.match(/PI_WORK_READY (http:\/\/\S+)/);
+      const match = log.match(/WEFT_READY (http:\/\/\S+)/);
       if (match) {
         clearTimeout(timer);
         clearInterval(timerCheck);

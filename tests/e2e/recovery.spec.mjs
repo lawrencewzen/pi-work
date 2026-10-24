@@ -10,8 +10,8 @@ test('kill -9 server mid-task, restart -> resumes to done without duplicate writ
   let srv = await startServer({
     script: 'crash.json',
     extraEnv: {
-      PI_WORK_WORKSPACE_ROOT: root,
-      PI_WORK_FAUX_HOLD_READY: holdReady,
+      WEFT_WORKSPACE_ROOT: root,
+      WEFT_FAUX_HOLD_READY: holdReady,
     },
   });
   const { dataDir, port } = srv;
@@ -28,7 +28,7 @@ test('kill -9 server mid-task, restart -> resumes to done without duplicate writ
   await expect.poll(() => fs.readFile(holdReady, 'utf8').catch(() => ''), { timeout: 15000 }).toBe('seen');
   await srv.kill('SIGKILL');
 
-  srv = await startServer({ script: 'crash.json', dataDir, port, extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  srv = await startServer({ script: 'crash.json', dataDir, port, extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   try {
     await openApp(page, srv, token);
     await page.getByTestId('workspace-item').filter({ hasText: 'crash' }).click();

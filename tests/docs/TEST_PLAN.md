@@ -1,4 +1,4 @@
-# pi-work 测试方案（TDD，先于实现）
+# Weft 测试方案（TDD，先于实现）
 
 ## 范围
 - 单元测试（`node:test`）：纯函数与编排器核心，见 `tests/unit/`。
@@ -31,7 +31,7 @@
 | E11 | E2E | 模型未配置时芯片为 `Agent`；跑完无 usage 的回合后上下文仍为 `—` | e2e/composer-chips |
 | E12 | E2E | 芯片显示设置里的默认模型；菜单切换对话模型/默认绑定，文案与 `GET /conversations/:cid` 一致，刷新保持 | e2e/composer-chips |
 | E13 | E2E | 无对话时点击芯片只提示、不打开菜单；运行中点击提示忙碌且不切换 | e2e/composer-chips |
-| M1 | 手工 | 未登录且未配置模型时发送：对话和 toast 都是「未连接模型…」，状态失败，没有助手回复；登录后得到真实回复；`LLM_API=faux` 或 `PI_WORK_FAUX_SCRIPT` 时顶栏和 Agent 芯片旁显示「演示模型」 | e2e/model-connection |
+| M1 | 手工 | 未登录且未配置模型时发送：对话和 toast 都是「未连接模型…」，状态失败，没有助手回复；登录后得到真实回复；`LLM_API=faux` 或 `WEFT_FAUX_SCRIPT` 时顶栏和 Agent 芯片旁显示「演示模型」 | e2e/model-connection |
 
 ## 判定
 全部单元测试通过，并且 `tests/e2e/*.md` 由 QA 在真实服务器上手工通过，才算交付。`*.spec.mjs` 失败仍须修，但不能代替手工清单。测试 Agent 只改测试/契约，不改功能代码。

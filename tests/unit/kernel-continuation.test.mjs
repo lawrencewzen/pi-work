@@ -46,13 +46,13 @@ async function writeScript(dataDir, name, turns) {
   return file;
 }
 
-test('maxTokens defaults to 32768 and PI_WORK_MAX_OUTPUT_TOKENS overrides', async () => {
+test('maxTokens defaults to 32768 and WEFT_MAX_OUTPUT_TOKENS overrides', async () => {
   assert.equal(maxOutputTokensFromEnv({}), DEFAULT_MAX_OUTPUT_TOKENS);
-  assert.equal(maxOutputTokensFromEnv({ PI_WORK_MAX_OUTPUT_TOKENS: '2048' }), 2048);
-  assert.equal(maxOutputTokensFromEnv({ PI_WORK_MAX_OUTPUT_TOKENS: 'nope' }), DEFAULT_MAX_OUTPUT_TOKENS);
-  assert.equal(maxOutputTokensFromEnv({ PI_WORK_MAX_OUTPUT_TOKENS: '0' }), DEFAULT_MAX_OUTPUT_TOKENS);
-  assert.equal(maxOutputTokensFromEnv({ PI_WORK_MAX_OUTPUT_TOKENS: '-8' }), DEFAULT_MAX_OUTPUT_TOKENS);
-  assert.equal(maxOutputTokensFromEnv({ PI_WORK_MAX_OUTPUT_TOKENS: '1.5' }), DEFAULT_MAX_OUTPUT_TOKENS);
+  assert.equal(maxOutputTokensFromEnv({ WEFT_MAX_OUTPUT_TOKENS: '2048' }), 2048);
+  assert.equal(maxOutputTokensFromEnv({ WEFT_MAX_OUTPUT_TOKENS: 'nope' }), DEFAULT_MAX_OUTPUT_TOKENS);
+  assert.equal(maxOutputTokensFromEnv({ WEFT_MAX_OUTPUT_TOKENS: '0' }), DEFAULT_MAX_OUTPUT_TOKENS);
+  assert.equal(maxOutputTokensFromEnv({ WEFT_MAX_OUTPUT_TOKENS: '-8' }), DEFAULT_MAX_OUTPUT_TOKENS);
+  assert.equal(maxOutputTokensFromEnv({ WEFT_MAX_OUTPUT_TOKENS: '1.5' }), DEFAULT_MAX_OUTPUT_TOKENS);
 
   const settings = {
     version: 2,
@@ -76,8 +76,8 @@ test('maxTokens defaults to 32768 and PI_WORK_MAX_OUTPUT_TOKENS overrides', asyn
   }
 
   assert.equal(await tokensFor({}), 32768);
-  assert.equal(await tokensFor({ PI_WORK_MAX_OUTPUT_TOKENS: '8192' }), 8192);
-  assert.equal(await tokensFor({ PI_WORK_MAX_OUTPUT_TOKENS: 'abc' }), 32768);
+  assert.equal(await tokensFor({ WEFT_MAX_OUTPUT_TOKENS: '8192' }), 8192);
+  assert.equal(await tokensFor({ WEFT_MAX_OUTPUT_TOKENS: 'abc' }), 32768);
 });
 
 test('consecutive auto-continues stop after the cap', () => {
@@ -174,7 +174,7 @@ test('kernel path: length then stop auto-continues into one run', { timeout: 300
   const srv = await startServer({
     token: TOKEN,
     dataDir,
-    env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script },
+    env: { WEFT_LLM: 'faux', WEFT_FAUX_SCRIPT: script },
   });
   try {
     const { conv } = await openConversation(srv.base);
@@ -210,7 +210,7 @@ test('kernel path: consecutive length stops after eight auto-continues', { timeo
   const srv = await startServer({
     token: TOKEN,
     dataDir,
-    env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: script },
+    env: { WEFT_LLM: 'faux', WEFT_FAUX_SCRIPT: script },
   });
   try {
     const { conv } = await openConversation(srv.base, 'cap');

@@ -39,19 +39,19 @@ function positiveInt(value, fallback) {
 }
 
 /**
- * Harness settings. `PI_WORK_RETRY_MAX` is the number of attempts including the
+ * Harness settings. `WEFT_RETRY_MAX` is the number of attempts including the
  * first; Pi Durable's `maxRetries` counts the attempts after that.
  */
 export function kernelSettings(env = process.env) {
-  const maxAttempts = positiveInt(env.PI_WORK_RETRY_MAX, 5);
+  const maxAttempts = positiveInt(env.WEFT_RETRY_MAX, 5);
   return {
     retry: {
       enabled: true,
       maxRetries: Math.max(0, maxAttempts - 1),
-      baseDelayMs: positiveInt(env.PI_WORK_RETRY_BASE_MS, 200),
+      baseDelayMs: positiveInt(env.WEFT_RETRY_BASE_MS, 200),
     },
     stream: {
-      timeoutMs: positiveInt(env.PI_WORK_STREAM_TIMEOUT_MS, 120_000),
+      timeoutMs: positiveInt(env.WEFT_STREAM_TIMEOUT_MS, 120_000),
     },
   };
 }
@@ -110,7 +110,7 @@ export async function openConversationKernel({
     ...(subagentExtension.tools || []),
   ];
   registry.install(subagentExtension);
-  if (String(env.PI_WORK_FAUX_SCRIPT || '').trim()) registry.install(createScriptFloorExtension());
+  if (String(env.WEFT_FAUX_SCRIPT || '').trim()) registry.install(createScriptFloorExtension());
   const kernel = await openKernel({
     dataDir,
     models,
@@ -138,7 +138,7 @@ export async function openConversationKernel({
     try {
       await agentHost.emitAgent(cid, status, messages);
     } catch (err) {
-      console.error(`PI_WORK_KERNEL_AGENT ${redactAuthText(err instanceof Error ? err.message : err)}`);
+      console.error(`WEFT_KERNEL_AGENT ${redactAuthText(err instanceof Error ? err.message : err)}`);
     }
   }
 
@@ -159,7 +159,7 @@ export async function openConversationKernel({
     if (!conv?.lastSubmissionId) return { status: 'idle' };
     const handle = await harness.submission(conv.lastSubmissionId, context);
     if (!handle) {
-      console.error(`PI_WORK_SUBMISSION_MISSING conversation=${conv.id} submission=${conv.lastSubmissionId}`);
+      console.error(`WEFT_SUBMISSION_MISSING conversation=${conv.id} submission=${conv.lastSubmissionId}`);
       return {
         status: 'failed',
         llmError: { code: 'E_SUBMISSION_MISSING', message: '找不到这次运行的记录' },
@@ -219,7 +219,7 @@ export async function openConversationKernel({
       try {
         await applyBatch(row.id, batch, mapCtx);
       } catch (err) {
-        console.error(`PI_WORK_KERNEL_EVENT ${redactAuthText(err instanceof Error ? (err.stack || err.message) : err)}`);
+        console.error(`WEFT_KERNEL_EVENT ${redactAuthText(err instanceof Error ? (err.stack || err.message) : err)}`);
       }
     }));
   }

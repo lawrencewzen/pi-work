@@ -1,4 +1,4 @@
-# pi-work API / 模块契约（v0.1，测试据此编写）
+# Weft API / 模块契约（v0.1，测试据此编写）
 
 实现方必须满足本契约；如需改动，先改本文件再改测试。
 
@@ -7,22 +7,22 @@
 | 变量 | 说明 | 测试取值 |
 |---|---|---|
 | `PORT` | 监听端口 | 随机 |
-| `PI_WORK_DATA_DIR` | SQLite/检查点目录 | 临时目录 |
-| `PI_WORK_LLM` | `openai` \| `faux`。`faux` 只在显式要求时使用 | 测试设 `faux` |
-| `PI_WORK_FAUX_SCRIPT` | faux 模型脚本 JSON 路径（见 §6）。设置后即视为要求演示模型 | fixtures/*.json |
+| `WEFT_DATA_DIR` | SQLite/检查点目录 | 临时目录 |
+| `WEFT_LLM` | `openai` \| `faux`。`faux` 只在显式要求时使用 | 测试设 `faux` |
+| `WEFT_FAUX_SCRIPT` | faux 模型脚本 JSON 路径（见 §6）。设置后即视为要求演示模型 | fixtures/*.json |
 | `LLM_API` | `faux` 时使用演示模型；其他值不单独打开演示模型 | 测试可设 `faux` |
-| `PI_WORK_RETRY_BASE_MS` / `PI_WORK_RETRY_MAX` | 交给 Harness `retry`。`PI_WORK_RETRY_MAX` 含第一次尝试，默认 5，`maxRetries` 为该值减 1。`baseDelayMs` 默认 200 | 50 / 5 |
-| `PI_WORK_STREAM_TIMEOUT_MS` | 交给 Harness `stream.timeoutMs`。超时后按 retry 重试。默认 120000 | 不设 |
-| `PI_WORK_MAX_OUTPUT_TOKENS` | 显式设置且为正整数时，覆盖 pi-ai 目录里该模型的 `maxTokens`。未设或非正整数时：目录有则用目录值，否则 32768。最终不超过该模型的上下文窗口 | 不设 |
-| `PI_WORK_TOKEN` | 可选登录。不设时 `/api` 与 SSE 不鉴权，不读不写 `auth.token`，`GET /login` 一律 302 `/`，启动不打印 `PI_WORK_LOGIN` / `PI_WORK_TOKEN`。设置后所有 `/api` 需 `Authorization: Bearer` 或 cookie `pi_work_token`；SSE 可用一次性 `?ticket=`；`GET /login?token=` 校验后种 cookie 并 302 `/`，否则 401 | 不设 |
-| `PI_WORK_ALLOWED_HOSTS` | 逗号分隔的额外 Host。不设 `PI_WORK_TOKEN` 且本变量非空时，启动打印一行警告：服务对这些主机开放且没有鉴权 | 不设 |
-| `PI_WORK_KERNEL` | 已废弃，启动不再读取。运行时始终是 Pi Durable Harness | 不设 |
-| `PI_WORK_GIT_BIN` | git 可执行文件。缺省 `git`。Windows 上可设为 `git.exe` 的完整路径 | 不设 |
-| `PI_WORK_GIT_HTTP_HOSTS` | 允许用 `http://` 克隆的主机名，逗号分隔，大小写不敏感，不含端口。其它 `http://` 拒绝 | 不设 |
-| `PI_WORK_GIT_CA_FILE` | 设置后克隆命令增加 `-c http.sslCAInfo=<路径>`，用于自签或内网 CA | 不设 |
-启动完成后 stdout 打印一行 `PI_WORK_READY http://127.0.0.1:<port>`。未设置 `PI_WORK_TOKEN` 时不再打印 `PI_WORK_LOGIN` 或 `PI_WORK_TOKEN`。`GET /api/health` → `{ok:true}`。服务只监听 `127.0.0.1`。`Host` 不在白名单为 400；写请求带非同源 `Origin` 为 403；写请求的 `Content-Type` 不是 `application/json` 为 415。这三项与是否设置 `PI_WORK_TOKEN` 无关。
+| `WEFT_RETRY_BASE_MS` / `WEFT_RETRY_MAX` | 交给 Harness `retry`。`WEFT_RETRY_MAX` 含第一次尝试，默认 5，`maxRetries` 为该值减 1。`baseDelayMs` 默认 200 | 50 / 5 |
+| `WEFT_STREAM_TIMEOUT_MS` | 交给 Harness `stream.timeoutMs`。超时后按 retry 重试。默认 120000 | 不设 |
+| `WEFT_MAX_OUTPUT_TOKENS` | 显式设置且为正整数时，覆盖 pi-ai 目录里该模型的 `maxTokens`。未设或非正整数时：目录有则用目录值，否则 32768。最终不超过该模型的上下文窗口 | 不设 |
+| `WEFT_TOKEN` | 可选登录。不设时 `/api` 与 SSE 不鉴权，不读不写 `auth.token`，`GET /login` 一律 302 `/`，启动不打印 `WEFT_LOGIN` / `WEFT_TOKEN`。设置后所有 `/api` 需 `Authorization: Bearer` 或 cookie `weft_token`；SSE 可用一次性 `?ticket=`；`GET /login?token=` 校验后种 cookie 并 302 `/`，否则 401 | 不设 |
+| `WEFT_ALLOWED_HOSTS` | 逗号分隔的额外 Host。不设 `WEFT_TOKEN` 且本变量非空时，启动打印一行警告：服务对这些主机开放且没有鉴权 | 不设 |
+| `WEFT_KERNEL` | 已废弃，启动不再读取。运行时始终是 Pi Durable Harness | 不设 |
+| `WEFT_GIT_BIN` | git 可执行文件。缺省 `git`。Windows 上可设为 `git.exe` 的完整路径 | 不设 |
+| `WEFT_GIT_HTTP_HOSTS` | 允许用 `http://` 克隆的主机名，逗号分隔，大小写不敏感，不含端口。其它 `http://` 拒绝 | 不设 |
+| `WEFT_GIT_CA_FILE` | 设置后克隆命令增加 `-c http.sslCAInfo=<路径>`，用于自签或内网 CA | 不设 |
+启动完成后 stdout 打印一行 `WEFT_READY http://127.0.0.1:<port>`。未设置 `WEFT_TOKEN` 时不再打印 `WEFT_LOGIN` 或 `WEFT_TOKEN`。`GET /api/health` → `{ok:true}`。服务只监听 `127.0.0.1`。`Host` 不在白名单为 400；写请求带非同源 `Origin` 为 403；写请求的 `Content-Type` 不是 `application/json` 为 415。这三项与是否设置 `WEFT_TOKEN` 无关。
 
-未设置 `PI_WORK_LLM=faux`、`LLM_API=faux`、`PI_WORK_FAUX_SCRIPT` 时，没有已登录的 Grok 来源，也没有可用的 API 来源，就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。模型来源与默认绑定见 §8。
+未设置 `WEFT_LLM=faux`、`LLM_API=faux`、`WEFT_FAUX_SCRIPT` 时，没有已登录的 Grok 来源，也没有可用的 API 来源，就**不能**回落到 faux。此时发消息的运行以 `failed` 结束，不写助手回复。SSE `error` 与 `GET /conversations/:cid` 的 `llmError` 为 `{code:'E_NO_MODEL', message:'err_no_model'}`。`GET /api/settings` 增加 `runtime`：`faux` | `openai` | `none`。`runtime==='faux'` 时界面显示「演示模型」。模型来源与默认绑定见 §8。
 
 ## 2. 纯函数模块（单元测试直接 import，均为 ESM，路径相对仓库根）
 - `src/core/paths.mjs`
@@ -37,9 +37,9 @@
 - `src/core/config.mjs`
   - `TOOLS`：内置工作区工具名 `['read','write','edit','ls','grep','bash']`。主 Agent 始终带上这份清单，再加上设置里启用的插件工具和 `delegate` / `subagent`。
 - `src/core/git-import.mjs`
-  - `validateGitUrl(url, { httpHosts?, env? })`：允许 `https:`、`ssh:`、`git@host:path`。`http:` 仅当主机名（不含端口，大小写不敏感）在允许列表中。列表优先用 `httpHosts`，否则用 `env.PI_WORK_GIT_HTTP_HOSTS`（传了 `env` 时），再否则读进程环境。逗号分隔。`file:`、`git:`、`ftp:` 等拒绝。主机或路径段以 `-` 开头则拒绝。
+  - `validateGitUrl(url, { httpHosts?, env? })`：允许 `https:`、`ssh:`、`git@host:path`。`http:` 仅当主机名（不含端口，大小写不敏感）在允许列表中。列表优先用 `httpHosts`，否则用 `env.WEFT_GIT_HTTP_HOSTS`（传了 `env` 时），再否则读进程环境。逗号分隔。`file:`、`git:`、`ftp:` 等拒绝。主机或路径段以 `-` 开头则拒绝。
   - `stripGitUrlCredentials(url)`：去掉 `scheme://user:pass@` 中的 `user:pass`。
-  - `prepareGitClone({ url, branch, dest, env })` → `{ bin, args, env }`。`bin` 为 `PI_WORK_GIT_BIN`，缺省 `git`。`args` 含 `-c protocol.file.allow=never`、`-c protocol.ext.allow=never`、`clone --depth 1` 和 `--`；有分支时加 `--branch`。`PI_WORK_GIT_CA_FILE` 非空时加 `-c http.sslCAInfo=<路径>`。地址含 `user:pass@` 时，在 `clone` 前加 `-c credential.helper=`（空值，只清空这一次克隆的凭证助手）；地址不含凭证时不加，本机助手仍生效。子进程环境从传入的 env 拷贝，去掉 `GIT_CONFIG_NOSYSTEM`、`GIT_ASKPASS`、`SSH_ASKPASS`（及对应的 REQUIRE）；设置 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`；不主动设置 `GIT_SSH_COMMAND`。`LANG` 与 `LC_ALL` 为 `C.UTF-8`，`LANGUAGE` 为 `C`。
+  - `prepareGitClone({ url, branch, dest, env })` → `{ bin, args, env }`。`bin` 为 `WEFT_GIT_BIN`，缺省 `git`。`args` 含 `-c protocol.file.allow=never`、`-c protocol.ext.allow=never`、`clone --depth 1` 和 `--`；有分支时加 `--branch`。`WEFT_GIT_CA_FILE` 非空时加 `-c http.sslCAInfo=<路径>`。地址含 `user:pass@` 时，在 `clone` 前加 `-c credential.helper=`（空值，只清空这一次克隆的凭证助手）；地址不含凭证时不加，本机助手仍生效。子进程环境从传入的 env 拷贝，去掉 `GIT_CONFIG_NOSYSTEM`、`GIT_ASKPASS`、`SSH_ASKPASS`（及对应的 REQUIRE）；设置 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`；不主动设置 `GIT_SSH_COMMAND`。`LANG` 与 `LC_ALL` 为 `C.UTF-8`，`LANGUAGE` 为 `C`。
   - `classifyCloneFailure(err)` → `{ code, detail? }`。`code` 为 `git_not_found` | `auth_failed` | `cert_failed` | `repo_not_found` | `branch_not_found` | `network` | `timeout` | `unknown`。仅 `unknown` 带 `detail`：脱敏后的 stderr 末几行（URL 里的 `user:pass@` 已去掉）。
   - `cloneGitRepo({ url, branch, dest, env })`：校验后按 `prepareGitClone` 调用 `execFile`（不经 shell）。地址带 `user:pass@` 时，克隆参数包含 `-c credential.helper=`，成功后执行 `git remote set-url origin <去掉凭证的地址>`，并确认 `.git/config` 不含该凭证。失败抛 `Error`，`message` 为 `git clone failed`，`gitCode` 为上面的 code，`status` 为 400。非法地址的 `message` 为 `invalid gitUrl`，非法分支为 `invalid branch`，这两类没有 `gitCode`。
 
@@ -64,7 +64,7 @@ status 取值：`idle | running | waiting | failed | done | stopped`。应用库
 
 ### Git 导入
 
-`POST /workspaces` 请求 `{name, gitUrl, branch?}` 时把仓库克隆到数据目录，并创建 `source:'git'` 的工作区。成功 `201`，响应里的 `gitUrl` 已去掉 `user:pass@`。非法地址 `400 {error:'invalid gitUrl'}`；非法分支 `400 {error:'invalid branch'}`。克隆失败 `400 {error:'git clone failed', code}`，`code` 为 `git_not_found` | `auth_failed` | `cert_failed` | `repo_not_found` | `branch_not_found` | `network` | `timeout` | `unknown`。只有 `unknown` 另外带 `detail`（脱敏后的 stderr 末几行）。`http://` 的主机不在 `PI_WORK_GIT_HTTP_HOSTS` 里时，与非法地址相同。
+`POST /workspaces` 请求 `{name, gitUrl, branch?}` 时把仓库克隆到数据目录，并创建 `source:'git'` 的工作区。成功 `201`，响应里的 `gitUrl` 已去掉 `user:pass@`。非法地址 `400 {error:'invalid gitUrl'}`；非法分支 `400 {error:'invalid branch'}`。克隆失败 `400 {error:'git clone failed', code}`，`code` 为 `git_not_found` | `auth_failed` | `cert_failed` | `repo_not_found` | `branch_not_found` | `network` | `timeout` | `unknown`。只有 `unknown` 另外带 `detail`（脱敏后的 stderr 末几行）。`http://` 的主机不在 `WEFT_GIT_HTTP_HOSTS` 里时，与非法地址相同。
 
 消息 `messages[]`：`{id, role:'user'|'assistant'|'tool'|'note', text?, model?, stopReason?, kind?, tool?:{id,name,path?,added?,removed?,status,input,output}}`。助手消息在 transcript 里有模型名时带 `model`（这条回复实际调用的模型 id）；没有则不加该字段。用户、工具和 `note` 消息不加 `model`。助手消息有 `stopReason` 时带上（如 `stop`、`length`）。以 `[auto-continue]` 开头的用户消息带 `kind:'auto-continue'`，界面不画成用户气泡。`role:'note'` 是给某个子 Agent 插话后写在主对话记录里的通知，不是用户气泡。
 
@@ -213,7 +213,7 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 | 方法 路径 | 响应 |
 |---|---|
 | `GET /api/conversations/:cid/agents/:aid/messages` | `200 {id, name, status, mode, messages}`。`mode` 与芯片相同。`messages` 与父对话消息同形。对话不存在 `404 {error:'conversation not found'}`；`aid` 不是这个对话的子 Agent `404 {error:'agent not found'}` |
-| `POST /api/conversations/:cid/agents/:aid/messages` | `{text}`。`200 {ok:true}`。对运行中的子对话 `submit({type:'input', content, whenBusy:'steer'})`；再给主对话写一条 `app.pi-work.user-to-subagent`，不唤醒主对话。空文本 `400 {error:'text required'}`；未知对话或子 Agent `404`；`status` 不是 `running` `409 {error:'agent not running'}` |
+| `POST /api/conversations/:cid/agents/:aid/messages` | `{text}`。`200 {ok:true}`。对运行中的子对话 `submit({type:'input', content, whenBusy:'steer'})`；再给主对话写一条 `app.weft.user-to-subagent`，不唤醒主对话。空文本 `400 {error:'text required'}`；未知对话或子 Agent `404`；`status` 不是 `running` `409 {error:'agent not running'}` |
 | `POST /api/conversations/:cid/agents/:aid/stop` | `200 {status:'stopped'}`。只 abort 这个子对话，不碰主对话和其他子 Agent。未知 `404`。主对话 SSE 推一条该子 Agent 的 `agent` 事件，`status` 为 `stopped` |
 | `POST /api/conversations/:cid/stop` | `200 {status:'stopped'}`。停掉这条对话里的全部工作，包括后台子 Agent |
 

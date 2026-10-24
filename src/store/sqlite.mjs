@@ -1,11 +1,39 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, chmodSync } from 'node:fs';
+import { mkdirSync, chmodSync, existsSync, renameSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, mergeSettings, normalizeSettings } from '../core/settings.mjs';
 
 const SCHEMA_VERSION = 7;
 const MESSAGE_META_KEYS = ['kind', 'fromAgent', 'toAgent', 'agentId'];
+export const APP_DB_FILE = 'weft.sqlite';
+export const LEGACY_APP_DB_FILE = 'pi-work.sqlite';
+const SQLITE_SIDECARS = Object.freeze(['', '-wal', '-shm']);
+
+/**
+ * App database path. If only the old filename exists, rename it (and WAL/SHM)
+ * onto the new name. If both exist, keep the new file and leave the old one.
+ */
+export function resolveAppDatabasePath(dir, { log = console } = {}) {
+  mkdirSync(dir, { recursive: true });
+  const nextPath = path.join(dir, APP_DB_FILE);
+  const legacyPath = path.join(dir, LEGACY_APP_DB_FILE);
+  const nextExists = existsSync(nextPath);
+  const legacyExists = existsSync(legacyPath);
+  if (nextExists && legacyExists) {
+    log.log?.(`WEFT_DB using ${APP_DB_FILE}; leftover ${LEGACY_APP_DB_FILE} was not renamed`);
+    return nextPath;
+  }
+  if (!nextExists && legacyExists) {
+    for (const suffix of SQLITE_SIDECARS) {
+      const from = `${legacyPath}${suffix}`;
+      const to = `${nextPath}${suffix}`;
+      if (existsSync(from)) renameSync(from, to);
+    }
+    log.log?.(`WEFT_DB renamed ${LEGACY_APP_DB_FILE} -> ${APP_DB_FILE}`);
+  }
+  return nextPath;
+}
 
 function chmodSecret(p) {
   try { chmodSync(p, 0o600); } catch { /* wal/shm may not exist yet */ }
@@ -73,9 +101,8 @@ function convFromRow(row) {
   };
 }
 
-export function createSqliteStore(dir) {
-  mkdirSync(dir, { recursive: true });
-  const dbPath = path.join(dir, 'pi-work.sqlite');
+export function createSqliteStore(dir, { log = console } = {}) {
+  const dbPath = resolveAppDatabasePath(dir, { log });
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');

@@ -33,13 +33,13 @@ async function tree() {
 }
 
 async function withRoot(root, fn) {
-  const prev = process.env.PI_WORK_WORKSPACE_ROOT;
-  process.env.PI_WORK_WORKSPACE_ROOT = root;
+  const prev = process.env.WEFT_WORKSPACE_ROOT;
+  process.env.WEFT_WORKSPACE_ROOT = root;
   try {
     return await fn();
   } finally {
-    if (prev === undefined) delete process.env.PI_WORK_WORKSPACE_ROOT;
-    else process.env.PI_WORK_WORKSPACE_ROOT = prev;
+    if (prev === undefined) delete process.env.WEFT_WORKSPACE_ROOT;
+    else process.env.WEFT_WORKSPACE_ROOT = prev;
   }
 }
 

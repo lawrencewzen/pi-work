@@ -50,9 +50,9 @@ test('new conversation: empty instructions, all tools, enabled skills, Agent nam
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_TEXT: 'noted',
-      PI_WORK_FAUX_RECORD: record,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_TEXT: 'noted',
+      WEFT_FAUX_RECORD: record,
     },
   });
   try {
@@ -126,9 +126,9 @@ test('main agent skill tool loads body; disabled or unknown skills error', { tim
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_SCRIPT: script,
-      PI_WORK_FAUX_RECORD: record,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_SCRIPT: script,
+      WEFT_FAUX_RECORD: record,
     },
   });
   try {
@@ -180,9 +180,9 @@ test('PATCH while busy still accepts a model change', { timeout: 30000 }, async 
     token: TOKEN,
     dataDir,
     env: {
-      PI_WORK_LLM: 'faux',
-      PI_WORK_FAUX_HOLD: '1',
-      PI_WORK_FAUX_HOLD_READY: ready,
+      WEFT_LLM: 'faux',
+      WEFT_FAUX_HOLD: '1',
+      WEFT_FAUX_HOLD_READY: ready,
     },
   });
   try {
@@ -221,7 +221,7 @@ test('legacy sqlite with roles table and role_id still opens and continues', { t
   const first = await startServer({
     token: TOKEN,
     dataDir,
-    env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'first-turn' },
+    env: { WEFT_LLM: 'faux', WEFT_FAUX_TEXT: 'first-turn' },
   });
   let cid;
   let wid;
@@ -240,7 +240,7 @@ test('legacy sqlite with roles table and role_id still opens and continues', { t
     await stopServer(first);
   }
 
-  const dbPath = path.join(dataDir, 'pi-work.sqlite');
+  const dbPath = path.join(dataDir, 'weft.sqlite');
   const raw = new DatabaseSync(dbPath);
   raw.exec(`
     CREATE TABLE IF NOT EXISTS roles (
@@ -265,7 +265,7 @@ test('legacy sqlite with roles table and role_id still opens and continues', { t
   const second = await startServer({
     token: TOKEN,
     dataDir,
-    env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_TEXT: 'second-turn' },
+    env: { WEFT_LLM: 'faux', WEFT_FAUX_TEXT: 'second-turn' },
   });
   try {
     const check = new DatabaseSync(dbPath, { readOnly: true });

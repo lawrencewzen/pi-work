@@ -10,7 +10,7 @@ const exists = (p) => fs.access(p).then(() => true, () => false);
 
 test('interrupt while running, then stop', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['ctl']);
-  srv = await startServer({ script: 'slow.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  srv = await startServer({ script: 'slow.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   await openApp(page, srv);
   await createWorkspace(page, 'ctl', ws);
   await newConversation(page);
@@ -39,7 +39,7 @@ test('interrupt while running, then stop', async ({ page }) => {
 
 test('two agents run in parallel', async ({ page }) => {
   const { root, dirs: [ws1, ws2] } = await prepareWorkspaces(['p1', 'p2']);
-  srv = await startServer({ script: 'slow.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  srv = await startServer({ script: 'slow.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   await openApp(page, srv);
   await createWorkspace(page, 'p1', ws1);
   await newConversation(page);
@@ -57,7 +57,7 @@ test('two agents run in parallel', async ({ page }) => {
 
 test('running status lives in an assistant pending bubble', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['pending']);
-  srv = await startServer({ script: 'pending-run.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  srv = await startServer({ script: 'pending-run.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   await openApp(page, srv);
   await createWorkspace(page, 'pending', ws);
   await newConversation(page);
@@ -92,7 +92,7 @@ test('running status lives in an assistant pending bubble', async ({ page }) => 
 
 test('main thread omits default sender and does not show 主 Agent', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['role']);
-  srv = await startServer({ script: 'basic.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  srv = await startServer({ script: 'basic.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   await openApp(page, srv);
   await createWorkspace(page, 'role', ws);
   await newConversation(page);
@@ -109,7 +109,7 @@ test('main thread omits default sender and does not show 主 Agent', async ({ pa
 
 test('stream cut retries and finishes', async ({ page }) => {
   const { root, dirs: [ws] } = await prepareWorkspaces(['cut']);
-  srv = await startServer({ script: 'crash.json', extraEnv: { PI_WORK_WORKSPACE_ROOT: root } });
+  srv = await startServer({ script: 'crash.json', extraEnv: { WEFT_WORKSPACE_ROOT: root } });
   await openApp(page, srv);
   await createWorkspace(page, 'cut', ws);
   await newConversation(page);

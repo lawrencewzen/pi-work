@@ -87,10 +87,10 @@ test('settings Git connection imports a GitLab project', async ({ browser }) => 
   srv = await startServer({
     dataDir,
     extraEnv: {
-      PI_WORK_LLM: '',
-      PI_WORK_FAUX_SCRIPT: '',
+      WEFT_LLM: '',
+      WEFT_FAUX_SCRIPT: '',
       LLM_API: '',
-      PI_WORK_GROK_AUTH: authFile,
+      WEFT_GROK_AUTH: authFile,
     },
   });
 

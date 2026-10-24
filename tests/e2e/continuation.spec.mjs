@@ -21,8 +21,8 @@ test('auto-continue is a gray note, not a user bubble, including after refresh',
   }));
   const srv = await startServer({
     extraEnv: {
-      PI_WORK_FAUX_SCRIPT: scriptPath,
-      PI_WORK_WORKSPACE_ROOT: prepared.root,
+      WEFT_FAUX_SCRIPT: scriptPath,
+      WEFT_WORKSPACE_ROOT: prepared.root,
     },
   });
   try {
@@ -66,8 +66,8 @@ test('hitting the auto-continue cap shows a continue button', async ({ page }) =
   }));
   const srv = await startServer({
     extraEnv: {
-      PI_WORK_FAUX_SCRIPT: scriptPath,
-      PI_WORK_WORKSPACE_ROOT: prepared.root,
+      WEFT_FAUX_SCRIPT: scriptPath,
+      WEFT_WORKSPACE_ROOT: prepared.root,
     },
   });
   try {

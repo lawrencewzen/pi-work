@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 
-export const COOKIE_NAME = 'pi_work_token';
+export const COOKIE_NAME = 'weft_token';
 
 export const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
@@ -18,9 +18,9 @@ export function tokensMatch(given, expected) {
   return a.length === b.length && b.length > 0 && timingSafeEqual(a, b);
 }
 
-/** Optional local login. A non-empty PI_WORK_TOKEN enables it. Otherwise auth is off and auth.token is neither read nor written. */
+/** Optional local login. A non-empty WEFT_TOKEN enables it. Otherwise auth is off and auth.token is neither read nor written. */
 export function resolveAuthToken(env = process.env) {
-  const token = String(env.PI_WORK_TOKEN || '').trim();
+  const token = String(env.WEFT_TOKEN || '').trim();
   if (!token) return { token: '', enabled: false };
   return { token, enabled: true };
 }
@@ -28,9 +28,9 @@ export function resolveAuthToken(env = process.env) {
 /** Startup warning when extra hosts are allowed and login is not required. */
 export function unauthenticatedHostsWarning(env = process.env) {
   if (resolveAuthToken(env).enabled) return '';
-  const allowed = String(env.PI_WORK_ALLOWED_HOSTS || '').trim();
+  const allowed = String(env.WEFT_ALLOWED_HOSTS || '').trim();
   if (!allowed) return '';
-  return `PI_WORK_WARN 服务对这些主机开放且没有鉴权: ${allowed}`;
+  return `WEFT_WARN 服务对这些主机开放且没有鉴权: ${allowed}`;
 }
 
 export function cookieToken(req) {
@@ -60,7 +60,7 @@ export function requestAuthorized(req, token) {
 }
 
 function extraHosts(port) {
-  const raw = String(process.env.PI_WORK_ALLOWED_HOSTS || '');
+  const raw = String(process.env.WEFT_ALLOWED_HOSTS || '');
   const out = [];
   for (const part of raw.split(',')) {
     const h = part.trim().toLowerCase();

@@ -19,7 +19,7 @@ function call(url, method, p, body) {
 }
 
 test('GET /api/roles is gone; conversations have no role fields', async () => {
-  const srv = await startServer({ extraEnv: { PI_WORK_TOKEN: TOKEN } });
+  const srv = await startServer({ extraEnv: { WEFT_TOKEN: TOKEN } });
   try {
     const missing = await call(srv.url, 'GET', '/roles');
     assert.equal(missing.status, 404);

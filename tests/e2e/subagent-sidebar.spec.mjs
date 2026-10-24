@@ -153,8 +153,8 @@ async function boot(page, { agents = AGENTS, now } = {}) {
   await fs.writeFile(scriptPath, JSON.stringify({ turns: [{ text: '主对话已收到。' }] }));
   const srv = await startServer({
     extraEnv: {
-      PI_WORK_FAUX_SCRIPT: scriptPath,
-      PI_WORK_WORKSPACE_ROOT: prepared.root,
+      WEFT_FAUX_SCRIPT: scriptPath,
+      WEFT_WORKSPACE_ROOT: prepared.root,
     },
   });
   const bag = {
@@ -166,8 +166,8 @@ async function boot(page, { agents = AGENTS, now } = {}) {
   };
   if (now != null) {
     await page.addInitScript((t0) => {
-      window.__PI_WORK_NOW = t0;
-      Date.now = () => window.__PI_WORK_NOW;
+      window.__WEFT_NOW = t0;
+      Date.now = () => window.__WEFT_NOW;
     }, now);
   }
   await page.addInitScript(() => {
@@ -397,7 +397,7 @@ test('brief, elapsed mm:ss, idle, and currentAction', async ({ page }) => {
 
     await expect(page.getByTestId('subagent-orbit-count')).toHaveText('2/3');
 
-    await page.evaluate(() => { window.__PI_WORK_NOW += 1000; });
+    await page.evaluate(() => { window.__WEFT_NOW += 1000; });
     await expect.poll(async () => testerRow.getByTestId('subagent-tree-time').textContent(), { timeout: 2500 }).toBe('00:06');
     await expect.poll(async () => auditorRow.getByTestId('subagent-tree-time').textContent(), { timeout: 2500 }).toBe('无动作 01:06');
 

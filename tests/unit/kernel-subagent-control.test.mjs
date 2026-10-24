@@ -144,10 +144,10 @@ test('POST messages steers a running subagent; parent write is a note and does n
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
-        PI_WORK_FAUX_RECORD: record,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
+        WEFT_FAUX_RECORD: record,
       },
     });
     proc = srv.proc;
@@ -236,9 +236,9 @@ test('empty text 400, unknown 404, idle agent 409', { timeout: 60000 }, async ()
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
       },
     });
     proc = srv.proc;
@@ -290,9 +290,9 @@ test('POST stop aborts only that subagent and emits agent stopped', { timeout: 6
       token: TOKEN,
       dataDir,
       env: {
-        PI_WORK_RETRY_MAX: '2',
-        PI_WORK_LLM: 'faux',
-        PI_WORK_FAUX_SCRIPT: script,
+        WEFT_RETRY_MAX: '2',
+        WEFT_LLM: 'faux',
+        WEFT_FAUX_SCRIPT: script,
       },
     });
     proc = srv.proc;

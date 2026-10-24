@@ -63,14 +63,14 @@ function startFake(label) {
 }
 
 function writeSettings(dataDir, value) {
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'));
+  const db = new DatabaseSync(path.join(dataDir, 'weft.sqlite'));
   db.prepare('INSERT INTO settings (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json')
     .run('app', JSON.stringify(value));
   db.close();
 }
 
 function readSettings(dataDir) {
-  const db = new DatabaseSync(path.join(dataDir, 'pi-work.sqlite'));
+  const db = new DatabaseSync(path.join(dataDir, 'weft.sqlite'));
   const row = db.prepare('SELECT json FROM settings WHERE id = ?').get('app');
   db.close();
   return JSON.parse(row.json);
@@ -99,7 +99,7 @@ function chatHits(fake) {
 
 test('default and coder turns hit their own sources with their own keys', async () => {
   const [alpha, beta] = await Promise.all([startFake('alpha'), startFake('beta')]);
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_RETRY_MAX: '2' } });
   try {
     const sourceA = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -169,7 +169,7 @@ test('default and coder turns hit their own sources with their own keys', async 
 
 test('conversation model is saved, validated, and used instead of the role binding', async () => {
   const [alpha, beta] = await Promise.all([startFake('alpha'), startFake('beta')]);
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_RETRY_MAX: '2' } });
   try {
     const sourceA = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -254,7 +254,7 @@ test('conversation model is saved, validated, and used instead of the role bindi
 
 test('settings ignore legacy fields and source tests keep unsaved origin rules', async () => {
   const [alpha, beta] = await Promise.all([startFake('alpha'), startFake('beta')]);
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_RETRY_MAX: '2' } });
   try {
     const created = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -329,7 +329,7 @@ test('settings ignore legacy fields and source tests keep unsaved origin rules',
 });
 
 test('a legacy settings row is migrated once and the old key is not kept at the top level', async () => {
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_RETRY_MAX: '2' } });
   await stopServer(srv);
   writeSettings(srv.dataDir, {
     provider: 'openai',
@@ -342,7 +342,7 @@ test('a legacy settings row is migrated once and the old key is not kept at the 
   const restarted = await startServer({
     token: TOKEN,
     dataDir: srv.dataDir,
-    env: { PI_WORK_RETRY_MAX: '2' },
+    env: { WEFT_RETRY_MAX: '2' },
     authJson: false,
   });
   try {
@@ -369,7 +369,7 @@ test('a legacy settings row is migrated once and the old key is not kept at the 
 });
 
 test('an untouched legacy preset does not create a source or keep string models', async () => {
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_RETRY_MAX: '2' } });
   await stopServer(srv);
   writeSettings(srv.dataDir, {
     provider: 'openai',
@@ -381,7 +381,7 @@ test('an untouched legacy preset does not create a source or keep string models'
   const restarted = await startServer({
     token: TOKEN,
     dataDir: srv.dataDir,
-    env: { PI_WORK_RETRY_MAX: '2' },
+    env: { WEFT_RETRY_MAX: '2' },
     authJson: false,
   });
   try {
@@ -407,7 +407,7 @@ test('POST /api/sources/test keeps the redacted error and stores a probe code', 
   const baseUrl = await new Promise((resolve) => {
     fake.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${fake.address().port}/v1`));
   });
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_RETRY_MAX: '2' } });
   try {
     const created = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -456,7 +456,7 @@ function modelsServer(ids) {
 test('POST /api/sources/test enables fetched models when none are enabled, and keeps every name already enabled', async () => {
   const emptyUpstream = await modelsServer(['deepseek-chat', 'deepseek-reasoner']);
   const keptUpstream = await modelsServer(['new-one', 'keep-me']);
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_RETRY_MAX: '2' } });
   try {
     const empty = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -509,7 +509,7 @@ test('POST /api/sources/test enables fetched models when none are enabled, and k
 
 test('PUT contextWindows merges, deletes with null, rejects invalid values, and conversation GET follows the model', async () => {
   const fake = await startFake('alpha');
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_LLM: 'faux', WEFT_RETRY_MAX: '2' } });
   try {
     const sourceA = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'custom',
@@ -602,7 +602,7 @@ test('PUT contextWindows merges, deletes with null, rejects invalid values, and 
 });
 
 test('settings sources expose per-model defaultContextWindows from the catalog', async () => {
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_RETRY_MAX: '2' } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_LLM: 'faux', WEFT_RETRY_MAX: '2' } });
   try {
     const created = await request(srv.base, 'POST', '/api/sources', {
       vendor: 'deepseek',

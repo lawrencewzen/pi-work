@@ -1,5 +1,5 @@
 /* ==========================================================================
-   pi-work Application Stylesheet
+   Weft Application Stylesheet
    Faithfully matching design/mockup-v2-white.html & design/settings/*.html
    ========================================================================== */
 
@@ -94,7 +94,7 @@ a:hover {
 }
 
 /* ==========================================================================
-   WORKBENCH LAYOUT — follows the Claude Design prototype (pi-work 原型)
+   WORKBENCH LAYOUT — follows the Claude Design prototype (Weft 原型)
    left: projects · center: conversation · right: changes / files / sub-agent
    ========================================================================== */
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }

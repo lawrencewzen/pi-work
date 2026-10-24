@@ -14,7 +14,7 @@ export function createExtensionHost({ skillDirs = [], pluginDirs = [], getSettin
         const current = await settings();
         return await buildSkillPrompt(skillDirs, current.skills || {});
       } catch (err) {
-        console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
+        console.error(`WEFT_EXTENSION ${err?.message || err}`);
         return '';
       }
     },
@@ -23,7 +23,7 @@ export function createExtensionHost({ skillDirs = [], pluginDirs = [], getSettin
         const current = await settings();
         return await loadSkillBody(skillDirs, current.skills || {}, name);
       } catch (err) {
-        console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
+        console.error(`WEFT_EXTENSION ${err?.message || err}`);
         return { error: unknownSkillError(name, []) };
       }
     },
@@ -32,7 +32,7 @@ export function createExtensionHost({ skillDirs = [], pluginDirs = [], getSettin
         const current = await settings();
         return await pluginHandlers(pluginDirs, current.plugins || {});
       } catch (err) {
-        console.error(`PI_WORK_EXTENSION ${err?.message || err}`);
+        console.error(`WEFT_EXTENSION ${err?.message || err}`);
         return [];
       }
     },

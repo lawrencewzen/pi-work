@@ -91,8 +91,8 @@ async function writeScript(dataDir, name, turns) {
 
 function durableEnv(script, extra = {}) {
   return {
-    PI_WORK_LLM: 'faux',
-    PI_WORK_FAUX_SCRIPT: script,
+    WEFT_LLM: 'faux',
+    WEFT_FAUX_SCRIPT: script,
     ...extra,
   };
 }
@@ -326,7 +326,7 @@ test('kernel path: two conversations write into their own workspaces', { timeout
 });
 
 test('kernel path: write plus edit records the diff and tool events', { timeout: 60_000 }, async () => {
-  const srv = await startServer({ token: TOKEN, env: { PI_WORK_LLM: 'faux', PI_WORK_FAUX_SCRIPT: BASIC } });
+  const srv = await startServer({ token: TOKEN, env: { WEFT_LLM: 'faux', WEFT_FAUX_SCRIPT: BASIC } });
   try {
     const { conv } = await openConversation(srv.base, { title: 'diff' });
     const pendingEvents = collectSse(srv.base, conv.id, {
@@ -376,7 +376,7 @@ test('kernel path: the main agent offers every workspace tool plus plugins and d
   const script = await writeScript(dataDir, 'tools.json', [
     { text: 'all-tools' },
   ]);
-  const srv = await startServer({ token: TOKEN, env: durableEnv(script, { PI_WORK_FAUX_TOOL_LOG: toolLog }), dataDir });
+  const srv = await startServer({ token: TOKEN, env: durableEnv(script, { WEFT_FAUX_TOOL_LOG: toolLog }), dataDir });
   try {
     const { conv } = await openConversation(srv.base, { title: 'tools' });
     const sent = await request(srv.base, 'POST', `/api/conversations/${conv.id}/messages`, { text: 'go' });
