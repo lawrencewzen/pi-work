@@ -116,6 +116,9 @@ const state = {
   expandedToolGroupOlder: new Set(),
   viewingAgentId: null,
   viewingAgent: null,
+  collapsedSubagentTrees: new Set(),
+  pendingSubagentNudges: {},
+  subagentDrafts: {},
   workspaceTree: [],
   workspaceTreeFor: null,
   treeLoadingFor: null,
@@ -953,9 +956,15 @@ export function connectSSE(cid) {
       } else {
         state.activeConversationData.agents.push(data);
       }
+      if (data.id && data.id === state.viewingAgentId && state.viewingAgent) {
+        state.viewingAgent = { ...state.viewingAgent, ...data };
+      }
       renderConversations();
       renderChatThread();
-      if (data.id && data.id === state.viewingAgentId) scheduleViewingAgentRefresh(cid);
+      if (data.id && data.id === state.viewingAgentId) {
+        renderRightPanel();
+        scheduleViewingAgentRefresh(cid);
+      }
       scheduleConversationRefresh(cid);
     } catch { /* ignore */ }
   });
@@ -1335,13 +1344,20 @@ function conversationRowHtml(conv, { wsId = '' } = {}) {
   const status = conv.status || 'idle';
   const meta = conversationMeta(conv);
   const relAttrs = meta.ts ? ` data-rel-time data-ts="${escapeHtml(String(meta.ts))}"` : '';
+  const tree = isActive ? subagentTreeHtml() : '';
+  const collapsed = state.collapsedSubagentTrees.has(conv.id);
+  const toggle = tree
+    ? `<button type="button" class="subagent-tree-toggle${collapsed ? '' : ' is-open'}" data-testid="subagent-tree-toggle" data-action="toggle-subagent-tree" data-conv-id="${escapeHtml(conv.id)}" aria-label="${escapeHtml(collapsed ? t('subagent_tree_expand') : t('subagent_tree_collapse'))}" aria-expanded="${collapsed ? 'false' : 'true'}">${CHEV_SVG}</button>`
+    : '';
   return (
     `<div class="conv-tree-node ${isActive ? 'conv-active' : ''}" data-testid="conversation-item" data-id="${escapeHtml(conv.id)}" data-status="${escapeHtml(status)}">` +
     `<div class="conv-node-header" data-action="switch-ws-conv" data-ws-id="${escapeHtml(wsId)}" data-conv-id="${escapeHtml(conv.id)}" data-ctx="conversation" title="${escapeHtml(conv.title || '')}">` +
     `<span class="status-dot dot-${escapeHtml(status)}"></span>` +
     `<span class="conv-node-title">${escapeHtml(conv.title || t('default_conversation_title'))}</span>` +
     `<span class="conv-node-meta ${meta.cls}"${relAttrs}>${escapeHtml(meta.text || '')}</span>` +
+    toggle +
     `</div>` +
+    (tree && !collapsed ? tree : '') +
     `</div>`
   );
 }
@@ -1394,6 +1410,135 @@ function renderRightOpenDot() {
 
 export function isRealSubagent(agent) {
   return String(agent?.id || '').includes(':sub:');
+}
+
+function orderedSubagentTree(agents) {
+  const list = (agents || []).filter(isRealSubagent);
+  if (!list.length) return [];
+  const byId = new Map(list.map((agent) => [agent.id, agent]));
+  const children = new Map();
+  for (const agent of list) {
+    const rawParent = agent.parentId ?? null;
+    const parentId = rawParent && byId.has(rawParent) ? rawParent : null;
+    if (!children.has(parentId)) children.set(parentId, []);
+    children.get(parentId).push(agent);
+  }
+  const out = [];
+  const walk = (parentId, depth) => {
+    for (const agent of children.get(parentId) || []) {
+      const parsed = Number(agent.depth);
+      const d = Number.isFinite(parsed) ? parsed : depth;
+      out.push({ ...agent, parentId: agent.parentId ?? null, depth: d });
+      walk(agent.id, d + 1);
+    }
+  };
+  walk(null, 0);
+  return out;
+}
+
+function subagentTreeStatusText(agent) {
+  const st = agent.status || 'waiting';
+  if (st === 'running') return agentProgressLabel(agent) || t('status_running');
+  if (st === 'waiting') return t('subagent_tree_waiting');
+  return t(`status_${st}`) || st;
+}
+
+function subagentTreeRowHtml(agent) {
+  const depth = Number.isFinite(Number(agent.depth)) ? Number(agent.depth) : 0;
+  const st = agent.status || 'waiting';
+  const name = realSubagentName(agent);
+  const summary = oneLine(agent.lastText || agent.roleId || '');
+  const open = state.viewingAgentId === agent.id;
+  return (
+    `<div class="subagent-tree-row${open ? ' is-active' : ''}" style="--depth:${depth}" data-testid="subagent-tree-row" data-agent-id="${escapeHtml(agent.id || '')}" data-depth="${escapeHtml(String(depth))}" data-status="${escapeHtml(st)}" data-action="open-subagent" data-ctx="subagent" title="${escapeHtml(t('subagent_open_title'))}">` +
+    `<span class="status-dot dot-${escapeHtml(st)}"></span>` +
+    `<span class="subagent-tree-name">${escapeHtml(name)}</span>` +
+    `<span class="subagent-tree-last">${escapeHtml(summary)}</span>` +
+    `<span class="subagent-tree-status status-text-${escapeHtml(st)}">${escapeHtml(subagentTreeStatusText(agent))}</span>` +
+    `</div>`
+  );
+}
+
+function subagentTreeHtml() {
+  const rows = orderedSubagentTree(state.activeConversationData?.agents || []);
+  if (!rows.length) return '';
+  return `<div class="subagent-tree">${rows.map(subagentTreeRowHtml).join('')}</div>`;
+}
+
+function applySubagentPatch(aid, patch) {
+  if (!aid || !patch) return;
+  const agents = state.activeConversationData?.agents;
+  if (Array.isArray(agents)) {
+    const idx = agents.findIndex((agent) => agent.id === aid);
+    if (idx >= 0) agents[idx] = { ...agents[idx], ...patch };
+    else agents.push({ id: aid, ...patch });
+  }
+  if (state.viewingAgentId === aid && state.viewingAgent) {
+    state.viewingAgent = { ...state.viewingAgent, ...patch };
+  }
+}
+
+function prunePendingNudges(aid, messages) {
+  const pending = state.pendingSubagentNudges[aid];
+  if (!pending?.length) return;
+  const later = (messages || []).filter((m) => m.role === 'user').slice(1).map((m) => String(m.text || ''));
+  const used = new Set();
+  const next = [];
+  for (const item of pending) {
+    const idx = later.findIndex((text, i) => text === item.text && !used.has(i));
+    if (idx >= 0) used.add(idx);
+    else next.push(item);
+  }
+  state.pendingSubagentNudges[aid] = next;
+}
+
+function toggleSubagentTree(convId) {
+  if (!convId) return;
+  if (state.collapsedSubagentTrees.has(convId)) state.collapsedSubagentTrees.delete(convId);
+  else state.collapsedSubagentTrees.add(convId);
+  renderConversations();
+}
+
+function syncSubagentSendReady() {
+  const input = document.querySelector('[data-testid="subagent-input"]');
+  const send = document.querySelector('[data-testid="subagent-send"]');
+  if (!send) return;
+  send.classList.toggle('is-ready', Boolean(input?.value.trim()));
+}
+
+async function sendSubagentNudge() {
+  const cid = state.activeConversationId;
+  const aid = state.viewingAgentId;
+  const input = document.querySelector('[data-testid="subagent-input"]');
+  const text = (input?.value || state.subagentDrafts[aid] || '').trim();
+  if (!cid || !aid || !text) return;
+  try {
+    await api(`/api/conversations/${encodeURIComponent(cid)}/agents/${encodeURIComponent(aid)}/messages`, 'POST', { text });
+    if (input) input.value = '';
+    state.subagentDrafts[aid] = '';
+    const pending = state.pendingSubagentNudges[aid] || [];
+    pending.push({ id: `nudge-${Date.now()}`, text });
+    state.pendingSubagentNudges[aid] = pending;
+    renderRightPanel();
+    scheduleViewingAgentRefresh(cid);
+  } catch (err) {
+    showToast(err.message || 'err_send');
+  }
+}
+
+async function stopSubagent() {
+  const cid = state.activeConversationId;
+  const aid = state.viewingAgentId;
+  if (!cid || !aid) return;
+  try {
+    const res = await api(`/api/conversations/${encodeURIComponent(cid)}/agents/${encodeURIComponent(aid)}/stop`, 'POST');
+    applySubagentPatch(aid, { status: res?.status || 'stopped' });
+    renderConversations();
+    renderChatThread();
+    renderRightPanel();
+  } catch (err) {
+    showToast(err.message || 'err_stop');
+  }
 }
 
 /** Quiet 「后台」 mark. Only the kernel mode field counts. */
@@ -1465,6 +1610,7 @@ export async function refreshViewingAgent(cid, aid) {
     const body = await api(`/api/conversations/${encodeURIComponent(cid)}/agents/${encodeURIComponent(aid)}/messages`);
     if (state.activeConversationId !== cid || state.viewingAgentId !== aid) return;
     state.viewingAgent = { ...body, loading: false };
+    prunePendingNudges(aid, body.messages || []);
     const agents = state.activeConversationData?.agents;
     if (Array.isArray(agents)) {
       const idx = agents.findIndex((agent) => agent.id === aid);
@@ -1479,6 +1625,7 @@ export async function refreshViewingAgent(cid, aid) {
       }
     }
     renderChatThread();
+    renderConversations();
     renderRightPanel();
     scheduleSubagentPoll();
   } catch {
@@ -1503,6 +1650,7 @@ export async function openSubagent(agentId) {
   state.activeRightTab = 'agent';
   setRightOpen(true);
   renderChatThread();
+  renderConversations();
   renderRightPanel();
   await refreshViewingAgent(cid, agentId);
 }
@@ -1512,6 +1660,7 @@ export function closeSubagentView() {
   clearSubagentView();
   if (state.activeRightTab === 'agent') state.activeRightTab = 'diff';
   renderChatThread();
+  renderConversations();
   refreshChangeDiffs();
   renderRightPanel();
 }
@@ -2169,6 +2318,16 @@ function threadBlocksHtml(msgs, { afterToolRun, senderName, fallbackRoleId, stre
       );
       continue;
     }
+    if (m.role === 'note') {
+      const note = String(m.text || '').trim();
+      if (!note) continue;
+      rendered.push(
+        `<div class="chat-note" data-testid="message" data-role="note">` +
+        `<span>${escapeHtml(note)}</span>` +
+        `</div>`
+      );
+      continue;
+    }
     if (m.role === 'user') {
       if (!isPromptUserMessage(m)) {
         rendered.push(
@@ -2821,6 +2980,44 @@ function viewingAgentInfo() {
   return { id: state.viewingAgentId, ...known, ...(state.viewingAgent || {}) };
 }
 
+function pendingNudgeHtml(item) {
+  return (
+    `<div class="msg-group msg-side-user subagent-nudge-pending" data-testid="subagent-nudge-pending">` +
+    `<div class="msg-body" data-testid="message-body">${renderMarkdown(item.text || '')}</div>` +
+    `<div class="subagent-nudge-note">${escapeHtml(t('subagent_interrupt_pending'))}</div>` +
+    `</div>`
+  );
+}
+
+function agentPaneFootHtml(agent, name) {
+  const st = agent.status || 'waiting';
+  if (st === 'running') {
+    return (
+      `<div class="agent-pane-foot is-composer">` +
+      `<div class="agent-pane-composer">` +
+      `<textarea data-testid="subagent-input" rows="1" placeholder="${escapeHtml(t('subagent_interrupt_placeholder', { name }))}"></textarea>` +
+      `<button type="button" class="btn-send" data-testid="subagent-send" data-action="send-subagent" title="${escapeHtml(t('send_title'))}">${SEND_ICON}</button>` +
+      `<button type="button" class="btn g agent-pane-stop" data-testid="subagent-stop" data-action="stop-subagent" title="${escapeHtml(t('subagent_stop_title'))}">${escapeHtml(t('subagent_stop'))}</button>` +
+      `</div>` +
+      `<div class="agent-pane-hint-line">${escapeHtml(t('subagent_interrupt_hint'))}</div>` +
+      `</div>`
+    );
+  }
+  if (st === 'stopped') return `<div class="agent-pane-foot is-empty"></div>`;
+  if (st === 'done') {
+    return (
+      `<div class="agent-pane-foot is-hint">` +
+      `<div class="agent-pane-hint-line">${escapeHtml(t('subagent_hint_done_parent', { name }))}</div>` +
+      `</div>`
+    );
+  }
+  return (
+    `<div class="agent-pane-foot">` +
+    `<div class="agent-pane-hint">${escapeHtml(t('subagent_hint_running', { name }))}</div>` +
+    `</div>`
+  );
+}
+
 function renderAgentPaneHtml() {
   const agent = viewingAgentInfo();
   const st = agent.status || 'waiting';
@@ -2833,10 +3030,15 @@ function renderAgentPaneHtml() {
   const toolCount = msgs.filter((m) => m.role === 'tool').length;
   const meta = [modelForDispatchRole((state.roles || []).find((r) => r.id === agent.roleId) || null), toolCount ? t('tool_calls_count', { n: toolCount }) : '']
     .filter(Boolean).join(' · ');
+  const pending = state.pendingSubagentNudges[agent.id] || [];
   let thread;
   if (state.viewingAgent?.loading && !msgs.length) thread = `<div class="pane-empty">${escapeHtml(t('subagent_loading'))}</div>`;
-  else if (!msgs.length) thread = `<div class="pane-empty">${escapeHtml(t('subagent_empty'))}</div>`;
+  else if (!msgs.length && !pending.length) thread = `<div class="pane-empty">${escapeHtml(t('subagent_empty'))}</div>`;
   else thread = threadBlocksHtml(done && lastAssistant ? rest.filter((m) => m !== lastAssistant) : rest, { senderName: name }).join('');
+  const pendingHtml = pending.map(pendingNudgeHtml).join('');
+  const stoppedNote = st === 'stopped'
+    ? `<div class="subagent-stopped-note" data-testid="subagent-stopped-note"><div class="subagent-stopped-title">${escapeHtml(t('subagent_stopped_title'))}</div><div class="subagent-stopped-body">${escapeHtml(t('subagent_stopped_body'))}</div></div>`
+    : '';
   return (
     `<div class="agent-pane" data-testid="subagent-pane">` +
     `<div class="agent-pane-body">` +
@@ -2850,15 +3052,14 @@ function renderAgentPaneHtml() {
     (firstUser
       ? `<div class="agent-pane-brief" data-testid="message" data-role="user"><span class="k">${escapeHtml(t('subagent_brief'))}</span><span class="v" data-testid="message-body">${escapeHtml(firstUser.text || '')}</span></div>`
       : '') +
-    `<div class="agent-pane-thread" data-testid="subagent-thread">${thread}` +
+    `<div class="agent-pane-thread" data-testid="subagent-thread">${thread}${pendingHtml}` +
     (done && lastAssistant
       ? `<div class="agent-pane-result msg-group" data-testid="message" data-role="assistant"><span class="k" data-testid="message-sender">${escapeHtml(name)}</span><div class="msg-body" data-testid="message-body">${renderMarkdown(lastAssistant.text)}</div></div>`
       : '') +
+    stoppedNote +
     `</div>` +
     `</div>` +
-    `<div class="agent-pane-foot">` +
-    `<div class="agent-pane-hint">${escapeHtml(done ? t('subagent_hint_done', { name }) : t('subagent_hint_running', { name }))}</div>` +
-    `</div>` +
+    agentPaneFootHtml(agent, name) +
     `</div>`
   );
 }
@@ -2885,9 +3086,23 @@ export function renderRightPanel() {
   if (state.activeRightTab === 'agent' && state.viewingAgentId) {
     const body = viewport.querySelector('.agent-pane-body');
     const stick = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+    const draftEl = viewport.querySelector('[data-testid="subagent-input"]');
+    if (draftEl) state.subagentDrafts[state.viewingAgentId] = draftEl.value;
+    const keepFocus = document.activeElement?.getAttribute?.('data-testid') === 'subagent-input';
+    const selStart = keepFocus ? document.activeElement.selectionStart : null;
+    const selEnd = keepFocus ? document.activeElement.selectionEnd : null;
     viewport.innerHTML = renderAgentPaneHtml();
     const next = viewport.querySelector('.agent-pane-body');
     if (next && stick) next.scrollTop = next.scrollHeight;
+    const nextInput = viewport.querySelector('[data-testid="subagent-input"]');
+    if (nextInput) {
+      nextInput.value = state.subagentDrafts[state.viewingAgentId] || '';
+      if (keepFocus) {
+        nextInput.focus();
+        if (selStart != null) nextInput.setSelectionRange(selStart, selEnd ?? selStart);
+      }
+      syncSubagentSendReady();
+    }
     return;
   }
   if (state.activeRightTab === 'editor' && state.activeFilePath) {
@@ -4651,6 +4866,15 @@ document.addEventListener('click', (e) => {
     case 'open-subagent':
       openSubagent(actionEl.getAttribute('data-agent-id'));
       break;
+    case 'toggle-subagent-tree':
+      toggleSubagentTree(actionEl.getAttribute('data-conv-id'));
+      break;
+    case 'send-subagent':
+      sendSubagentNudge();
+      break;
+    case 'stop-subagent':
+      stopSubagent();
+      break;
     case 'close-subagent':
       closeSubagentView();
       break;
@@ -4702,6 +4926,10 @@ document.addEventListener('input', (e) => {
     onGitField(e.target);
   } else if (e.target.id === 'git-search' || e.target.id === 'git-pick-name' || e.target.id === 'git-addr-name' || e.target.id === 'ws-git-url-input' || e.target.id === 'ws-branch-input') {
     onGitImportInput(e.target, gitImportCtx());
+  } else if (e.target?.getAttribute?.('data-testid') === 'subagent-input') {
+    const aid = state.viewingAgentId;
+    if (aid) state.subagentDrafts[aid] = e.target.value;
+    syncSubagentSendReady();
   }
 });
 
@@ -4737,6 +4965,14 @@ window.addEventListener('DOMContentLoaded', async () => {
       }
     });
   }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target?.getAttribute?.('data-testid') !== 'subagent-input') return;
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      sendSubagentNudge();
+    }
+  });
 
   window.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
