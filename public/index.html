@@ -96,13 +96,7 @@
               </div>
               <div class="composer-actions">
                 <div class="chip-selector-wrap" id="composer-context-wrap">
-                  <button type="button" class="chip-context" id="composer-context-btn" data-action="toggle-context-menu" data-testid="composer-context" aria-haspopup="menu" aria-expanded="false" disabled>
-                    <svg class="ctx-ring" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-                      <circle class="ctx-ring-track" cx="7" cy="7" r="5" fill="none" stroke-width="2"></circle>
-                      <circle class="ctx-ring-fill" id="composer-context-ring" cx="7" cy="7" r="5" fill="none" stroke-width="2"></circle>
-                    </svg>
-                    <span id="composer-context-value">已用 0% · 剩 100% · 128k</span>
-                  </button>
+                  <div class="chip-context" id="composer-context" data-testid="composer-context"><span class="chip-context-display" id="composer-context-display"><svg class="ctx-ring" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle class="ctx-ring-track" cx="7" cy="7" r="5" fill="none" stroke-width="2"></circle><circle class="ctx-ring-fill" id="composer-context-ring" cx="7" cy="7" r="5" fill="none" stroke-width="2"></circle></svg><span id="composer-context-value">已用 0% · 剩 100% · </span></span><button type="button" class="chip-context-limit" id="composer-context-limit-btn" data-action="toggle-context-menu" data-testid="composer-context-limit" aria-haspopup="menu" aria-expanded="false" disabled><span class="ctx-window" id="composer-context-window">128k</span><svg class="ctx-caret" viewBox="0 0 8 8" width="8" height="8" aria-hidden="true"><path d="M1.5 2.5h5L4 6z"></path></svg></button></div>
                   <div id="composer-context-menu" class="chip-menu chip-context-menu" role="menu" data-testid="composer-context-menu"></div>
                 </div>
                 <button type="button" class="btn-send" data-testid="chat-send" data-action="send-message" data-i18n-title="send_title" title="发送">

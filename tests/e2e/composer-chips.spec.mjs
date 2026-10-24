@@ -62,6 +62,15 @@ function menu(page) {
   return page.getByTestId('composer-agent-menu');
 }
 
+function contextLimit(page) {
+  return page.getByTestId('composer-context-limit');
+}
+
+function cssTransparent(color) {
+  const v = String(color || '').replace(/\s+/g, '');
+  return v === 'transparent' || v === 'rgba(0,0,0,0)';
+}
+
 async function conversationId(page) {
   return page.getByTestId('conversation-item').first().getAttribute('data-id');
 }
@@ -242,15 +251,60 @@ test('context chip menu sets the model window and keeps it after refresh', async
   await createWorkspace(page, 'ctx-window', ws);
   await createConversation(page);
   await expect(page.getByTestId('composer-context')).toHaveText(CHIP_ZERO_200);
-  await expect(page.getByTestId('composer-context')).toBeEnabled();
+  await expect(contextLimit(page)).toBeEnabled();
+
+  const ctxMenu = page.getByTestId('composer-context-menu');
+  await test.step('usage ring and used-percent text are display-only', async () => {
+    await page.locator('#composer-context .ctx-ring').click();
+    await expect(ctxMenu, 'clicking the usage ring does not open the context menu').toBeHidden();
+    await page.locator('#composer-context .ctx-used').click();
+    await expect(ctxMenu, 'clicking the used-percent text does not open the context menu').toBeHidden();
+
+    await page.locator('#composer-context .ctx-ring').hover();
+    const ringHover = await page.locator('#composer-context .ctx-ring').evaluate((el) => ({
+      cursor: getComputedStyle(el).cursor,
+      background: getComputedStyle(el).backgroundColor,
+    }));
+    expect(ringHover.cursor, 'usage ring cursor is default').toBe('default');
+    expect(cssTransparent(ringHover.background), 'usage ring hover background stays transparent').toBe(true);
+
+    await page.locator('#composer-context .ctx-used').hover();
+    const usageHover = await page.locator('#composer-context .ctx-used').evaluate((el) => {
+      const host = el.closest('.chip-context');
+      const display = document.getElementById('composer-context-display');
+      return {
+        cursor: getComputedStyle(el).cursor,
+        background: getComputedStyle(el).backgroundColor,
+        hostCursor: host ? getComputedStyle(host).cursor : '',
+        hostBackground: host ? getComputedStyle(host).backgroundColor : '',
+        displayBackground: display ? getComputedStyle(display).backgroundColor : '',
+      };
+    });
+    expect(usageHover.cursor, 'usage text cursor is default').toBe('default');
+    expect(usageHover.hostCursor, 'usage host cursor is default').toBe('default');
+    expect(cssTransparent(usageHover.background), 'usage text hover background stays transparent').toBe(true);
+    expect(cssTransparent(usageHover.hostBackground), 'usage host hover background stays transparent').toBe(true);
+    expect(cssTransparent(usageHover.displayBackground), 'usage display hover background stays transparent').toBe(true);
+  });
+
+  await test.step('only the window limit chip looks and acts like a button', async () => {
+    await page.getByTestId('composer-agent').hover();
+    const agentHoverBg = await page.getByTestId('composer-agent').evaluate((el) => getComputedStyle(el).backgroundColor);
+    await contextLimit(page).hover();
+    const limitHoverBg = await contextLimit(page).evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(cssTransparent(limitHoverBg), 'limit chip hover has a background').toBe(false);
+    expect(limitHoverBg, 'limit chip hover matches model selector hover').toBe(agentHoverBg);
+  });
 
   await send(page, 'count tokens');
   await expect(page.getByTestId('composer-context')).toHaveText(CHIP_USED_200, { timeout: 20000 });
   await expect(statusText(page)).toContainText(/done|完成/i, { timeout: 20000 });
 
-  await page.getByTestId('composer-context').click();
-  const ctxMenu = page.getByTestId('composer-context-menu');
+  await contextLimit(page).click();
+  await expect(contextLimit(page)).toHaveAttribute('aria-expanded', 'true');
   await expect(ctxMenu).toBeVisible();
+  const openLimitBg = await contextLimit(page).evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(cssTransparent(openLimitBg), 'limit chip keeps background while the menu is open').toBe(false);
   await expect(ctxMenu).toContainText(/grok-4\.6/);
   await expect(ctxMenu).toContainText(/设置上下文上限|Set context window/);
   await expect(ctxMenu).toContainText(/已用\s+16\.4k · 8%|Used\s+16\.4k · 8%/);

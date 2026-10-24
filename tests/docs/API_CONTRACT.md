@@ -102,7 +102,8 @@ JSON：`{"turns":[ {"text":"..."} | {"text":"...","stopReason":"length"} | {"too
 | `conversation-new` / `conversation-item` (+`data-id`,`data-status`) | 会话项 |
 | `status-dot` (+`data-status`) | 会话状态点 |
 | `chat-input` / `chat-send` | 输入与发送 |
-| `composer-context` | 作曲栏上下文用量（`已用 x% · 剩 y% · 128k`） |
+| `composer-context` | 作曲栏上下文用量展示（`已用 x% · 剩 y% · 128k`），不可点 |
+| `composer-context-limit` | 作曲栏上下文上限按钮（如 `128k`），点击打开档位菜单 |
 | `composer-agent` / `composer-agent-menu` | 作曲栏当前模型；点击按来源列出模型，可选「默认」跟随设置绑定 |
 | `message` (+`data-role`) / `message-body` / `message-sender` / `message-chip` | 消息、渲染体（Markdown → HTML）、发送者小字、该回复实际用的模型标签 |
 | `auto-continue-note` | 自动续写提示行，不是用户气泡 |

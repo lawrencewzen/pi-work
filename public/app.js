@@ -1559,7 +1559,10 @@ function composerContextView() {
 
 function renderComposerContext() {
   const el = document.getElementById('composer-context-value');
-  const btn = document.getElementById('composer-context-btn');
+  const winEl = document.getElementById('composer-context-window');
+  const host = document.getElementById('composer-context');
+  const btn = document.getElementById('composer-context-limit-btn');
+  const display = document.getElementById('composer-context-display');
   const ring = document.getElementById('composer-context-ring');
   if (!el) return;
   const { target, view } = composerContextView();
@@ -1576,20 +1579,18 @@ function renderComposerContext() {
   const winSep = document.createElement('span');
   winSep.className = 'ctx-win-sep';
   winSep.textContent = ' · ';
-  const win = document.createElement('span');
-  win.className = 'ctx-window';
-  win.textContent = view.windowText;
-  el.append(used, remainSep, remain, winSep, win);
-  if (btn) {
-    btn.title = t('ctx_title', {
+  el.append(used, remainSep, remain, winSep);
+  if (winEl) winEl.textContent = view.windowText;
+  if (display) {
+    display.title = t('ctx_title', {
       used: view.usedText,
       window: view.windowText,
       usedPct: view.usedPct,
       leftPct: view.remainPct,
     });
-    btn.disabled = !target?.model || !target?.source;
-    btn.classList.toggle('is-warn', view.warn);
   }
+  if (host) host.classList.toggle('is-warn', view.warn);
+  if (btn) btn.disabled = !target?.model || !target?.source;
   if (ring) {
     const c = 2 * Math.PI * 5;
     ring.setAttribute('stroke-dasharray', `${view.ratio * c} ${c}`);
@@ -1682,7 +1683,7 @@ function closeAgentMenu() {
 
 function closeContextMenu() {
   document.getElementById('composer-context-menu')?.classList.remove('is-open');
-  document.getElementById('composer-context-btn')?.setAttribute('aria-expanded', 'false');
+  document.getElementById('composer-context-limit-btn')?.setAttribute('aria-expanded', 'false');
 }
 
 function renderContextMenuHtml() {
@@ -1707,7 +1708,7 @@ function renderContextMenuHtml() {
 
 function toggleContextMenu() {
   const menu = document.getElementById('composer-context-menu');
-  const btn = document.getElementById('composer-context-btn');
+  const btn = document.getElementById('composer-context-limit-btn');
   if (!menu || !btn || btn.disabled) return;
   if (menu.classList.contains('is-open')) {
     closeContextMenu();
