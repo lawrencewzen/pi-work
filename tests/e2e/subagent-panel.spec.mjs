@@ -14,7 +14,6 @@ const NOW = Date.now();
 const AGENTS = [
   {
     id: TESTER,
-    roleId: 'tester',
     name: '测试',
     status: 'running',
     step: 2,
@@ -28,7 +27,6 @@ const AGENTS = [
   },
   {
     id: CODER,
-    roleId: 'coder',
     name: '编码',
     status: 'done',
     lastText: '改完了 auth',
@@ -36,7 +34,6 @@ const AGENTS = [
   },
   {
     id: AUDITOR,
-    roleId: 'auditor',
     name: '审计',
     status: 'running',
     mode: 'foreground',
@@ -44,7 +41,6 @@ const AGENTS = [
   },
   {
     id: BARE,
-    roleId: '',
     status: 'stopped',
     mode: 'foreground',
   },
@@ -55,7 +51,6 @@ function mockedConversation(cid, bag) {
     id: cid,
     title: '请派子代理',
     status: 'idle',
-    roleId: null,
     modelSourceId: null,
     modelId: null,
     messages: [

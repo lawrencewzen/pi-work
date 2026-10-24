@@ -14,7 +14,6 @@ const FROZEN_NOW = Date.parse('2026-10-24T12:00:00.000Z');
 const AGENTS = [
   {
     id: TESTER,
-    roleId: 'tester',
     name: '测试',
     status: 'running',
     step: 2,
@@ -24,7 +23,6 @@ const AGENTS = [
   },
   {
     id: CODER,
-    roleId: 'coder',
     name: '编码',
     status: 'done',
     lastText: '改完了 auth',
@@ -32,7 +30,6 @@ const AGENTS = [
   },
   {
     id: AUDITOR,
-    roleId: 'auditor',
     name: '审计',
     status: 'waiting',
     lastText: 'auditor',
@@ -43,7 +40,6 @@ const AGENTS = [
 const RICH_AGENTS = [
   {
     id: TESTER,
-    roleId: 'tester',
     name: '测试',
     status: 'running',
     brief: '写登录测试\n不要跑支付',
@@ -55,7 +51,6 @@ const RICH_AGENTS = [
   },
   {
     id: CODER,
-    roleId: 'coder',
     name: '编码',
     status: 'done',
     brief: '改完 auth 模块',
@@ -66,7 +61,6 @@ const RICH_AGENTS = [
   },
   {
     id: AUDITOR,
-    roleId: 'auditor',
     name: '审计',
     status: 'running',
     brief: '审查权限边界',
@@ -83,7 +77,6 @@ function mockedConversation(cid, bag) {
     id: cid,
     title: '请派子代理',
     status: 'idle',
-    roleId: null,
     modelSourceId: null,
     modelId: null,
     messages: [
@@ -234,8 +227,9 @@ test('sidebar tree, orbit, pane interrupt/stop, note, and narrow overflow', asyn
     expect(orbitBox.h).toBe(18);
     expect(orbitBox.sats).toBe(3);
     await expect(page.getByTestId('subagent-orbit-count')).toHaveText('2/3');
-    const orbitCursor = await page.getByTestId('subagent-orbit-cluster').evaluate((el) => getComputedStyle(el).cursor);
-    expect(orbitCursor).toBe('default');
+    const cluster = page.getByTestId('subagent-orbit-cluster');
+    await expect(cluster).toBeVisible();
+    await expect(cluster).toHaveCSS('cursor', 'default');
 
     const toggle = page.getByTestId('subagent-tree-toggle');
     await expect(toggle).toBeVisible();
